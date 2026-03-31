@@ -1,0 +1,307 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot.connected {
+  background: #22c55e;
+}
+
+.status-dot.disconnected {
+  background: #ef4444;
+}
+
+.btn-refresh {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-refresh:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+/* Main Grid */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.panel {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #334155;
+}
+
+.panel-graph {
+  min-height: 280px;
+}
+
+.panel-feed {
+  max-height: 320px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sections */
+.section {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #334155;
+  margin-bottom: 16px;
+}
+
+.section h2,
+.signal-feed h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.empty {
+  color: #475569;
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Agent Cards */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.card-header strong {
+  font-size: 14px;
+  color: #f8fafc;
+}
+
+.card-body {
+  font-size: 12px;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-time {
+  color: #475569;
+}
+
+/* Badges */
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.badge-running {
+  background: #052e16;
+  color: #22c55e;
+  border: 1px solid #166534;
+}
+
+.badge-sleeping {
+  background: #422006;
+  color: #facc15;
+  border: 1px solid #854d0e;
+}
+
+.badge-terminated {
+  background: #1c1917;
+  color: #6b7280;
+  border: 1px solid #374151;
+}
+
+/* Signal Feed */
+.signal-feed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.feed-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feed-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #0f172a;
+}
+
+.feed-entry.feed-rejected {
+  background: #450a0a;
+  border: 1px solid #7f1d1d;
+}
+
+.feed-time {
+  color: #475569;
+  font-family: monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.feed-route {
+  color: #94a3b8;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.feed-action {
+  color: #6366f1;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.feed-reason {
+  color: #ef4444;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.feed-task {
+  color: #475569;
+  font-size: 11px;
+}
+
+/* Task Queue */
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.queue-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #0f172a;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.queue-role {
+  background: #334155;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  color: #e2e8f0;
+  flex-shrink: 0;
+}
+
+.queue-priority {
+  color: #f59e0b;
+  font-weight: 600;
+  font-family: monospace;
+  flex-shrink: 0;
+}
+
+.queue-prompt {
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Error Bar */
+.error-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #7f1d1d;
+  color: #fecaca;
+  padding: 8px 16px;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+}

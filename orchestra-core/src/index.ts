@@ -1,4 +1,5 @@
 import express from "express";
+import path from "node:path";
 import { Pool } from "pg";
 import { loadConfig } from "./config.js";
 import { SessionManager } from "./session-manager.js";
@@ -117,6 +118,13 @@ async function main() {
     const limit = parseInt(req.query.limit as string) || 50;
     const violations = await flowGuard.getViolations(limit);
     res.json(violations);
+  });
+
+  // Dashboard static files
+  const dashboardPath = process.env.DASHBOARD_PATH || path.join(process.cwd(), "../dashboard/dist");
+  app.use(express.static(dashboardPath));
+  app.get("/", (_req, res) => {
+    res.sendFile(path.join(dashboardPath, "index.html"));
   });
 
   // Health check

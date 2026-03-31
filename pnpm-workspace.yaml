@@ -2,3 +2,4 @@ packages:
   - orchestra-core
   - mcp-tools/signal-tool
   - mcp-tools/openproject-tool
+  - dashboard

@@ -48,12 +48,14 @@ services:
       CLAUDE_CLI_PATH: ${CLAUDE_CLI_PATH:-claude}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      DASHBOARD_PATH: /app/dashboard
     ports:
       - "3000:3000"
     volumes:
       - ./prompts:/app/prompts:ro
       - ./mcp-tools:/app/mcp-tools:ro
       - ./templates:/app/templates:ro
+      - ./dashboard/dist:/app/dashboard:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - sessions_data:/app/data/sessions
       - ${HOME}/.claude:/root/.claude:ro

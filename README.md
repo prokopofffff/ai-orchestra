@@ -1,16 +1,16 @@
 # AI Orchestra
 
-Self-hosted AI agent orchestrator that simulates a full development team. You communicate with a single **Tech Lead** agent through Telegram, and it coordinates Designers, Frontend/Backend Developers, QA Testers, and DevOps engineers — all powered by Claude Code with [Superpowers](https://github.com/obra/superpowers) plugin.
+Self-hosted AI agent orchestrator that simulates a full development team. You communicate with a single **Tech Lead** agent through Telegram, manage tasks via a **web dashboard with kanban board**, and agents coordinate autonomously — powered by Claude Code with [Superpowers](https://github.com/obra/superpowers) plugin.
 
-Inspired by [Paperclip](https://github.com/paperclipai/paperclip), but with more control: explicit roles, event-driven architecture, a real task tracker, and transparent inter-agent communication.
+Inspired by [Paperclip](https://github.com/paperclipai/paperclip), but with more control: explicit roles, Flow Guard for hard signal validation, built-in task tracker, and transparent inter-agent communication.
 
 ## How it works
 
 ```
-You (Telegram)
+You (Telegram + Dashboard)
      |
      v
- Tech Lead ---- creates tasks in OpenProject
+ Tech Lead ---- creates tasks in built-in tracker
      |              writes technical specs
      |              reviews PRs via subagent
      |
@@ -38,16 +38,12 @@ You (Telegram)
 
 ```
 docker-compose.yml
-├── postgres         — shared database
-├── n8n              — central orchestrator (workflows, webhooks, cron)
-├── openproject      — task tracker (Epics, Tasks, Subtasks)
-├── openclaw         — Telegram bridge
-└── orchestra-core   — session manager, signal API, agent spawner
+├── postgres         — shared database (sessions, tasks, signals, flow audit)
+└── orchestra-core   — single service: API, session manager, task tracker,
+                       flow guard, webhooks, dashboard (port 3000)
 ```
 
-Agents communicate through a **Signal System**: an agent calls `signal_agent(to, action, message)` via MCP tool, which hits the orchestra-core API, gets logged to OpenProject, routed by n8n, and mirrored to your Telegram.
-
-Session management uses the **A+C model**: sessions resume within 8 hours or while the project context hasn't changed. After that, a fresh session bootstraps from the last summary + OpenProject state + pending signals.
+**Flow Guard** validates every signal between agents — who can talk to whom, what actions are allowed, and enforces a 13-state task state machine. Violations return 403 with reason and are logged to the audit trail.
 
 See [docs/architecture.md](docs/architecture.md) for the full design.
 
@@ -72,17 +68,12 @@ cp .env.example .env
 Edit `.env` with your credentials:
 
 ```env
-# Required
+POSTGRES_PASSWORD=your_secure_password
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-GIT_PROVIDER=github          # or gitlab
+TELEGRAM_CHAT_ID=your_chat_id
+GIT_PROVIDER=github
 GIT_TOKEN=ghp_your_token
-GIT_ORG=your-org              # optional
-
-# Optional (defaults work for local setup)
-POSTGRES_PASSWORD=orchestra_secret
-N8N_USER=admin
-N8N_PASSWORD=admin
-OPENPROJECT_SECRET=change_me_to_a_long_random_string
+GIT_ORG=your-org
 ```
 
 ### 2. Build and start
@@ -93,43 +84,17 @@ pnpm run build
 docker compose up -d
 ```
 
-Wait for all services to start (~1-2 minutes for OpenProject on first run).
+### 3. Open dashboard
 
-### 3. Setup wizard
+Go to http://localhost:3000 — create a project, add tasks, monitor agents.
+
+### 4. Set up Telegram webhook (optional)
+
+For receiving messages from Telegram, expose port 3000 publicly (ngrok, Cloudflare Tunnel) and set the webhook:
 
 ```bash
-cd orchestra-core
-pnpm run setup
+curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=https://your-domain.com/api/telegram/webhook"
 ```
-
-The wizard will:
-- Verify Claude CLI and Superpowers plugin
-- Configure Git provider credentials
-- Set up Telegram bot connection
-- Optionally create your first project
-
-### 4. Configure n8n workflows
-
-Open n8n at `http://localhost:5678` (login: admin/admin) and import the workflows:
-
-- `n8n/workflows/signal-router.json` — routes signals between agents
-- `n8n/workflows/git-webhooks.json` — handles GitHub/GitLab PR events
-- `n8n/workflows/session-lifecycle.json` — cleans up stale sessions, processes queue
-- `n8n/workflows/telegram-to-tech-lead.json` — routes Telegram messages to Tech Lead
-
-Activate all workflows after importing.
-
-### 5. Configure OpenProject
-
-Open OpenProject at `http://localhost:8080`, create an admin account, then:
-
-1. Go to **Administration > API** and generate an API key
-2. Add it to your `.env` as `OPENPROJECT_API_KEY=your_key`
-3. Restart orchestra-core: `docker compose restart orchestra-core`
-
-### 6. Start chatting
-
-Send a message to your Telegram bot. The Tech Lead will respond, ask clarifying questions about your project, and start creating tasks.
 
 ## Project structure
 
@@ -139,62 +104,66 @@ ai-orchestra/
 │   ├── index.ts                 # Express server
 │   ├── session-manager.ts       # Claude Code session lifecycle
 │   ├── agent-spawner.ts         # Agent creation, git branches, bootstrap
-│   ├── signal-api.ts            # Inter-agent signal REST API
+│   ├── signal-api.ts            # Inter-agent signal API + Flow Guard
+│   ├── flow-guard.ts            # Allowed routes, actions, state machine, audit
+│   ├── task-api.ts              # Built-in task tracker (CRUD)
 │   ├── rate-limiter.ts          # Priority queue for rate limits
-│   ├── session-context.ts       # Bootstrap context from summaries + OpenProject
-│   ├── mcp-config-generator.ts  # Per-role MCP config (Pencil for designer/frontend)
-│   ├── notify.ts                # Telegram delivery via OpenClaw
+│   ├── session-context.ts       # Bootstrap context from summaries + tasks
+│   ├── mcp-config-generator.ts  # Per-role MCP config
+│   ├── webhooks.ts              # Telegram + GitHub/GitLab webhooks
+│   ├── notify.ts                # Telegram Bot API notifications
+│   ├── db-utils.ts              # DB row mapping helper
 │   ├── setup-wizard.ts          # CLI first-time setup
 │   └── config.ts                # Zod-validated configuration
 ├── mcp-tools/
 │   ├── signal-tool/src/         # MCP: signal_agent(), notify_user()
-│   └── openproject-tool/src/    # MCP: task CRUD, comments
+│   └── task-tool/src/           # MCP: task_create, task_update, etc.
+├── dashboard/src/               # React web UI
+│   ├── components/
+│   │   ├── AgentGraph.tsx       # SVG agent schema
+│   │   ├── KanbanBoard.tsx      # Kanban board with task cards
+│   │   ├── TaskDetail.tsx       # Task detail modal
+│   │   ├── SignalFeed.tsx       # Audit log feed
+│   │   ├── CreateForms.tsx      # Project/task creation forms
+│   │   └── ...
+│   └── ...
 ├── prompts/                     # System prompts per role
-│   ├── tech-lead.md
-│   ├── designer.md
-│   ├── dev-frontend.md
-│   ├── dev-backend.md
-│   ├── qa.md
-│   └── devops.md
-├── n8n/workflows/               # n8n workflow definitions
-├── templates/                   # Project scaffolding templates
-├── openclaw/config.yaml         # Telegram bridge config
-└── docker-compose.yml
+└── templates/                   # Project scaffolding templates
 ```
 
 ## API endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/signal` | Send a signal between agents |
+| POST | `/api/signal` | Send a signal between agents (Flow Guard validated) |
 | POST | `/api/signal/dispatch` | Dispatch an agent for a task |
 | GET | `/api/signal/pending/:role` | Get unprocessed signals |
 | GET | `/api/signal/history` | Signal history |
 | POST | `/api/spawn` | Spawn an agent with rate limiting |
 | GET | `/api/sessions` | List all sessions |
-| GET | `/api/sessions/:id` | Get session details |
 | DELETE | `/api/sessions/:id` | Terminate a session |
-| GET | `/api/queue` | View rate-limited task queue |
+| GET | `/api/projects` | List projects |
+| POST | `/api/projects` | Create project |
+| GET | `/api/tasks` | List tasks (filter by project, state, type) |
+| POST | `/api/tasks` | Create task |
+| PATCH | `/api/tasks/:id` | Update task |
+| DELETE | `/api/tasks/:id` | Delete task |
+| GET/POST | `/api/tasks/:id/comments` | Task comments |
+| GET | `/api/flow/audit` | Flow Guard audit log |
+| GET | `/api/flow/violations` | Rejected signals only |
+| GET | `/api/queue` | Rate-limited task queue |
+| POST | `/api/telegram/webhook` | Telegram Bot API webhook |
+| POST | `/api/git/webhook` | GitHub/GitLab webhook |
 | GET | `/health` | Health check |
 
-## Superpowers skills per role
+## Flow Guard
 
-| Skill | Tech Lead | Designer | Frontend | Backend | QA | DevOps |
-|-------|:-:|:-:|:-:|:-:|:-:|:-:|
-| brainstorming | + | + | | | | |
-| writing-plans | + | | | | | |
-| subagent-driven-development | + | | + | + | | |
-| executing-plans | | | + | + | | + |
-| dispatching-parallel-agents | + | | | | | |
-| test-driven-development | | | + | + | + | |
-| systematic-debugging | | | + | + | + | + |
-| verification-before-completion | + | + | + | + | + | + |
-| requesting-code-review | + | | + | + | | |
-| receiving-code-review | | | + | + | | |
-| finishing-a-development-branch | | | + | + | + | + |
-| using-git-worktrees | | | + | + | + | + |
-| writing-skills | + | | | | | |
-| Pencil MCP | | all | read | | | |
+Every signal is validated before routing:
+
+- **Allowed routes** — frontend cannot signal backend directly (must go through tech-lead)
+- **Allowed actions** — dev cannot deploy, designer cannot approve PRs
+- **State machine** — cannot assign dev before design is ready (for UI tasks)
+- **Audit log** — every signal logged with allowed/rejected status and reason
 
 ## Rate limiting
 
@@ -207,8 +176,6 @@ When Claude subscription limits are hit, tasks are queued with priorities:
 | 40 | Frontend / Backend Dev |
 | 30 | QA |
 | 20 | DevOps |
-
-The session lifecycle cron (every 5 min) processes the queue when limits recover.
 
 ## License
 

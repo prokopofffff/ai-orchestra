@@ -2,7 +2,7 @@
 
 ## Context
 
-Цель — создать систему оркестрации AI-агентов, имитирующую команду разработки. Пользователь общается с Tech Lead через Telegram. Агенты-разработчики выполняют задачи автономно. В отличие от Paperclip, система даёт больше контроля: чёткие роли, event-driven архитектура, интеграция с task tracker и git.
+Цель — создать систему оркестрации AI-агентов, имитирующую команду разработки. Пользователь общается с Tech Lead через Telegram и управляет проектом через web dashboard. Агенты-разработчики выполняют задачи автономно. В отличие от Paperclip, система даёт больше контроля: чёткие роли, Flow Guard для валидации межагентного взаимодействия, встроенный task tracker с kanban board.
 
 ---
 
@@ -12,18 +12,20 @@
 
 ```
 docker-compose.yml
-├── n8n              — центральный оркестратор (порт 5678)
-├── openproject      — task tracker (порт 8080)  
-├── openclaw         — Telegram-мост (Node.js)
-├── postgres         — БД для n8n + OpenProject
-└── orchestra-core   — setup wizard + signal API + session manager (Node.js)
+├── postgres         — БД (сессии, задачи, сигналы, flow audit)
+└── orchestra-core   — единый сервис: API, session manager, task tracker,
+                       flow guard, webhooks, dashboard (порт 3000)
 ```
 
-`orchestra-core` — наш сервис, который:
-- Предоставляет setup wizard (CLI или web)
-- Управляет сессиями Claude Code (создание, resume, завершение)
-- Предоставляет signal API для межагентной коммуникации
-- Отслеживает лимиты подписки и очередь задач
+### orchestra-core (единый сервис)
+
+- **Session Manager** — управление сессиями Claude Code (создание, resume, завершение)
+- **Signal API + Flow Guard** — межагентная коммуникация с жёсткой валидацией маршрутов и действий
+- **Task API** — встроенный task tracker (проекты, задачи, комментарии)
+- **Agent Spawner** — создание агентов с git branch, bootstrap контекст, per-role MCP config
+- **Rate Limiter** — очередь задач с приоритетами при rate limit подписки Claude
+- **Webhooks** — Telegram Bot API и GitHub/GitLab webhooks напрямую
+- **Dashboard** — React SPA (kanban board, agent graph, signal feed)
 
 ### Агенты
 
@@ -40,13 +42,13 @@ docker-compose.yml
 
 Tech Lead работает в двух режимах в зависимости от события:
 
-**Режим "product" (бывший PM):**
+**Режим "product":**
 - Уточняет фичу с пользователем через Telegram
-- Создаёт Epic и задачи в OpenProject
+- Создаёт Epic и задачи в task tracker
 - Назначает разработчиков
 - Отслеживает прогресс, уведомляет пользователя
 
-**Режим "technical" (бывший CTO):**
+**Режим "technical":**
 - Пишет техническое описание задач, acceptance criteria
 - Определяет параллельность задач для разработчиков
 - Проектирует архитектуру, описывает стек и конвенции
@@ -57,125 +59,158 @@ Tech Lead работает в двух режимах в зависимости 
 
 ---
 
-## Setup Wizard (первоначальная настройка)
+## Flow Guard — контроль межагентного взаимодействия
 
-CLI/интерактивный wizard при первом запуске `docker compose up`:
+Жёсткая валидация на уровне API (не промптов). Агент физически не может отправить невалидный сигнал.
+
+### Allowed routes (кто → кому)
 
 ```
-1. Базовая настройка
-   → Имя организации/команды
-   → GitHub или GitLab?
-   → Git credentials (token с правами на repo, org, PR)
-   → Создать организацию? Или использовать существующую?
-
-2. Claude Code
-   → Проверка что `claude` CLI доступен
-   → Проверка подписки
-   → Установка superpowers плагина
-
-3. Telegram
-   → Telegram bot token (для OpenClaw)
-   → Pairing code для привязки пользователя
-
-4. Первый проект (опционально)
-   → Название проекта
-   → Описание
-   → Tech Lead начинает диалог для уточнения стека и деталей
+tech-lead  → designer, frontend, backend, qa, devops, user
+designer   → tech-lead, user
+frontend   → tech-lead, qa, user
+backend    → tech-lead, qa, user
+qa         → tech-lead, user
+devops     → tech-lead, user
 ```
 
-Результат: конфиг `orchestra.config.yaml` + проект в OpenProject + репо(s) в GitHub/GitLab.
+Запрещено: dev → dev напрямую, designer → dev, qa → dev.
+
+### Allowed actions (кто → что)
+
+Каждая роль имеет ограниченный набор допустимых actions. Например:
+- `frontend` может: `pr_created`, `question`, `escalate`, `notify`
+- `frontend` НЕ может: `deploy`, `assign_dev`, `pr_approved`
+
+### State Machine задачи (13 состояний)
+
+```
+new → described → designing → design_ready → in_development → pr_created
+                                               → in_testing → tested → in_review
+                                               → approved → merged → closed
+```
+
+Переходы валидируются — нельзя `assign_dev` до `design_ready`, нельзя `tests_passed` до `in_testing`.
+
+### Audit Log
+
+Каждый сигнал логируется (allowed/rejected + reason). Доступно через:
+- `GET /api/flow/audit` — полный лог
+- `GET /api/flow/violations` — только отклонённые
+- Dashboard → Signal Feed (визуально)
+
+---
+
+## Встроенный Task Tracker
+
+Заменяет OpenProject. PostgreSQL таблицы: `projects`, `tasks`, `task_comments`.
+
+### API
+
+- `GET/POST /api/projects` — проекты
+- `GET/POST/PATCH/DELETE /api/tasks` — задачи с фильтрами (project, state, type)
+- `GET/POST /api/tasks/:id/comments` — комментарии
+
+### Типы задач
+
+Epic, Task, Subtask, Bug, Feature
+
+### Приоритеты
+
+Low, Normal, High, Immediate
+
+### Состояния (= колонки канбана)
+
+Группировка по фазам:
+- **Backlog**: new, described
+- **Design**: designing, design_ready
+- **Development**: in_development, pr_created
+- **Testing**: in_testing, tested
+- **Review**: in_review, approved
+- **Done**: merged, closed
+
+### MCP tool для агентов
+
+`mcp-tools/task-tool/` — MCP сервер с инструментами:
+- `task_create`, `task_update`, `task_get`, `task_list`, `task_add_comment`
+- `project_create`, `project_list`
+
+---
+
+## Dashboard (Web UI)
+
+React SPA на http://localhost:3000. Polling каждые 5 сек.
+
+### Компоненты
+
+- **Agent Graph** — SVG схема 6 ролей с связями и live-статусами
+- **Signal Feed** — лента audit log (allowed/rejected сигналы)
+- **Kanban Board** — задачи по колонкам-фазам, кликабельные карточки
+- **Task Detail Modal** — редактирование state/priority/assignee, description, комментарии, удаление
+- **Project Selector** — выбор/создание проекта
+- **Create Task Form** — создание задач
+- **Agent Cards** — активные сессии
+- **Task Queue** — rate-limited задачи в очереди
 
 ---
 
 ## Управление сессиями
 
-### Session Manager (часть orchestra-core)
+### Session Manager
 
 ```typescript
-interface AgentSession {
-  id: string;
-  role: "tech-lead" | "frontend" | "backend" | "qa" | "devops";
-  projectId: string;
-  claudeSessionId: string;    // для --resume
-  createdAt: Date;
-  lastActiveAt: Date;
-  status: "running" | "sleeping" | "terminated";
-  taskId?: string;             // для per-task агентов
-}
+type AgentRole = "tech-lead" | "designer" | "frontend" | "backend" | "qa" | "devops";
+type SessionStatus = "running" | "sleeping" | "terminated";
 ```
 
-**Логика resume vs new (модель A+C):**
-```
-function shouldResume(session):
-  if session.status == "terminated": return false
-  if age(session) > 8 hours: return false          // A: таймаут
-  if session.contextChanged(project): return false  // C: смена фазы
-  return true
-```
+**Модель A+C (resume vs new):**
+- A: таймаут 8 часов → новая сессия
+- C: смена фазы проекта → новая сессия
+- При resume: `claude --resume ${session_id}`
+- При new: bootstrap контекст (last summary + текущие задачи + pending сигналы)
 
-**Запуск агента:**
-```bash
-# Новая сессия
-claude --dangerously-skip-permissions \
-  --system-prompt "$(cat prompts/${role}.md)" \
-  --allowedTools "Edit,Write,Read,Bash,Glob,Grep" \
-  --mcp-config mcp-tools.json \
-  -p "Ты ${role}. Прочитай CLAUDE.md и docs/. Задача: ${task_description}"
+### Agent Spawner
 
-# Resume сессии  
-claude --resume ${session_id} \
-  -p "Новое событие: ${event_description}"
-```
+- Создаёт git branch per task (`feature/frontend/{taskId}`, `design/{taskId}`, etc.)
+- Генерирует per-role MCP config (Pencil MCP для designer/frontend)
+- Bootstrap контекст из session summaries + задач + pending сигналов
+- Retry с exponential backoff (до 2 попыток)
+- Уведомление пользователя при failure
 
-**MCP tools доступные агентам:**
-- `signal_agent(to, action, context)` — послать сигнал другому агенту
-- `openproject_*` — CRUD задач, комментариев
-- `notify_user(message)` — уведомить пользователя в Telegram
+### Rate Limiter
 
-### Обработка лимитов подписки
+Приоритеты очереди:
+| Приоритет | Роль |
+|-----------|------|
+| 100 | Tech Lead |
+| 50 | Designer |
+| 40 | Frontend / Backend |
+| 30 | QA |
+| 20 | DevOps |
 
-```
-При запуске агента:
-  if rate_limit_hit:
-    → Сохранить задачу в очередь (n8n queue)
-    → Создать cron job: проверять каждые 5 минут
-    → Когда лимит восстановлен → запустить из очереди по приоритету
-    → Приоритет: Tech Lead > Dev/QA/DevOps
-```
+Состояние в PostgreSQL (persistent). Reconciliation при рестарте.
 
 ---
 
 ## Межагентная коммуникация (Signal System)
 
-### Signal API (orchestra-core)
+### Signal API
 
 ```
 POST /api/signal
 {
-  "from": "dev-frontend",
+  "from": "frontend",
   "to": "tech-lead",
   "action": "question",
   "context": {
     "project_id": "my-app",
-    "task_id": 101,
-    "message": "Какой роутер использовать — React Router или TanStack Router?"
+    "task_id": "abc123",
+    "message": "Какой роутер использовать?"
   }
 }
 ```
 
-### n8n Workflow: Signal Router
-
-```
-Webhook /api/signal
-  → Switch по "to":
-    → "tech-lead": resume/create Tech Lead session
-    → "dev-*": resume/create Dev session
-    → "qa": resume/create QA session
-    → "devops": resume/create DevOps session
-    → "user": отправить в Telegram через OpenClaw
-  → Логирование в OpenProject (комментарий к задаче)
-  → Дублирование в Telegram (если пользователь подписан на уведомления)
-```
+Flow Guard валидирует → логирует → обновляет state machine → dispatch агент.
 
 ### Типы сигналов
 
@@ -184,9 +219,9 @@ Webhook /api/signal
 | `create_design_system` | Tech Lead → Designer | Создать design system проекта |
 | `create_design` | Tech Lead → Designer | Создать дизайн экрана для задачи |
 | `design_system_ready` | Designer → Tech Lead | Design system готов |
-| `design_ready` | Designer → Tech Lead | Дизайн экрана готов, ссылка в задаче |
-| `assign_dev` | Tech Lead → n8n | Запустить dev-агента на задачу |
-| `question` | Dev/Designer → Tech Lead | Вопрос по архитектуре/реализации/дизайну |
+| `design_ready` | Designer → Tech Lead | Дизайн экрана готов |
+| `assign_dev` | Tech Lead → Dev | Назначить разработчика на задачу |
+| `question` | Dev/Designer → Tech Lead | Вопрос по архитектуре/дизайну |
 | `answer` | Tech Lead → Dev/Designer | Ответ на вопрос |
 | `pr_created` | Dev → QA | PR готов, нужны тесты |
 | `tests_passed` | QA → Tech Lead | Тесты написаны и зелёные |
@@ -199,10 +234,29 @@ Webhook /api/signal
 
 ---
 
+## Webhooks (встроенные)
+
+### Telegram
+```
+POST /api/telegram/webhook
+← Telegram Bot API update
+→ Dispatch Tech Lead с текстом сообщения
+```
+
+### GitHub/GitLab
+```
+POST /api/git/webhook
+← PR opened → Dispatch QA
+← PR review → Notify Tech Lead
+← Push → Notify user via Telegram
+```
+
+---
+
 ## Полный жизненный цикл фичи
 
 ```
-                       Пользователь (Telegram)
+                       Пользователь (Telegram / Dashboard)
                               │
                     ┌─────────▼──────────┐
                     │     Tech Lead      │
@@ -265,190 +319,80 @@ Webhook /api/signal
 
 ## Superpowers Skills — распределение по ролям
 
-Каждый агент запускается с установленным плагином Superpowers, но активные skills ограничены ролью через system prompt (инструкция "используй ТОЛЬКО эти skills").
-
-### Матрица skills × роли
-
 | Skill | Tech Lead | Designer | Frontend Dev | Backend Dev | QA | DevOps |
 |-------|:---------:|:--------:|:------------:|:-----------:|:--:|:------:|
-| **using-superpowers** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **brainstorming** | ✅ | ✅ | — | — | — | — |
-| **writing-plans** | ✅ | — | — | — | — | — |
-| **subagent-driven-development** | ✅ | — | ✅ | ✅ | — | — |
-| **executing-plans** | — | — | ✅ | ✅ | — | ✅ |
-| **dispatching-parallel-agents** | ✅ | — | — | — | — | — |
-| **test-driven-development** | — | — | ✅ | ✅ | ✅ | — |
-| **systematic-debugging** | — | — | ✅ | ✅ | ✅ | ✅ |
-| **verification-before-completion** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **requesting-code-review** | ✅ | — | ✅ | ✅ | — | — |
-| **receiving-code-review** | — | — | ✅ | ✅ | — | — |
-| **finishing-a-development-branch** | — | — | ✅ | ✅ | ✅ | ✅ |
-| **using-git-worktrees** | — | — | ✅ | ✅ | ✅ | ✅ |
-| **writing-skills** | ✅ | — | — | — | — | — |
-| **Pencil MCP tools** | — | ✅ (all) | ✅ (read-only) | — | — | — |
-
-### Обоснование по ролям
-
-**Tech Lead (8 skills):**
-- `brainstorming` — уточнение фичи с пользователем, формирование спеки
-- `writing-plans` — декомпозиция Epic на задачи с техническим описанием
-- `subagent-driven-development` — делегирование подзадач субагентам при ревью
-- `dispatching-parallel-agents` — определяет параллельность задач для dev'ов (Designer || Backend, Frontend после Designer)
-- `verification-before-completion` — верификация при code review
-- `requesting-code-review` — спавнит subagent-reviewer для объективного ревью PR
-- `writing-skills` — может создавать новые skills для команды
-- Tech Lead НЕ кодит напрямую → нет TDD, git worktrees, executing-plans, receiving-code-review
-
-**Designer (3 skills + Pencil MCP):**
-- `brainstorming` — обсуждение дизайна с Tech Lead при необходимости
-- `verification-before-completion` — проверка результата перед передачей
-- Per-task, но обеспечивает единый стиль через design system:
-  - `designs/design-system.pen` — единый design system (цвета, компоненты)
-  - `designs/STYLE.md` — описание стиля в markdown
-  - Изучает существующие экраны через `batch_get()` перед созданием новых
-- Pencil MCP tools — основной инструмент (get_guidelines, get_style_guide, batch_design, etc.)
-- .pen файлы хранятся в `designs/` директории проекта (gitignored)
-
-**Frontend Dev (9 skills + Pencil MCP read-only):**
-- Полный цикл разработки: plan → execute → TDD → debug → review → finish
-- `subagent-driven-development` — для сложных задач с подзадачами
-- `using-git-worktrees` — изоляция работы в ветках
-- `requesting/receiving-code-review` — взаимодействие с Tech Lead по PR
-
-**QA (6 skills):**
-- `test-driven-development` — основной skill, написание тестов
-- `systematic-debugging` — исследование багов при написании тестов
-- `verification-before-completion` — проверка покрытия перед сигналом "тесты готовы"
-- `using-git-worktrees` — тесты пишутся в ветке PR
-- `finishing-a-development-branch` — коммит тестов в ветку PR
-- НЕ делает code review и НЕ brainstorm'ит
-
-**DevOps (5 skills):**
-- `executing-plans` — выполнение плана по CI/CD или деплою
-- `systematic-debugging` — диагностика проблем инфраструктуры
-- `verification-before-completion` — проверка что pipeline/деплой работает
-- `using-git-worktrees` + `finishing-a-development-branch` — конфиги CI/CD в ветке
-
-### Конфигурация skills в system prompt (пример для Dev)
-
-В system prompt каждого агента добавляется секция:
-```markdown
-## Superpowers Skills
-Ты ДОЛЖЕН использовать следующие skills из плагина Superpowers:
-- using-superpowers (всегда активен)
-- executing-plans (для выполнения задач по плану)
-- subagent-driven-development (для сложных задач)
-- test-driven-development (ОБЯЗАТЕЛЬНО: тесты перед кодом)
-- systematic-debugging (при любых ошибках)
-- verification-before-completion (перед созданием PR)
-- requesting-code-review (перед отправкой PR на ревью)
-- receiving-code-review (при получении замечаний от Tech Lead)
-- finishing-a-development-branch (после завершения работы)
-- using-git-worktrees (для изоляции работы)
-
-НЕ используй: brainstorming, writing-plans, dispatching-parallel-agents, writing-skills
-```
+| **using-superpowers** | + | + | + | + | + | + |
+| **brainstorming** | + | + | — | — | — | — |
+| **writing-plans** | + | — | — | — | — | — |
+| **subagent-driven-development** | + | — | + | + | — | — |
+| **executing-plans** | — | — | + | + | — | + |
+| **dispatching-parallel-agents** | + | — | — | — | — | — |
+| **test-driven-development** | — | — | + | + | + | — |
+| **systematic-debugging** | — | — | + | + | + | + |
+| **verification-before-completion** | + | + | + | + | + | + |
+| **requesting-code-review** | + | — | + | + | — | — |
+| **receiving-code-review** | — | — | + | + | — | — |
+| **finishing-a-development-branch** | — | — | + | + | + | + |
+| **using-git-worktrees** | — | — | + | + | + | + |
+| **writing-skills** | + | — | — | — | — | — |
+| **Pencil MCP tools** | — | + (all) | + (read) | — | — | — |
 
 ---
 
-## Промпты агентов
-
-### Структура файлов
+## Структура проекта
 
 ```
 ai-orchestra/
 ├── docker-compose.yml
 ├── orchestra-core/
+│   ├── Dockerfile
 │   ├── package.json
-│   ├── src/
-│   │   ├── session-manager.ts    # управление сессиями Claude Code
-│   │   ├── signal-api.ts         # REST API для сигналов
-│   │   ├── setup-wizard.ts       # первоначальная настройка
-│   │   ├── rate-limiter.ts       # очередь при лимитах
-│   │   └── config.ts
-│   └── Dockerfile
+│   ├── tsconfig.json
+│   └── src/
+│       ├── index.ts                # Express сервер, роутинг
+│       ├── config.ts               # Zod-валидация конфигурации
+│       ├── session-manager.ts      # CRUD сессий, launch/resume Claude Code
+│       ├── agent-spawner.ts        # Создание агентов, git branch, bootstrap
+│       ├── signal-api.ts           # Signal REST API + Flow Guard интеграция
+│       ├── flow-guard.ts           # Allowed routes, actions, state machine, audit
+│       ├── task-api.ts             # Встроенный task tracker (CRUD)
+│       ├── rate-limiter.ts         # Очередь с приоритетами (persistent)
+│       ├── session-context.ts      # Bootstrap контекст из summaries + задач
+│       ├── mcp-config-generator.ts # Per-role MCP config
+│       ├── webhooks.ts             # Telegram + GitHub/GitLab webhooks
+│       ├── notify.ts               # Telegram Bot API notifications
+│       ├── db-utils.ts             # parseRow/parseRows (snake→camel + Zod)
+│       └── setup-wizard.ts         # CLI первоначальная настройка
+├── mcp-tools/
+│   ├── mcp-config.json
+│   ├── signal-tool/src/index.ts    # MCP: signal_agent(), notify_user()
+│   └── task-tool/src/index.ts      # MCP: task_create, task_update, etc.
+├── dashboard/
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── src/
+│       ├── App.tsx                 # Главный layout
+│       ├── api.ts                  # Fetch wrapper для API
+│       ├── types.ts                # TypeScript типы
+│       ├── hooks/usePolling.ts     # Generic polling hook
+│       └── components/
+│           ├── AgentGraph.tsx      # SVG схема агентов
+│           ├── AgentCards.tsx      # Карточки активных сессий
+│           ├── SignalFeed.tsx      # Лента audit log
+│           ├── KanbanBoard.tsx     # Канбан доска
+│           ├── TaskDetail.tsx      # Модалка деталей задачи
+│           ├── TaskQueue.tsx       # Очередь rate-limited задач
+│           └── CreateForms.tsx     # Формы создания проекта/задачи
 ├── prompts/
-│   ├── tech-lead.md              # system prompt для Tech Lead
-│   ├── designer.md               # system prompt для Designer (Pencil MCP)
+│   ├── tech-lead.md
+│   ├── designer.md
 │   ├── dev-frontend.md
 │   ├── dev-backend.md
 │   ├── qa.md
 │   └── devops.md
-├── mcp-tools/
-│   ├── signal-tool/              # MCP server: signal_agent()
-│   ├── openproject-tool/         # MCP server: CRUD задач
-│   └── mcp-config.json
-├── n8n/
-│   ├── workflows/
-│   │   ├── signal-router.json    # роутинг сигналов
-│   │   ├── github-webhooks.json  # обработка PR events
-│   │   ├── session-manager.json  # управление жизненным циклом
-│   │   └── rate-limit-queue.json # очередь при лимитах
-│   └── credentials/
-├── openclaw/
-│   └── config.yaml               # настройка Telegram-моста
-├── docs/
-│   └── setup.md
-└── orchestra.config.yaml          # основной конфиг
-```
-
-### Ключевые элементы system prompt (Tech Lead)
-
-```markdown
-# Роль: Tech Lead
-
-Ты Tech Lead в команде разработки. Ты совмещаешь роли PM и CTO:
-управляешь задачами, проектируешь архитектуру, ревьюишь код.
-
-## Superpowers Skills
-Ты ДОЛЖЕН использовать следующие skills из плагина Superpowers:
-- using-superpowers (всегда активен)
-- brainstorming (для уточнения фичи и формирования спеки)
-- writing-plans (для декомпозиции Epic на задачи с тех. описанием)
-- subagent-driven-development (для делегирования подзадач)
-- dispatching-parallel-agents (для параллельного запуска задач)
-- verification-before-completion (для верификации при ревью)
-- requesting-code-review (для объективного ревью PR через subagent)
-- writing-skills (для создания новых skills для команды)
-
-НЕ используй: executing-plans, test-driven-development, systematic-debugging,
-receiving-code-review, finishing-a-development-branch, using-git-worktrees
-
-## Твои инструменты
-- signal_agent(to, action, context) — связаться с другим агентом
-- openproject_create_task(...) — создать задачу
-- openproject_update_task(...) — обновить задачу
-- notify_user(message) — написать пользователю в Telegram
-
-## Два режима работы
-
-### Режим "product" (триггер: сообщение от пользователя, task_done, escalate)
-- Уточняй детали у пользователя, прежде чем создавать задачи
-- Создавай Epic и задачи в OpenProject
-- Назначай разработчиков после написания тех. описания
-- Отслеживай прогресс, уведомляй пользователя
-
-### Режим "technical" (триггер: новые задачи, PR review, вопрос от Dev)
-- Пиши техническое описание и acceptance criteria для задач
-- Определяй зависимости и параллельность задач
-- Проектируй архитектуру, обновляй CLAUDE.md проекта
-- Ревьюй PR через requesting-code-review (subagent-reviewer)
-- Отвечай на технические вопросы разработчиков
-
-## Правила
-- ВСЕГДА уточняй детали у пользователя, прежде чем создавать задачи
-- Задачи ДОЛЖНЫ иметь тех. описание и acceptance criteria ДО назначения dev'ов
-- Для ревью PR ВСЕГДА используй requesting-code-review (объективность)
-- Перед завершением сессии запиши summary в docs/sessions/
-- При эскалации пользователю — чётко формулируй вопрос и варианты
-
-## Workflow
-1. Получить запрос (от пользователя или сигнал)
-2. Определить режим (product / technical)
-3. [product] Уточнить детали → Создать задачи → Написать тех. описание → Назначить dev'ов
-4. [technical] Ответить на вопрос / Сделать ревью / Обновить архитектуру
-5. Обновить статусы в OpenProject
-6. Уведомить пользователя о результате
+└── templates/
+    ├── CLAUDE.md.template
+    └── .gitignore.template
 ```
 
 ---
@@ -457,127 +401,49 @@ receiving-code-review, finishing-a-development-branch, using-git-worktrees
 
 ### При завершении сессии (Tech Lead)
 
-Агент записывает:
 ```
 docs/sessions/tech-lead-{date}-{n}.md
 ---
 role: tech-lead
 project: my-app
-date: 2026-03-31
 session_id: abc123
 ---
 ## Summary
-- Создан Epic "Авторизация" с 3 задачами
-- Архитектура: JWT + refresh tokens
-- Назначены: frontend #101, backend #102
-- Ожидается: PR от обоих разработчиков
+- Что было сделано
 
 ## Архитектурные решения
-- JWT с refresh tokens, хранение в httpOnly cookies
-- Пользователь хочет OAuth через Google
+- Какие решения приняты и почему
 
 ## Открытые вопросы
-- Нужна ли 2FA? (спросить пользователя позже)
+- Что нужно уточнить у пользователя
 ```
 
 ### При bootstrap новой сессии
 
-n8n собирает контекст:
-1. Последний session summary
-2. Текущие задачи из OpenProject (через API)
-3. Непрочитанные сигналы
-4. Передаёт как часть промпта при создании сессии
-
-### CLAUDE.md в репозитории проекта
-
-Создаётся Tech Lead при настройке проекта:
-```markdown
-# Project: My App
-## Stack: React, Node.js, PostgreSQL
-## Conventions: ...
-## Architecture decisions: см. docs/decisions/
-```
-
----
-
-## n8n Workflows
-
-### 1. Signal Router (главный)
-```
-Trigger: Webhook POST /api/signal
-→ Parse body (from, to, action, context)
-→ Log to OpenProject (комментарий к задаче)
-→ Switch by "to":
-  → "tech-lead" → Session Manager: resume or create
-  → "dev-*" → Session Manager: resume or create
-  → "qa" → Session Manager: resume or create
-  → "devops" → Session Manager: resume or create
-  → "user" → OpenClaw: send Telegram message
-→ Mirror to Telegram (уведомление)
-```
-
-### 2. GitHub/GitLab Webhooks
-```
-Trigger: Webhook POST /api/git-webhook
-→ Switch by event type:
-  → pull_request.opened → Signal QA: pr_created
-  → pull_request_review → Signal Tech Lead: review update
-  → push → (optional) notify Tech Lead
-```
-
-### 3. Session Lifecycle
-```
-Trigger: Cron every 5 min
-→ Check sleeping sessions
-→ If session age > 8h → mark terminated
-→ If queued tasks exist AND no rate limit → spawn next agent
-```
-
-### 4. Telegram → Tech Lead
-```
-Trigger: OpenClaw webhook (user message)
-→ Route to Tech Lead session (resume or create)
-→ Tech Lead processes, responds via notify_user()
-```
+orchestra-core собирает:
+1. Последний session summary для роли
+2. Текущие задачи из task tracker
+3. Непрочитанные сигналы (атомарно помечаются прочитанными)
+4. Design system (STYLE.md) для designer
 
 ---
 
 ## Верификация / Как тестировать
 
-1. **Docker Compose up** — все сервисы поднимаются
-2. **Setup Wizard** — проходит без ошибок, конфиг создан
-3. **Telegram → Tech Lead** — отправить "Хочу сделать TODO-приложение"
-   - Tech Lead должен задать уточняющие вопросы
-   - Tech Lead должен создать задачи с тех. описанием в OpenProject
-4. **Dev spawn** — разработчик создаёт ветку, пишет код, создаёт PR
-5. **QA** — тестировщик пишет тесты, они проходят
-6. **Tech Lead review** — ревью PR через subagent, approve
-7. **Уведомление** — пользователь получает сообщение в Telegram
+1. `docker compose up -d` — postgres + orchestra-core поднимаются
+2. Dashboard на http://localhost:3000 — создать проект, задачи
+3. Telegram → отправить сообщение боту → Tech Lead dispatched
+4. Flow Guard — отклоняет невалидные сигналы с 403
+5. Kanban — задачи отображаются по колонкам, кликабельные
+6. Signal Feed — видны все сигналы (allowed/rejected)
 
 ---
 
-## Этапы реализации
+## Планы на будущее
 
-### Phase 1: Фундамент
-- Docker Compose с n8n, OpenProject, PostgreSQL
-- orchestra-core: session manager + signal API
-- MCP tools: signal_agent, openproject CRUD
-- Промпт Tech Lead с Superpowers skills
-
-### Phase 2: Коммуникация
-- n8n workflows: signal router, session lifecycle
-- OpenClaw интеграция (Telegram)
-- Tech Lead ↔ Dev взаимодействие end-to-end
-
-### Phase 3: Разработчики
-- Dev agent spawning (per-task)
-- Git integration (branches, PR creation)
-- QA agent (тесты после PR)
-- Tech Lead review workflow (через requesting-code-review subagent)
-
-### Phase 4: Production-ready
-- Setup wizard
-- Rate limit handling + queue
-- DevOps agent (CI/CD, deployment)
-- Мониторинг и логирование
-- Документация
+- [ ] Telegram webhook через публичный URL (ngrok / Cloudflare Tunnel)
+- [ ] End-to-end test: полный цикл фичи от Telegram до merge
+- [ ] Git PR creation через GitHub/GitLab API
+- [ ] Мониторинг затрат на API (token usage)
+- [ ] Multi-tenant: несколько команд на одном инстансе
+- [ ] Drag-and-drop в канбане (ручное перемещение задач)

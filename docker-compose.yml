@@ -54,27 +54,10 @@ services:
       - "8080:80"
     volumes:
       - openproject_data:/var/openproject/assets
+      - ./docker/openproject-init.sh:/app/openproject-init.sh:ro
     depends_on:
       postgres:
         condition: service_healthy
-
-  openclaw:
-    image: node:22-alpine
-    restart: unless-stopped
-    working_dir: /app
-    command: >
-      sh -c "npm install -g openclaw@latest &&
-             openclaw start --config /app/config.yaml"
-    environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./openclaw/config.yaml:/app/config.yaml:ro
-      - openclaw_data:/root/.openclaw
-    depends_on:
-      n8n:
-        condition: service_started
 
   orchestra-core:
     build:
@@ -91,6 +74,8 @@ services:
       OPENPROJECT_URL: http://openproject:80
       OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
       CLAUDE_CLI_PATH: ${CLAUDE_CLI_PATH:-claude}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     ports:
       - "3000:3000"
     volumes:
@@ -111,5 +96,4 @@ volumes:
   postgres_data:
   n8n_data:
   openproject_data:
-  openclaw_data:
   sessions_data:

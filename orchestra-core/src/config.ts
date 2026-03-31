@@ -15,8 +15,9 @@ export const OrchestraConfigSchema = z.object({
   claude: z.object({
     cliPath: z.string(),
   }),
-  openclaw: z.object({
-    url: z.string().url(),
+  telegram: z.object({
+    botToken: z.string(),
+    chatId: z.string(),
   }),
 });
 
@@ -38,8 +39,9 @@ export function loadConfig(): OrchestraConfig {
     claude: {
       cliPath: process.env.CLAUDE_CLI_PATH || "claude",
     },
-    openclaw: {
-      url: process.env.OPENCLAW_URL || "http://localhost:3100",
+    telegram: {
+      botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+      chatId: process.env.TELEGRAM_CHAT_ID || "",
     },
   };
 

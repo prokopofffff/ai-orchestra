@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { OrchestraConfig } from "./config.js";
 
-export const NotifyPayloadSchema = z.object({
-  channel: z.string().default("telegram"),
-  message: z.string().min(1),
-  chatId: z.string().optional(),
+const TELEGRAM_API = "https://api.telegram.org";
+
+export const TelegramMessageSchema = z.object({
+  chat_id: z.string().min(1),
+  text: z.string().min(1),
+  parse_mode: z.enum(["Markdown", "MarkdownV2", "HTML"]).optional(),
 });
-export type NotifyPayload = z.infer<typeof NotifyPayloadSchema>;
 
 export async function notifyUser(
   config: OrchestraConfig,
@@ -14,8 +15,9 @@ export async function notifyUser(
 ): Promise<boolean> {
   if (!message) return false;
 
-  const sent = await sendViaOpenClaw(config.openclaw.url, message);
-  if (sent) return true;
+  if (config.telegram.botToken && config.telegram.chatId) {
+    return sendTelegram(config.telegram.botToken, config.telegram.chatId, message);
+  }
 
   // Fallback: log to console
   console.log(`[NOTIFY USER]: ${message}`);
@@ -24,7 +26,6 @@ export async function notifyUser(
 
 /**
  * Send a message mirroring agent communication to the user.
- * Used by Signal Router to keep user informed of agent activity.
  */
 export async function mirrorToUser(
   config: OrchestraConfig,
@@ -34,34 +35,74 @@ export async function mirrorToUser(
   message?: string
 ): Promise<boolean> {
   const formatted = `[${from} → ${to}] ${action}${message ? `: ${message}` : ""}`;
-  return sendViaOpenClaw(config.openclaw.url, formatted);
+  return notifyUser(config, formatted);
 }
 
-async function sendViaOpenClaw(
-  openclawUrl: string,
-  message: string
+async function sendTelegram(
+  botToken: string,
+  chatId: string,
+  text: string
 ): Promise<boolean> {
   try {
-    const payload = NotifyPayloadSchema.parse({
-      channel: "telegram",
-      message,
+    const payload = TelegramMessageSchema.parse({
+      chat_id: chatId,
+      text,
     });
 
-    const response = await fetch(`${openclawUrl}/api/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${botToken}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
 
     if (response.ok) {
-      console.log(`Notification sent via OpenClaw: ${message.substring(0, 50)}...`);
       return true;
     }
 
-    console.warn(`OpenClaw returned ${response.status}`);
+    const err = await response.text();
+    console.warn(`Telegram API error ${response.status}: ${err}`);
     return false;
   } catch (err) {
-    console.warn("OpenClaw not available:", (err as Error).message);
+    console.warn("Failed to send Telegram message:", (err as Error).message);
     return false;
+  }
+}
+
+/**
+ * Get bot info and extract chat_id from first incoming message.
+ * Useful for initial setup to discover the user's chat_id.
+ */
+export async function getTelegramUpdates(
+  botToken: string
+): Promise<Array<{ chatId: string; username: string; text: string }>> {
+  try {
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${botToken}/getUpdates?limit=10`
+    );
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as {
+      result: Array<{
+        message?: {
+          chat: { id: number };
+          from?: { username?: string };
+          text?: string;
+        };
+      }>;
+    };
+
+    return (data.result || [])
+      .filter((u) => u.message)
+      .map((u) => ({
+        chatId: String(u.message!.chat.id),
+        username: u.message!.from?.username || "unknown",
+        text: u.message!.text || "",
+      }));
+  } catch {
+    return [];
   }
 }

@@ -95,6 +95,10 @@ export class SetupWizard {
     // Save .env
     this.saveEnv(config);
 
+    // Initialize OpenProject (activate users, generate API token)
+    console.log("\nInitializing OpenProject...");
+    await this.initOpenProject();
+
     console.log("\n✅ Setup complete!");
     console.log(`Config saved to ${CONFIG_PATH}`);
 
@@ -138,6 +142,38 @@ export class SetupWizard {
       }
     } catch {
       console.log("  ⚠️  Could not check plugins. Verify Superpowers manually.");
+    }
+  }
+
+  private async initOpenProject(): Promise<void> {
+    try {
+      // Run the init script inside the OpenProject container
+      const output = execFileSync("docker", [
+        "compose", "exec", "-T", "openproject",
+        "bash", "/app/openproject-init.sh"
+      ], { encoding: "utf-8", timeout: 60000 });
+
+      console.log(output);
+
+      // Extract API token if generated
+      const tokenMatch = output.match(/API_TOKEN=(\S+)/);
+      if (tokenMatch) {
+        const apiToken = tokenMatch[1];
+        console.log(`  ✅ OpenProject API token generated`);
+
+        // Append to .env
+        const envPath = path.resolve(CONFIG_PATH, "..", ".env");
+        if (existsSync(envPath)) {
+          let env = readFileSync(envPath, "utf-8");
+          env = env.replace(/OPENPROJECT_API_KEY=.*/, `OPENPROJECT_API_KEY=${apiToken}`);
+          writeFileSync(envPath, env);
+          console.log(`  ✅ API key saved to .env`);
+        }
+      }
+    } catch (err) {
+      console.log("  ⚠️  Could not initialize OpenProject automatically.");
+      console.log("     Run manually: docker compose exec openproject bash /app/openproject-init.sh");
+      console.log(`     Error: ${(err as Error).message}`);
     }
   }
 

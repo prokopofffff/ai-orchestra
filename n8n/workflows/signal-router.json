@@ -199,13 +199,11 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://openclaw:3100/api/send",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"channel\": \"telegram\",\n  \"message\": \"[{{ $json.from }}] {{ $json.action }}: {{ $json.context.message }}\"\n}",
-        "options": {
-          "ignore_ssl_issues": true
-        }
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"[{{ $json.from }}] {{ $json.action }}: {{ $json.context.message }}\"\n}",
+        "options": {}
       },
       "id": "notify-user-telegram",
       "name": "Notify User (Telegram)",

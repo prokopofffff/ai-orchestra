@@ -59,6 +59,11 @@ export const api = {
   }) => post<Task>("/tasks", data),
   updateTask: (id: string, data: Record<string, unknown>) =>
     patch<Task>(`/tasks/${id}`, data),
+  deleteTask: async (id: string) => {
+    const res = await fetch(`${BASE}/tasks/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to delete task");
+    return res.json();
+  },
 
   comments: (taskId: string) => get<TaskComment[]>(`/tasks/${taskId}/comments`),
   addComment: (taskId: string, author: string, comment: string) =>

@@ -48,6 +48,17 @@ export function TaskDetail({ task, onClose, onUpdated }: Props) {
     }
   };
 
+  const deleteTask = async () => {
+    if (!confirm(`Delete task "${task.subject}"?`)) return;
+    try {
+      await api.deleteTask(task.id);
+      onClose();
+      onUpdated();
+    } catch (err) {
+      alert((err as Error).message);
+    }
+  };
+
   const updateState = async (state: string) => {
     try {
       await api.updateTask(task.id, { state });
@@ -86,7 +97,10 @@ export function TaskDetail({ task, onClose, onUpdated }: Props) {
             </span>
             <span className="modal-id">#{task.id.substring(0, 8)}</span>
           </div>
-          <button className="btn-close" onClick={onClose}>x</button>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button className="btn-delete" onClick={deleteTask}>Delete</button>
+            <button className="btn-close" onClick={onClose}>x</button>
+          </div>
         </div>
 
         <h2 className="modal-title">{task.subject}</h2>

@@ -232,6 +232,18 @@ export function createTaskRouter(pool: Pool): Router {
     res.json(result.rows[0]);
   });
 
+  router.delete("/tasks/:id", async (req: Request, res: Response) => {
+    const result = await pool.query(
+      `DELETE FROM tasks WHERE id = $1 RETURNING id`,
+      [req.params.id]
+    );
+    if ((result.rowCount || 0) === 0) {
+      res.status(404).json({ error: "Task not found" });
+      return;
+    }
+    res.json({ deleted: true, id: req.params.id });
+  });
+
   // --- Comments ---
 
   router.get("/tasks/:id/comments", async (req: Request, res: Response) => {

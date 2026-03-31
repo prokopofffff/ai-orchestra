@@ -377,6 +377,20 @@ body {
   padding: 4px 8px;
 }
 
+.btn-delete {
+  background: #7f1d1d;
+  color: #fecaca;
+  border: 1px solid #991b1b;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn-delete:hover {
+  background: #991b1b;
+}
+
 /* Forms */
 .form-inline {
   display: flex;

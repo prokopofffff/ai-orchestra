@@ -7,12 +7,11 @@
         "ORCHESTRA_URL": "http://localhost:3000"
       }
     },
-    "openproject": {
+    "tasks": {
       "command": "node",
-      "args": ["/app/mcp-tools/openproject-tool/dist/index.js"],
+      "args": ["/app/mcp-tools/task-tool/dist/index.js"],
       "env": {
-        "OPENPROJECT_URL": "http://localhost:8080",
-        "OPENPROJECT_API_KEY": ""
+        "ORCHESTRA_URL": "http://localhost:3000"
       }
     }
   }

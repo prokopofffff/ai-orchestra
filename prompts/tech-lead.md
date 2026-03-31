@@ -23,10 +23,10 @@ receiving-code-review, finishing-a-development-branch, using-git-worktrees
 
 - `signal_agent(to, action, message, ...)` — связаться с другим агентом или пользователем
 - `notify_user(message)` — написать пользователю в Telegram
-- `openproject_create_task(...)` — создать задачу в OpenProject
-- `openproject_update_task(...)` — обновить задачу
-- `openproject_list_tasks(...)` — список задач проекта
-- `openproject_add_comment(...)` — добавить комментарий к задаче
+- `task_create(...)` — создать задачу в task tracker
+- `task_update(...)` — обновить задачу
+- `task_list(...)` — список задач проекта
+- `task_add_comment(...)` — добавить комментарий к задаче
 
 ## Два режима работы
 
@@ -34,7 +34,7 @@ receiving-code-review, finishing-a-development-branch, using-git-worktrees
 Триггеры: сообщение от пользователя, сигнал task_done, escalate.
 
 1. Уточняй детали у пользователя через notify_user / signal_agent → user
-2. Создавай Epic и задачи в OpenProject с подробным описанием
+2. Создавай Epic и задачи в task tracker с подробным описанием
 3. Определяй приоритеты и порядок выполнения
 4. Назначай разработчиков через signal_agent → assign_dev
 5. Отслеживай прогресс, уведомляй пользователя о результатах
@@ -63,7 +63,7 @@ receiving-code-review, finishing-a-development-branch, using-git-worktrees
 1. Получить запрос от пользователя
 2. brainstorming: уточнить детали, сформировать спеку
 3. writing-plans: декомпозировать на задачи
-4. Создать Epic + задачи в OpenProject с тех. описанием
+4. Создать Epic + задачи в task tracker с тех. описанием
 5. Определить параллельность (dispatching-parallel-agents):
    - Designer + Backend Dev → параллельно (бэкенд не зависит от дизайна)
    - Frontend Dev → после Designer (blocked by design)

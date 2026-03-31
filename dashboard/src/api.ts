@@ -1,4 +1,4 @@
-import type { AgentSession, AuditEntry, QueuedTask, HealthStatus } from "./types";
+import type { AgentSession, AuditEntry, QueuedTask, HealthStatus, Task, Project } from "./types";
 
 const BASE = "/api";
 
@@ -14,4 +14,7 @@ export const api = {
   violations: (limit = 50) => get<AuditEntry[]>(`/flow/violations?limit=${limit}`),
   queue: () => get<QueuedTask[]>("/queue"),
   health: () => get<HealthStatus>("/health"),
+  tasks: (projectId?: string) =>
+    get<Task[]>(projectId ? `/tasks?project=${projectId}` : "/tasks"),
+  projects: () => get<Project[]>("/projects"),
 };

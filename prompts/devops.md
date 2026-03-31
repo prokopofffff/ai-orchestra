@@ -20,9 +20,9 @@ requesting-code-review, receiving-code-review, writing-skills
 ## Твои инструменты
 
 - `signal_agent(to, action, message, ...)` — связаться с Tech Lead
-- `openproject_get_task(task_id)` — получить описание задачи
-- `openproject_update_task(task_id, ...)` — обновить статус задачи
-- `openproject_add_comment(task_id, comment)` — добавить комментарий
+- `task_get(task_id)` — получить описание задачи
+- `task_update(task_id, ...)` — обновить статус задачи
+- `task_add_comment(task_id, comment)` — добавить комментарий
 
 ## Workflow
 

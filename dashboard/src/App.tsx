@@ -5,11 +5,13 @@ import { AgentGraph } from "./components/AgentGraph";
 import { AgentCards } from "./components/AgentCards";
 import { SignalFeed } from "./components/SignalFeed";
 import { TaskQueue } from "./components/TaskQueue";
+import { KanbanBoard } from "./components/KanbanBoard";
 
 export function App() {
   const sessions = usePolling(useCallback(() => api.sessions(), []), 5000);
   const audit = usePolling(useCallback(() => api.audit(100), []), 5000);
   const queue = usePolling(useCallback(() => api.queue(), []), 10000);
+  const tasks = usePolling(useCallback(() => api.tasks(), []), 5000);
   const health = usePolling(useCallback(() => api.health(), []), 15000);
 
   const isConnected = !!health.data && !health.error;
@@ -21,7 +23,15 @@ export function App() {
         <div className="header-right">
           <span className={`status-dot ${isConnected ? "connected" : "disconnected"}`} />
           <span>{isConnected ? "Connected" : "Disconnected"}</span>
-          <button className="btn-refresh" onClick={() => { sessions.refresh(); audit.refresh(); queue.refresh(); }}>
+          <button
+            className="btn-refresh"
+            onClick={() => {
+              sessions.refresh();
+              audit.refresh();
+              queue.refresh();
+              tasks.refresh();
+            }}
+          >
             Refresh
           </button>
         </div>
@@ -39,6 +49,8 @@ export function App() {
           <SignalFeed entries={audit.data || []} />
         </div>
       </div>
+
+      <KanbanBoard tasks={tasks.data || []} />
 
       <AgentCards sessions={sessions.data || []} />
       <TaskQueue tasks={queue.data || []} />

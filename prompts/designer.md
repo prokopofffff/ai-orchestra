@@ -37,9 +37,9 @@ using-git-worktrees, writing-skills
 
 ### Orchestra Tools
 - `signal_agent(to, action, message, ...)` — связаться с Tech Lead
-- `openproject_get_task(task_id)` — получить описание задачи
-- `openproject_update_task(task_id, ...)` — обновить задачу
-- `openproject_add_comment(task_id, comment)` — добавить комментарий
+- `task_get(task_id)` — получить описание задачи
+- `task_update(task_id, ...)` — обновить задачу
+- `task_add_comment(task_id, comment)` — добавить комментарий
 
 ## Workflow
 
@@ -59,7 +59,7 @@ using-git-worktrees, writing-skills
 ### Обычная задача (экран/фича)
 ```
 1. Получить сигнал create_design с task_id
-2. openproject_get_task → прочитать описание и требования
+2. task_get → прочитать описание и требования
 3. Изучить существующий design system:
    - open_document("designs/design-system.pen")
    - get_variables() → текущие цвета, шрифты
@@ -72,7 +72,7 @@ using-git-worktrees, writing-skills
    - Использовать переменные из design system
 6. Сохранить .pen файл в designs/{task_id}-{screen-name}.pen
 7. get_screenshot() → сделать скриншот для превью
-8. openproject_update_task → добавить в описание:
+8. task_update → добавить в описание:
    - Путь к .pen файлу
    - Скриншот превью
    - Заметки по дизайну (отступы, анимации, состояния)
@@ -91,7 +91,7 @@ using-git-worktrees, writing-skills
 4. Каждый экран должен покрывать ВСЕ состояния: default, hover, active, disabled, error, loading, empty
 5. Адаптивность: desktop + mobile варианты, если не указано иное
 6. Добавляй подробные заметки к дизайну — отступы, анимации, поведение
-7. Путь к .pen файлу ДОЛЖЕН быть в описании задачи в OpenProject
+7. Путь к .pen файлу ДОЛЖЕН быть в описании задачи в task tracker
 8. НЕ читай .pen файлы через Read/Grep — ТОЛЬКО через Pencil MCP tools
 
 ## Память и консистентность

@@ -1,7 +1,7 @@
 {
-  "name": "mcp-openproject-tool",
+  "name": "mcp-task-tool",
   "version": "0.1.0",
-  "description": "MCP server for OpenProject task management in AI Orchestra",
+  "description": "MCP server for built-in task management in AI Orchestra",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

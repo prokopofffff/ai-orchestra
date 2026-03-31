@@ -35,3 +35,25 @@ export interface HealthStatus {
   status: string;
   timestamp: string;
 }
+
+export interface Task {
+  id: string;
+  project_id: string;
+  subject: string;
+  description: string;
+  type: string;
+  priority: string;
+  state: string;
+  parent_id: string | null;
+  assignee: string | null;
+  done_ratio: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+}

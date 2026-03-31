@@ -135,14 +135,9 @@ export function createSignalRouter(
         );
       }
 
-      // Log to OpenProject if task_id is in context
+      // Log signal as task comment if task_id provided
       if (context.task_id) {
-        await logToOpenProject(config, String(context.task_id), {
-          from,
-          to,
-          action,
-          message: context.message,
-        });
+        await logSignalAsComment(pool, String(context.task_id), from, to, action, context.message);
       }
 
       // Route signal
@@ -319,31 +314,24 @@ async function markProcessed(pool: Pool, signalId: string): Promise<void> {
 }
 
 
-async function logToOpenProject(
-  config: OrchestraConfig,
+async function logSignalAsComment(
+  pool: Pool,
   taskId: string,
-  signal: { from: string; to: string; action: string; message?: string }
+  from: string,
+  to: string,
+  action: string,
+  message?: string
 ): Promise<void> {
-  if (!config.openproject.apiKey) return;
-
   try {
-    const comment = `**[${signal.from} → ${signal.to}]** ${signal.action}${signal.message ? `: ${signal.message}` : ""}`;
-
-    await fetch(
-      `${config.openproject.url}/api/v3/work_packages/${taskId}/activities`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${Buffer.from(`apikey:${config.openproject.apiKey}`).toString("base64")}`,
-        },
-        body: JSON.stringify({
-          comment: { raw: comment },
-        }),
-      }
+    const comment = `**[${from} → ${to}]** ${action}${message ? `: ${message}` : ""}`;
+    const id = uuidv4();
+    await pool.query(
+      `INSERT INTO task_comments (id, task_id, author, comment)
+       VALUES ($1, $2, $3, $4)`,
+      [id, taskId, from, comment]
     );
-  } catch (err) {
-    console.warn("Failed to log to OpenProject:", (err as Error).message);
+  } catch {
+    // Task may not exist yet — ignore
   }
 }
 

@@ -8,7 +8,6 @@ services:
       POSTGRES_DB: orchestra
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "5432:5432"
     healthcheck:
@@ -16,23 +15,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  openproject:
-    image: openproject/openproject:15
-    restart: unless-stopped
-    environment:
-      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET:-a_very_long_secret_key_for_openproject_change_me}
-      OPENPROJECT_HOST__NAME: ${OPENPROJECT_HOST:-localhost:8080}
-      OPENPROJECT_HTTPS: "false"
-      DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/openproject
-    ports:
-      - "8080:80"
-    volumes:
-      - openproject_data:/var/openproject/assets
-      - ./docker/openproject-init.sh:/app/openproject-init.sh:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   orchestra-core:
     build:
@@ -43,8 +25,6 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/orchestra
-      OPENPROJECT_URL: http://openproject:80
-      OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
       CLAUDE_CLI_PATH: ${CLAUDE_CLI_PATH:-claude}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
@@ -65,5 +45,4 @@ services:
 
 volumes:
   postgres_data:
-  openproject_data:
   sessions_data:

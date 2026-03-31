@@ -3,10 +3,6 @@ import { z } from "zod";
 export const OrchestraConfigSchema = z.object({
   port: z.number().int().positive(),
   databaseUrl: z.string().url(),
-  openproject: z.object({
-    url: z.string().url(),
-    apiKey: z.string(),
-  }),
   claude: z.object({
     cliPath: z.string(),
   }),
@@ -22,10 +18,6 @@ export function loadConfig(): OrchestraConfig {
   const raw = {
     port: parseInt(process.env.PORT || "3000", 10),
     databaseUrl: process.env.DATABASE_URL,
-    openproject: {
-      url: process.env.OPENPROJECT_URL,
-      apiKey: process.env.OPENPROJECT_API_KEY || "",
-    },
     claude: {
       cliPath: process.env.CLAUDE_CLI_PATH || "claude",
     },

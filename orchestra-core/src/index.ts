@@ -8,6 +8,7 @@ import { AgentSpawner, SpawnAgentInputSchema } from "./agent-spawner.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { FlowGuard } from "./flow-guard.js";
 import { createWebhookRouter } from "./webhooks.js";
+import { createTaskRouter, initTaskTables } from "./task-api.js";
 
 async function main() {
   const config = loadConfig();
@@ -31,6 +32,9 @@ async function main() {
   await flowGuard.init();
   console.log("Flow guard initialized");
 
+  await initTaskTables(pool);
+  console.log("Task tables initialized");
+
   const spawner = new AgentSpawner(config, pool, sessionManager);
   spawner.setRateLimiter(rateLimiter);
 
@@ -46,6 +50,7 @@ async function main() {
   // Routes
   app.use("/api/signal", createSignalRouter(config, pool, sessionManager, flowGuard, spawner, rateLimiter));
   app.use("/api", createWebhookRouter(config, spawner));
+  app.use("/api", createTaskRouter(pool));
 
   // Agent spawning with rate limiting
   app.post("/api/spawn", async (req, res) => {

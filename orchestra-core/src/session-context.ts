@@ -45,7 +45,7 @@ export class SessionContext {
     }
 
     // 2. Current tasks from OpenProject
-    const tasks = await this.fetchOpenProjectTasks(projectId);
+    const tasks = await this.fetchTasks(projectId);
     if (tasks) {
       parts.push("## Текущие задачи в OpenProject\n");
       parts.push(tasks);
@@ -94,41 +94,24 @@ export class SessionContext {
   }
 
   /**
-   * Fetch current tasks from OpenProject API.
+   * Fetch current tasks from built-in task tracker.
    */
-  private async fetchOpenProjectTasks(projectId: string): Promise<string | null> {
-    if (!this.config.openproject.apiKey) return null;
-
+  private async fetchTasks(projectId: string): Promise<string | null> {
     try {
-      const response = await fetch(
-        `${this.config.openproject.url}/api/v3/projects/${projectId}/work_packages?pageSize=20`,
-        {
-          headers: {
-            Authorization: `Basic ${Buffer.from(`apikey:${this.config.openproject.apiKey}`).toString("base64")}`,
-          },
-        }
+      const result = await this.pool.query(
+        `SELECT id, subject, state, type, done_ratio, assignee
+         FROM tasks WHERE project_id = $1
+         ORDER BY CASE priority WHEN 'Immediate' THEN 0 WHEN 'High' THEN 1 WHEN 'Normal' THEN 2 WHEN 'Low' THEN 3 END
+         LIMIT 20`,
+        [projectId]
       );
 
-      if (!response.ok) return null;
+      if (result.rows.length === 0) return null;
 
-      const data = (await response.json()) as {
-        _embedded?: {
-          elements: Array<{
-            id: number;
-            subject: string;
-            _links?: { status?: { title: string }; type?: { title: string } };
-            percentageDone?: number;
-          }>;
-        };
-      };
-
-      const elements = data._embedded?.elements || [];
-      if (elements.length === 0) return null;
-
-      return elements
+      return result.rows
         .map(
-          (wp) =>
-            `- #${wp.id} [${wp._links?.status?.title || "?"}] ${wp.subject} (${wp.percentageDone || 0}%)`
+          (t) =>
+            `- #${t.id.substring(0, 8)} [${t.state}] ${t.subject} (${t.done_ratio}%)${t.assignee ? ` @${t.assignee}` : ""}`
         )
         .join("\n");
     } catch {

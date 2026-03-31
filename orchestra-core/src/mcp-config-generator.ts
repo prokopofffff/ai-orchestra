@@ -16,8 +16,6 @@ export const McpConfigSchema = z.object({
 export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 const ORCHESTRA_URL = process.env.ORCHESTRA_URL || "http://localhost:3000";
-const OPENPROJECT_URL = process.env.OPENPROJECT_URL || "http://localhost:8080";
-const OPENPROJECT_API_KEY = process.env.OPENPROJECT_API_KEY || "";
 const MCP_TOOLS_DIR = process.env.MCP_TOOLS_DIR || "/app/mcp-tools";
 
 function baseServers(role: AgentRole): Record<string, McpServerEntry> {
@@ -30,12 +28,12 @@ function baseServers(role: AgentRole): Record<string, McpServerEntry> {
         AGENT_ROLE: role,
       },
     },
-    openproject: {
+    tasks: {
       command: "node",
-      args: [path.join(MCP_TOOLS_DIR, "openproject-tool/dist/index.js")],
+      args: [path.join(MCP_TOOLS_DIR, "task-tool/dist/index.js")],
       env: {
-        OPENPROJECT_URL,
-        OPENPROJECT_API_KEY,
+        ORCHESTRA_URL,
+        AGENT_ROLE: role,
       },
     },
   };

@@ -1,9 +1,9 @@
 import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
-import { OrchestraConfig } from "./config.js";
 import { AgentRoleSchema, type AgentRole } from "./session-manager.js";
 import type { AgentSpawner, SpawnAgentInput } from "./agent-spawner.js";
+import { parseRow, parseRows } from "./db-utils.js";
 
 export const QueuedTaskSchema = z.object({
   id: z.string().uuid(),
@@ -35,11 +35,9 @@ const MAX_CONCURRENT_AGENTS = parseInt(
 
 export class RateLimiter {
   private pool: Pool;
-  private activeCount = 0;
-  private rateLimitedUntil: Date | null = null;
 
-  constructor(config: OrchestraConfig) {
-    this.pool = new Pool({ connectionString: config.databaseUrl });
+  constructor(pool: Pool) {
+    this.pool = pool;
   }
 
   async init(): Promise<void> {
@@ -56,36 +54,88 @@ export class RateLimiter {
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS rate_limit_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Reconcile: sync active count with actual running sessions
+    await this.reconcile();
+  }
+
+  /**
+   * Reconcile in-DB state with reality after a restart.
+   * Counts actually running sessions from agent_sessions table.
+   */
+  async reconcile(): Promise<void> {
+    const result = await this.pool.query(
+      `SELECT COUNT(*) as count FROM agent_sessions WHERE status = 'running'`
+    );
+    const actualRunning = parseInt(result.rows[0].count, 10);
+
+    await this.pool.query(
+      `INSERT INTO rate_limit_state (key, value, updated_at)
+       VALUES ('active_count', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [String(actualRunning)]
+    );
+
+    console.log(`Rate limiter reconciled: ${actualRunning} active sessions`);
   }
 
   async canSpawn(): Promise<boolean> {
-    // Check concurrent limit
-    if (this.activeCount >= MAX_CONCURRENT_AGENTS) {
+    const activeCount = await this.getActiveCount();
+    if (activeCount >= MAX_CONCURRENT_AGENTS) {
       return false;
     }
 
-    // Check rate limit cooldown
-    if (this.rateLimitedUntil && new Date() < this.rateLimitedUntil) {
+    const rateLimitedUntil = await this.getRateLimitedUntil();
+    if (rateLimitedUntil && new Date() < rateLimitedUntil) {
       return false;
     }
 
-    this.rateLimitedUntil = null;
+    // Clear expired rate limit
+    if (rateLimitedUntil && new Date() >= rateLimitedUntil) {
+      await this.clearRateLimit();
+    }
+
     return true;
   }
 
-  markRateLimited(retryAfterMs: number = 5 * 60 * 1000): void {
-    this.rateLimitedUntil = new Date(Date.now() + retryAfterMs);
-    console.log(
-      `Rate limited until ${this.rateLimitedUntil.toISOString()}`
+  async markRateLimited(retryAfterMs: number = 5 * 60 * 1000): Promise<void> {
+    const until = new Date(Date.now() + retryAfterMs);
+
+    await this.pool.query(
+      `INSERT INTO rate_limit_state (key, value, updated_at)
+       VALUES ('rate_limited_until', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [until.toISOString()]
+    );
+
+    console.log(`Rate limited until ${until.toISOString()}`);
+  }
+
+  async incrementActive(): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO rate_limit_state (key, value, updated_at)
+       VALUES ('active_count', '1', NOW())
+       ON CONFLICT (key) DO UPDATE
+       SET value = (COALESCE(rate_limit_state.value::integer, 0) + 1)::text,
+           updated_at = NOW()`
     );
   }
 
-  incrementActive(): void {
-    this.activeCount++;
-  }
-
-  decrementActive(): void {
-    this.activeCount = Math.max(0, this.activeCount - 1);
+  async decrementActive(): Promise<void> {
+    await this.pool.query(
+      `UPDATE rate_limit_state
+       SET value = GREATEST(0, COALESCE(value::integer, 1) - 1)::text,
+           updated_at = NOW()
+       WHERE key = 'active_count'`
+    );
   }
 
   async enqueue(input: SpawnAgentInput): Promise<number> {
@@ -107,7 +157,6 @@ export class RateLimiter {
       ]
     );
 
-    // Return queue position
     const result = await this.pool.query(
       `SELECT COUNT(*) as position FROM task_queue WHERE priority >= $1`,
       [priority]
@@ -120,10 +169,12 @@ export class RateLimiter {
       return 0;
     }
 
-    // Get highest priority queued tasks
+    const activeCount = await this.getActiveCount();
+    const slotsAvailable = MAX_CONCURRENT_AGENTS - activeCount;
+
     const result = await this.pool.query(
       `SELECT * FROM task_queue ORDER BY priority DESC, created_at ASC LIMIT $1`,
-      [MAX_CONCURRENT_AGENTS - this.activeCount]
+      [slotsAvailable]
     );
 
     let processed = 0;
@@ -131,20 +182,10 @@ export class RateLimiter {
     for (const row of result.rows) {
       if (!(await this.canSpawn())) break;
 
-      const task = QueuedTaskSchema.parse({
-        id: row.id,
-        role: row.role,
-        projectId: row.project_id,
-        taskId: row.task_id,
-        prompt: row.prompt,
-        repoUrl: row.repo_url,
-        workingDir: row.working_dir,
-        priority: row.priority,
-        createdAt: row.created_at,
-      });
+      const task = parseRow(QueuedTaskSchema, row);
 
       try {
-        this.incrementActive();
+        await this.incrementActive();
 
         await spawner.spawn({
           role: task.role,
@@ -155,21 +196,18 @@ export class RateLimiter {
           workingDir: task.workingDir || undefined,
         });
 
-        // Remove from queue
-        await this.pool.query(`DELETE FROM task_queue WHERE id = $1`, [
-          task.id,
-        ]);
+        await this.pool.query(`DELETE FROM task_queue WHERE id = $1`, [task.id]);
 
         processed++;
         console.log(
           `Processed queued task ${task.id} (${task.role}, priority ${task.priority})`
         );
       } catch (err) {
-        this.decrementActive();
+        await this.decrementActive();
         const error = err as Error;
 
         if (error.message.includes("rate limit") || error.message.includes("429")) {
-          this.markRateLimited();
+          await this.markRateLimited();
           break;
         }
 
@@ -185,19 +223,7 @@ export class RateLimiter {
       `SELECT * FROM task_queue ORDER BY priority DESC, created_at ASC`
     );
 
-    return result.rows.map((row) =>
-      QueuedTaskSchema.parse({
-        id: row.id,
-        role: row.role,
-        projectId: row.project_id,
-        taskId: row.task_id,
-        prompt: row.prompt,
-        repoUrl: row.repo_url,
-        workingDir: row.working_dir,
-        priority: row.priority,
-        createdAt: row.created_at,
-      })
-    );
+    return parseRows(QueuedTaskSchema, result.rows);
   }
 
   async getQueueLength(): Promise<number> {
@@ -205,5 +231,28 @@ export class RateLimiter {
       `SELECT COUNT(*) as count FROM task_queue`
     );
     return parseInt(result.rows[0].count, 10);
+  }
+
+  private async getActiveCount(): Promise<number> {
+    const result = await this.pool.query(
+      `SELECT value FROM rate_limit_state WHERE key = 'active_count'`
+    );
+    if (result.rows.length === 0) return 0;
+    return parseInt(result.rows[0].value, 10);
+  }
+
+  private async getRateLimitedUntil(): Promise<Date | null> {
+    const result = await this.pool.query(
+      `SELECT value FROM rate_limit_state WHERE key = 'rate_limited_until'`
+    );
+    if (result.rows.length === 0) return null;
+    const date = new Date(result.rows[0].value);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  private async clearRateLimit(): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM rate_limit_state WHERE key = 'rate_limited_until'`
+    );
   }
 }

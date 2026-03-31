@@ -8,31 +8,9 @@ const OPENPROJECT_API_KEY = process.env.OPENPROJECT_API_KEY || "";
 
 const AUTH_HEADER = `Basic ${Buffer.from(`apikey:${OPENPROJECT_API_KEY}`).toString("base64")}`;
 
-interface OpenProjectResponse {
-  id: number;
-  name?: string;
-  identifier?: string;
-  subject?: string;
-  description?: { raw: string };
-  lockVersion?: number;
-  percentageDone?: number;
-  createdAt?: string;
-  updatedAt?: string;
-  status?: string;
-  _links?: {
-    status?: { title: string; href: string };
-    type?: { title: string; href: string };
-    priority?: { title: string; href: string };
-  };
-  _embedded?: {
-    elements: OpenProjectResponse[];
-  };
-}
+// --- API helpers ---
 
-async function opFetch(
-  path: string,
-  options: RequestInit = {}
-): Promise<OpenProjectResponse> {
+async function opFetch(path: string, options: RequestInit = {}): Promise<unknown> {
   const response = await fetch(`${OPENPROJECT_URL}/api/v3${path}`, {
     ...options,
     headers: {
@@ -47,8 +25,72 @@ async function opFetch(
     throw new Error(`OpenProject API error ${response.status}: ${text}`);
   }
 
-  return response.json() as Promise<OpenProjectResponse>;
+  return response.json();
 }
+
+interface NamedResource {
+  id: number;
+  name: string;
+  identifier?: string;
+  subject?: string;
+  percentageDone?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  lockVersion?: number;
+  description?: { raw: string };
+  _links?: {
+    self?: { href: string };
+    status?: { title: string };
+    type?: { title: string };
+    priority?: { title: string };
+  };
+}
+
+interface CollectionResponse {
+  _embedded?: {
+    elements: NamedResource[];
+  };
+}
+
+// --- ID resolution cache ---
+
+const cache = new Map<string, Map<string, number>>();
+
+async function resolveId(
+  resource: "types" | "statuses" | "priorities",
+  name: string
+): Promise<number> {
+  let resourceCache = cache.get(resource);
+
+  if (!resourceCache) {
+    const data = (await opFetch(`/${resource}`)) as CollectionResponse;
+    const elements = data._embedded?.elements || [];
+    resourceCache = new Map<string, number>();
+    for (const el of elements) {
+      resourceCache.set(el.name.toLowerCase(), el.id);
+    }
+    cache.set(resource, resourceCache);
+  }
+
+  const id = resourceCache.get(name.toLowerCase());
+  if (id === undefined) {
+    const available = Array.from(resourceCache.keys()).join(", ");
+    throw new Error(
+      `Unknown ${resource} "${name}". Available: ${available}`
+    );
+  }
+
+  return id;
+}
+
+function resourceHref(
+  resource: "types" | "statuses" | "priorities" | "work_packages" | "projects",
+  id: number
+): string {
+  return `/api/v3/${resource}/${id}`;
+}
+
+// --- MCP Server ---
 
 const server = new McpServer({
   name: "openproject-tool",
@@ -61,12 +103,11 @@ server.tool(
   "List all projects in OpenProject.",
   {},
   async () => {
-    const data = await opFetch("/projects");
+    const data = (await opFetch("/projects")) as CollectionResponse;
     const projects = (data._embedded?.elements || []).map((p) => ({
       id: p.id,
       name: p.name,
       identifier: p.identifier,
-      status: p.status,
     }));
 
     return {
@@ -100,33 +141,33 @@ server.tool(
       .describe("Priority level"),
   },
   async ({ project_id, subject, description, type, parent_id, priority }) => {
-    const body = {
+    const typeId = await resolveId("types", type);
+    const priorityId = await resolveId("priorities", priority);
+
+    const body: Record<string, unknown> = {
       subject,
       description: description
         ? { format: "markdown", raw: description }
         : undefined,
       _links: {
-        type: { href: `/api/v3/types?name=${type}`, title: type },
-        priority: {
-          href: `/api/v3/priorities?name=${priority}`,
-          title: priority,
-        },
+        type: { href: resourceHref("types", typeId) },
+        priority: { href: resourceHref("priorities", priorityId) },
         ...(parent_id
-          ? { parent: { href: `/api/v3/work_packages/${parent_id}` } }
+          ? { parent: { href: resourceHref("work_packages", parent_id) } }
           : {}),
       },
     };
 
-    const data = await opFetch(`/projects/${project_id}/work_packages`, {
+    const data = (await opFetch(`/projects/${project_id}/work_packages`, {
       method: "POST",
       body: JSON.stringify(body),
-    });
+    })) as NamedResource;
 
     return {
       content: [
         {
           type: "text" as const,
-          text: `Task created: #${data.id} - ${data.subject}\nURL: ${OPENPROJECT_URL}/work_packages/${data.id}`,
+          text: `Task created: #${data.id} - ${data.subject || data.name}\nURL: ${OPENPROJECT_URL}/work_packages/${data.id}`,
         },
       ],
     };
@@ -164,37 +205,35 @@ server.tool(
       .describe("Percentage done"),
   },
   async ({ task_id, subject, description, status, done_ratio }) => {
-    const current = await opFetch(`/work_packages/${task_id}`);
+    // Get current lock version (required for PATCH)
+    const current = (await opFetch(`/work_packages/${task_id}`)) as NamedResource;
 
-    const body = {
+    const links: Record<string, { href: string }> = {};
+    if (status) {
+      const statusId = await resolveId("statuses", status);
+      links.status = { href: resourceHref("statuses", statusId) };
+    }
+
+    const body: Record<string, unknown> = {
       lockVersion: current.lockVersion,
       ...(subject ? { subject } : {}),
       ...(description
         ? { description: { format: "markdown", raw: description } }
         : {}),
       ...(done_ratio !== undefined ? { percentageDone: done_ratio } : {}),
-      ...(status
-        ? {
-            _links: {
-              status: {
-                href: `/api/v3/statuses?name=${status}`,
-                title: status,
-              },
-            },
-          }
-        : {}),
+      ...(Object.keys(links).length > 0 ? { _links: links } : {}),
     };
 
-    const data = await opFetch(`/work_packages/${task_id}`, {
+    const data = (await opFetch(`/work_packages/${task_id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
-    });
+    })) as NamedResource;
 
     return {
       content: [
         {
           type: "text" as const,
-          text: `Task updated: #${data.id} - ${data.subject}`,
+          text: `Task updated: #${data.id} - ${data.subject || data.name}`,
         },
       ],
     };
@@ -209,11 +248,11 @@ server.tool(
     task_id: z.number().describe("Work package ID"),
   },
   async ({ task_id }) => {
-    const data = await opFetch(`/work_packages/${task_id}`);
+    const data = (await opFetch(`/work_packages/${task_id}`)) as NamedResource;
 
     const task = {
       id: data.id,
-      subject: data.subject,
+      subject: data.subject || data.name,
       description: data.description?.raw || "",
       status: data._links?.status?.title || "Unknown",
       type: data._links?.type?.title || "Unknown",
@@ -240,13 +279,15 @@ server.tool(
   async ({ project_id, status }) => {
     let path = `/projects/${project_id}/work_packages?pageSize=50`;
     if (status) {
-      path += `&filters=[{"status":{"operator":"=","values":["${status}"]}}]`;
+      const statusId = await resolveId("statuses", status);
+      path += `&filters=[{"status":{"operator":"=","values":["${statusId}"]}}]`;
     }
 
-    const data = await opFetch(path);
+    const data = (await opFetch(path)) as CollectionResponse;
+
     const tasks = (data._embedded?.elements || []).map((wp) => ({
       id: wp.id,
-      subject: wp.subject,
+      subject: wp.subject || wp.name,
       status: wp._links?.status?.title || "Unknown",
       type: wp._links?.type?.title || "Unknown",
       percentageDone: wp.percentageDone || 0,

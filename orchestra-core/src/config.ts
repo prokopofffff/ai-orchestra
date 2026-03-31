@@ -15,6 +15,9 @@ export const OrchestraConfigSchema = z.object({
   claude: z.object({
     cliPath: z.string(),
   }),
+  openclaw: z.object({
+    url: z.string().url(),
+  }),
 });
 
 export type OrchestraConfig = z.infer<typeof OrchestraConfigSchema>;
@@ -34,6 +37,9 @@ export function loadConfig(): OrchestraConfig {
     },
     claude: {
       cliPath: process.env.CLAUDE_CLI_PATH || "claude",
+    },
+    openclaw: {
+      url: process.env.OPENCLAW_URL || "http://localhost:3100",
     },
   };
 

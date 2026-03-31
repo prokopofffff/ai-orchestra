@@ -7,6 +7,7 @@ import { AgentSpawner } from "./agent-spawner.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { OrchestraConfig } from "./config.js";
 import { notifyUser } from "./notify.js";
+import { parseRow } from "./db-utils.js";
 
 export const SignalActionSchema = z.enum([
   "assign_dev",
@@ -48,10 +49,12 @@ export const SignalContextSchema = z
   .passthrough();
 export type SignalContext = z.infer<typeof SignalContextSchema>;
 
+const SignalRecipientSchema = AgentRoleSchema.or(z.literal("user"));
+
 export const SendSignalSchema = z.object({
   from: z.string().min(1),
-  to: z.string().min(1),
-  action: z.string().min(1),
+  to: SignalRecipientSchema,
+  action: SignalActionSchema,
   context: SignalContextSchema.optional().default({}),
 });
 
@@ -76,12 +79,12 @@ export type Signal = z.infer<typeof SignalSchema>;
 
 export function createSignalRouter(
   config: OrchestraConfig,
+  pool: Pool,
   sessionManager: SessionManager,
   spawner?: AgentSpawner,
   rateLimiter?: RateLimiter
 ): Router {
   const router = Router();
-  const pool = new Pool({ connectionString: config.databaseUrl });
 
   // POST /api/signal — send a signal between agents
   router.post("/", async (req: Request, res: Response) => {
@@ -146,22 +149,16 @@ export function createSignalRouter(
     try {
       const { agentRole } = req.params;
       const result = await pool.query(
-        `SELECT * FROM signal_queue
+        `SELECT id, from_agent AS "from", to_agent AS "to",
+                action, context, created_at, processed
+         FROM signal_queue
          WHERE to_agent = $1 AND processed = FALSE
          ORDER BY created_at ASC`,
         [agentRole]
       );
 
       const signals = result.rows.map((row) =>
-        SignalSchema.parse({
-          id: row.id,
-          from: row.from_agent,
-          to: row.to_agent,
-          action: row.action,
-          context: row.context,
-          createdAt: row.created_at,
-          processed: row.processed,
-        })
+        parseRow(SignalSchema, row)
       );
 
       res.json(signals);
@@ -176,21 +173,13 @@ export function createSignalRouter(
     try {
       const limit = z.coerce.number().int().positive().default(50).parse(req.query.limit);
       const result = await pool.query(
-        `SELECT * FROM signal_queue ORDER BY created_at DESC LIMIT $1`,
+        `SELECT id, from_agent AS "from", to_agent AS "to",
+                action, context, created_at, processed
+         FROM signal_queue ORDER BY created_at DESC LIMIT $1`,
         [limit]
       );
 
-      res.json(
-        result.rows.map((row) => ({
-          id: row.id,
-          from: row.from_agent,
-          to: row.to_agent,
-          action: row.action,
-          context: row.context,
-          createdAt: row.created_at,
-          processed: row.processed,
-        }))
-      );
+      res.json(result.rows.map((row) => parseRow(SignalSchema, row)));
     } catch (err) {
       console.error("Error fetching signal history:", err);
       res.status(500).json({ error: "Failed to fetch history" });

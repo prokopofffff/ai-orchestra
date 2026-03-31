@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { OrchestraConfig } from "./config.js";
+import { parseRow, parseRows } from "./db-utils.js";
 
 export const AgentRoleSchema = z.enum([
   "tech-lead",
@@ -46,14 +47,72 @@ export const LaunchAgentInputSchema = z.object({
 
 const SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours
 
+/**
+ * Schema for Claude CLI JSON output.
+ * Claude CLI with --output-format json returns an array of message objects.
+ * The session_id is available in the top-level response metadata.
+ */
+const ClaudeJsonOutputSchema = z.object({
+  session_id: z.string().optional(),
+}).passthrough();
+
+const ClaudeJsonArraySchema = z.array(
+  z.object({
+    type: z.string().optional(),
+    session_id: z.string().optional(),
+  }).passthrough()
+);
+
+function extractSessionId(stdout: string): string | null {
+  // Try parsing as JSON first (structured output)
+  try {
+    // Claude CLI may output a single JSON object or an array
+    const parsed = JSON.parse(stdout);
+
+    if (Array.isArray(parsed)) {
+      const validated = ClaudeJsonArraySchema.safeParse(parsed);
+      if (validated.success) {
+        // session_id is typically on the last message or a system message
+        for (const msg of validated.data) {
+          if (msg.session_id) return msg.session_id;
+        }
+      }
+    } else {
+      const validated = ClaudeJsonOutputSchema.safeParse(parsed);
+      if (validated.success && validated.data.session_id) {
+        return validated.data.session_id;
+      }
+    }
+  } catch {
+    // Not valid JSON — may be mixed output, try JSONL
+  }
+
+  // Try JSONL (one JSON object per line)
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.startsWith("{")) continue;
+
+    try {
+      const obj = ClaudeJsonOutputSchema.safeParse(JSON.parse(trimmed));
+      if (obj.success && obj.data.session_id) {
+        return obj.data.session_id;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 export class SessionManager {
   private pool: Pool;
   private config: OrchestraConfig;
   private activeProcesses = new Map<string, ChildProcess>();
 
-  constructor(config: OrchestraConfig) {
+  constructor(config: OrchestraConfig, pool: Pool) {
     this.config = config;
-    this.pool = new Pool({ connectionString: config.databaseUrl });
+    this.pool = pool;
   }
 
   async init(): Promise<void> {
@@ -81,6 +140,13 @@ export class SessionManager {
         processed BOOLEAN DEFAULT FALSE
       )
     `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS session_meta (
+        session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        meta JSONB DEFAULT '{}'
+      )
+    `);
   }
 
   async shouldResume(
@@ -96,7 +162,7 @@ export class SessionManager {
 
     if (result.rows.length === 0) return null;
 
-    const session = this.rowToSession(result.rows[0]);
+    const session = parseRow(AgentSessionSchema, result.rows[0]);
     const age = Date.now() - session.lastActiveAt.getTime();
 
     if (age > SESSION_TIMEOUT_MS) {
@@ -120,7 +186,7 @@ export class SessionManager {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [id, input.role, input.projectId, input.taskId || null]
     );
-    return this.rowToSession(result.rows[0]);
+    return parseRow(AgentSessionSchema, result.rows[0]);
   }
 
   async launchAgent(
@@ -154,10 +220,8 @@ export class SessionManager {
       proc.on("close", async (code) => {
         this.activeProcesses.delete(session.id);
 
-        const sessionIdMatch = stdout.match(/Session ID: (\S+)/);
-        const claudeSessionId = sessionIdMatch
-          ? sessionIdMatch[1]
-          : session.claudeSessionId;
+        const claudeSessionId =
+          extractSessionId(stdout) || session.claudeSessionId;
 
         await this.pool.query(
           `UPDATE agent_sessions
@@ -203,7 +267,7 @@ export class SessionManager {
       mcpConfigPath || "/app/mcp-tools/mcp-config.json",
       "--print",
       "--output-format",
-      "text",
+      "json",
       "-p",
       prompt
     );
@@ -236,13 +300,69 @@ export class SessionManager {
     );
   }
 
+  /**
+   * Graceful shutdown: kill all active child processes,
+   * mark their sessions as 'sleeping' so they can be resumed after restart.
+   */
+  async shutdownAll(): Promise<number> {
+    const sessionIds = Array.from(this.activeProcesses.keys());
+
+    if (sessionIds.length === 0) return 0;
+
+    console.log(`Shutting down ${sessionIds.length} active agent(s)...`);
+
+    // Send SIGTERM to all child processes
+    for (const [sessionId, proc] of this.activeProcesses) {
+      try {
+        proc.kill("SIGTERM");
+        console.log(`  Sent SIGTERM to session ${sessionId} (pid ${proc.pid})`);
+      } catch {
+        // Process may have already exited
+      }
+    }
+
+    // Wait briefly for processes to exit gracefully
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // Force kill any remaining processes
+    for (const [sessionId, proc] of this.activeProcesses) {
+      try {
+        if (!proc.killed) {
+          proc.kill("SIGKILL");
+          console.log(`  Force killed session ${sessionId}`);
+        }
+      } catch {
+        // Already dead
+      }
+    }
+
+    this.activeProcesses.clear();
+
+    // Mark all running sessions as sleeping (resumable after restart)
+    const result = await this.pool.query(
+      `UPDATE agent_sessions
+       SET status = 'sleeping', last_active_at = NOW()
+       WHERE status = 'running'
+       RETURNING id`
+    );
+
+    const updated = result.rowCount || 0;
+    console.log(`Marked ${updated} running session(s) as sleeping`);
+
+    return updated;
+  }
+
+  get activeProcessCount(): number {
+    return this.activeProcesses.size;
+  }
+
   async getSession(sessionId: string): Promise<AgentSession | null> {
     const result = await this.pool.query(
       `SELECT * FROM agent_sessions WHERE id = $1`,
       [sessionId]
     );
     if (result.rows.length === 0) return null;
-    return this.rowToSession(result.rows[0]);
+    return parseRow(AgentSessionSchema, result.rows[0]);
   }
 
   async listSessions(projectId?: string): Promise<AgentSession[]> {
@@ -257,7 +377,7 @@ export class SessionManager {
         };
 
     const result = await this.pool.query(query);
-    return result.rows.map((row) => this.rowToSession(row));
+    return parseRows(AgentSessionSchema, result.rows);
   }
 
   async cleanupStaleSessions(): Promise<number> {
@@ -271,16 +391,4 @@ export class SessionManager {
     return result.rowCount || 0;
   }
 
-  private rowToSession(row: Record<string, unknown>): AgentSession {
-    return AgentSessionSchema.parse({
-      id: row.id,
-      role: row.role,
-      projectId: row.project_id,
-      claudeSessionId: row.claude_session_id,
-      createdAt: row.created_at,
-      lastActiveAt: row.last_active_at,
-      status: row.status,
-      taskId: row.task_id,
-    });
-  }
 }

@@ -20,9 +20,9 @@ export class SessionContext {
   private pool: Pool;
   private config: OrchestraConfig;
 
-  constructor(config: OrchestraConfig) {
+  constructor(config: OrchestraConfig, pool: Pool) {
     this.config = config;
-    this.pool = new Pool({ connectionString: config.databaseUrl });
+    this.pool = pool;
   }
 
   /**
@@ -143,19 +143,24 @@ export class SessionContext {
     role: AgentRole
   ): Promise<Array<{ from: string; action: string; message?: string }>> {
     try {
+      // Fetch and mark as processed in one transaction to avoid duplicates
       const result = await this.pool.query(
-        `SELECT from_agent, action, context->>'message' as message
-         FROM signal_queue
-         WHERE to_agent = $1 AND processed = FALSE
-         ORDER BY created_at ASC
-         LIMIT 10`,
+        `UPDATE signal_queue
+         SET processed = TRUE
+         WHERE id IN (
+           SELECT id FROM signal_queue
+           WHERE to_agent = $1 AND processed = FALSE
+           ORDER BY created_at ASC
+           LIMIT 10
+         )
+         RETURNING from_agent AS "from", action, context->>'message' AS message`,
         [role]
       );
 
       return result.rows.map((row) => ({
-        from: row.from_agent,
-        action: row.action,
-        message: row.message || undefined,
+        from: row.from as string,
+        action: row.action as string,
+        message: (row.message as string) || undefined,
       }));
     } catch {
       return [];

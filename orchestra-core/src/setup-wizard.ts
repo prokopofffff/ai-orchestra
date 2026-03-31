@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -109,7 +109,7 @@ export class SetupWizard {
 
   private verifyClaudeCli(): void {
     try {
-      const version = execSync("claude --version 2>&1", {
+      const version = execFileSync("claude", ["--version"], {
         encoding: "utf-8",
       }).trim();
       console.log(`  ✅ Claude CLI found: ${version}`);
@@ -121,7 +121,7 @@ export class SetupWizard {
 
   private verifySuperpowers(): void {
     try {
-      const plugins = execSync("claude plugins list 2>&1", {
+      const plugins = execFileSync("claude", ["plugins", "list"], {
         encoding: "utf-8",
       });
       if (plugins.includes("superpowers")) {
@@ -129,7 +129,7 @@ export class SetupWizard {
       } else {
         console.log("  ⚠️  Superpowers plugin not found. Installing...");
         try {
-          execSync("claude plugins install superpowers@claude-plugins-official 2>&1");
+          execFileSync("claude", ["plugins", "install", "superpowers@claude-plugins-official"]);
           console.log("  ✅ Superpowers plugin installed");
         } catch {
           console.log("  ⚠️  Could not install Superpowers. Install manually:");

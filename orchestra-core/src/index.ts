@@ -1,4 +1,5 @@
 import express from "express";
+import { Pool } from "pg";
 import { loadConfig } from "./config.js";
 import { SessionManager } from "./session-manager.js";
 import { createSignalRouter } from "./signal-api.js";
@@ -11,15 +12,20 @@ async function main() {
 
   app.use(express.json());
 
-  // Init components
-  const sessionManager = new SessionManager(config);
+  // Shared database pool (single pool for all modules)
+  const pool = new Pool({ connectionString: config.databaseUrl });
+
+  // Init components with shared pool
+  const sessionManager = new SessionManager(config, pool);
   await sessionManager.init();
   console.log("Session manager initialized");
 
-  const spawner = new AgentSpawner(config, sessionManager);
-  const rateLimiter = new RateLimiter(config);
+  const rateLimiter = new RateLimiter(pool);
   await rateLimiter.init();
   console.log("Rate limiter initialized");
+
+  const spawner = new AgentSpawner(config, pool, sessionManager);
+  spawner.setRateLimiter(rateLimiter);
 
   // Cleanup stale sessions periodically (every 5 minutes)
   setInterval(async () => {
@@ -33,7 +39,7 @@ async function main() {
   }, 5 * 60 * 1000);
 
   // Routes
-  app.use("/api/signal", createSignalRouter(config, sessionManager, spawner, rateLimiter));
+  app.use("/api/signal", createSignalRouter(config, pool, sessionManager, spawner, rateLimiter));
 
   // Agent spawning with rate limiting
   app.post("/api/spawn", async (req, res) => {
@@ -100,7 +106,34 @@ async function main() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  app.listen(config.port, () => {
+  // Graceful shutdown
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    console.log(`\nReceived ${signal}, shutting down gracefully...`);
+
+    // 1. Stop accepting new requests
+    server.close();
+
+    // 2. Kill active agent processes, mark sessions as sleeping
+    await sessionManager.shutdownAll();
+
+    // 3. Reconcile rate limiter state
+    await rateLimiter.reconcile();
+
+    // 4. Close database pool
+    await pool.end();
+
+    console.log("Shutdown complete");
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  const server = app.listen(config.port, () => {
     console.log(`Orchestra Core running on port ${config.port}`);
   });
 }

@@ -1,10 +1,18 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { SessionManager, AgentRole, AgentRoleSchema } from "./session-manager.js";
+import { Pool } from "pg";
+import {
+  SessionManager,
+  AgentRole,
+  AgentRoleSchema,
+  AgentSession,
+} from "./session-manager.js";
 import { writeMcpConfig } from "./mcp-config-generator.js";
 import { SessionContext } from "./session-context.js";
+import { RateLimiter } from "./rate-limiter.js";
+import { notifyUser } from "./notify.js";
 import { OrchestraConfig } from "./config.js";
 
 export const SpawnAgentInputSchema = z.object({
@@ -28,16 +36,24 @@ export const SpawnResultSchema = z.object({
 export type SpawnResult = z.infer<typeof SpawnResultSchema>;
 
 const PROJECTS_DIR = process.env.PROJECTS_DIR || "/projects";
+const MAX_RETRIES = parseInt(process.env.AGENT_MAX_RETRIES || "2", 10);
 
 export class AgentSpawner {
   private sessionManager: SessionManager;
   private sessionContext: SessionContext;
   private config: OrchestraConfig;
+  private pool: Pool;
+  private rateLimiter: RateLimiter | null = null;
 
-  constructor(config: OrchestraConfig, sessionManager: SessionManager) {
+  constructor(config: OrchestraConfig, pool: Pool, sessionManager: SessionManager) {
     this.config = config;
+    this.pool = pool;
     this.sessionManager = sessionManager;
-    this.sessionContext = new SessionContext(config);
+    this.sessionContext = new SessionContext(config, pool);
+  }
+
+  setRateLimiter(rateLimiter: RateLimiter): void {
+    this.rateLimiter = rateLimiter;
   }
 
   async spawn(input: SpawnAgentInput): Promise<SpawnResult> {
@@ -73,7 +89,7 @@ export class AgentSpawner {
       ? await this.sessionManager.shouldResume(parsed.role, parsed.projectId)
       : null;
 
-    let session;
+    let session: AgentSession;
     if (existing) {
       session = existing;
       console.log(`Resuming ${parsed.role} session ${session.id}`);
@@ -86,15 +102,11 @@ export class AgentSpawner {
       console.log(`Created new ${parsed.role} session ${session.id}`);
     }
 
-    // Launch agent asynchronously
-    this.sessionManager
-      .launchAgent(session, fullPrompt, workingDir, mcpConfigPath)
-      .then((result) => {
-        console.log(`Agent ${parsed.role} (${session.id}) completed`);
-      })
-      .catch((err) => {
-        console.error(`Agent ${parsed.role} (${session.id}) failed:`, (err as Error).message);
-      });
+    // Track launch attempt in DB
+    await this.setSessionMeta(session.id, { retryCount: 0, lastError: null });
+
+    // Launch with tracking (not fire-and-forget)
+    this.launchWithTracking(session, parsed, fullPrompt, workingDir, mcpConfigPath);
 
     return SpawnResultSchema.parse({
       sessionId: session.id,
@@ -103,6 +115,123 @@ export class AgentSpawner {
       projectId: parsed.projectId,
       branch,
     });
+  }
+
+  /**
+   * Launch agent with retry logic, status tracking, and failure notifications.
+   * Runs asynchronously but tracks everything in DB.
+   */
+  private async launchWithTracking(
+    session: AgentSession,
+    input: SpawnAgentInput,
+    prompt: string,
+    workingDir: string,
+    mcpConfigPath: string
+  ): Promise<void> {
+    let lastError: string | null = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(
+            `Retry ${attempt}/${MAX_RETRIES} for ${input.role} (${session.id})`
+          );
+          await this.setSessionMeta(session.id, {
+            retryCount: attempt,
+            lastError,
+          });
+        }
+
+        await this.rateLimiter?.incrementActive();
+
+        const result = await this.sessionManager.launchAgent(
+          session,
+          prompt,
+          workingDir,
+          mcpConfigPath
+        );
+
+        // Success
+        await this.rateLimiter?.decrementActive();
+        await this.setSessionMeta(session.id, {
+          retryCount: attempt,
+          lastError: null,
+          completedAt: new Date().toISOString(),
+          outputLength: result.output.length,
+        });
+
+        console.log(
+          `Agent ${input.role} (${session.id}) completed successfully (attempt ${attempt + 1})`
+        );
+        return;
+      } catch (err) {
+        await this.rateLimiter?.decrementActive();
+        lastError = (err as Error).message;
+
+        console.error(
+          `Agent ${input.role} (${session.id}) failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${lastError}`
+        );
+
+        // Rate limit — don't retry, queue instead
+        if (lastError.includes("rate limit") || lastError.includes("429")) {
+          await this.rateLimiter?.markRateLimited();
+          await this.setSessionMeta(session.id, {
+            retryCount: attempt,
+            lastError: "rate_limited",
+            status: "queued",
+          });
+
+          // Re-queue the task
+          await this.rateLimiter?.enqueue(input);
+          console.log(`Agent ${input.role} (${session.id}) re-queued due to rate limit`);
+          return;
+        }
+
+        // Last attempt — give up
+        if (attempt === MAX_RETRIES) {
+          break;
+        }
+
+        // Wait before retry (exponential backoff: 5s, 15s)
+        const delay = 5000 * Math.pow(3, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    // All retries exhausted — mark failed and notify user
+    await this.pool.query(
+      `UPDATE agent_sessions SET status = 'terminated' WHERE id = $1`,
+      [session.id]
+    );
+    await this.setSessionMeta(session.id, {
+      retryCount: MAX_RETRIES,
+      lastError,
+      status: "failed",
+    });
+
+    const errorMsg = [
+      `Agent ${input.role} failed after ${MAX_RETRIES + 1} attempts.`,
+      `Session: ${session.id}`,
+      input.taskId ? `Task: ${input.taskId}` : null,
+      `Error: ${lastError}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    console.error(errorMsg);
+    await notifyUser(this.config, `⚠️ ${errorMsg}`);
+  }
+
+  private async setSessionMeta(
+    sessionId: string,
+    meta: Record<string, unknown>
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO session_meta (session_id, meta)
+       VALUES ($1, $2)
+       ON CONFLICT (session_id) DO UPDATE SET meta = session_meta.meta || $2`,
+      [sessionId, JSON.stringify(meta)]
+    );
   }
 
   private getProjectDir(projectId: string): string {
@@ -115,10 +244,10 @@ export class AgentSpawner {
     if (isNew) {
       if (repoUrl) {
         console.log(`Cloning ${repoUrl} into ${dir}`);
-        execSync(`git clone ${repoUrl} ${dir}`, { stdio: "pipe" });
+        execFileSync("git", ["clone", repoUrl, dir], { stdio: "pipe" });
       } else {
         mkdirSync(dir, { recursive: true });
-        execSync("git init", { cwd: dir, stdio: "pipe" });
+        execFileSync("git", ["init"], { cwd: dir, stdio: "pipe" });
       }
     }
 
@@ -165,25 +294,21 @@ export class AgentSpawner {
     const branch = `${branchPrefix}/${taskId}`;
 
     try {
-      // Fetch latest from remote
-      execSync("git fetch origin", { cwd: workingDir, stdio: "pipe" });
+      execFileSync("git", ["fetch", "origin"], { cwd: workingDir, stdio: "pipe" });
     } catch {
       // No remote configured — skip fetch
     }
 
     try {
-      // Check if branch already exists
-      execSync(`git rev-parse --verify ${branch}`, {
+      execFileSync("git", ["rev-parse", "--verify", branch], {
         cwd: workingDir,
         stdio: "pipe",
       });
-      // Branch exists — checkout
-      execSync(`git checkout ${branch}`, { cwd: workingDir, stdio: "pipe" });
+      execFileSync("git", ["checkout", branch], { cwd: workingDir, stdio: "pipe" });
       console.log(`Checked out existing branch ${branch}`);
     } catch {
-      // Branch doesn't exist — create from main
       const mainBranch = this.getMainBranch(workingDir);
-      execSync(`git checkout -b ${branch} ${mainBranch}`, {
+      execFileSync("git", ["checkout", "-b", branch, mainBranch], {
         cwd: workingDir,
         stdio: "pipe",
       });
@@ -207,8 +332,9 @@ export class AgentSpawner {
 
   private getMainBranch(workingDir: string): string {
     try {
-      const result = execSync(
-        "git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || echo refs/heads/main",
+      const result = execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD"],
         { cwd: workingDir, encoding: "utf-8" }
       ).trim();
       return result.replace("refs/remotes/origin/", "").replace("refs/heads/", "");

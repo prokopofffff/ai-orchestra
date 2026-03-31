@@ -42,8 +42,6 @@ function baseServers(role: AgentRole): Record<string, McpServerEntry> {
 }
 
 function pencilServers(): Record<string, McpServerEntry> {
-  // Pencil MCP is assumed to be available as a system-installed MCP server
-  // The exact command depends on the Pencil installation
   return {
     pencil: {
       command: "pencil-mcp",
@@ -53,34 +51,21 @@ function pencilServers(): Record<string, McpServerEntry> {
   };
 }
 
-const ROLE_SERVERS: Record<AgentRole, () => Record<string, McpServerEntry>> = {
-  "tech-lead": (role = "tech-lead" as AgentRole) => ({
-    ...baseServers(role),
-  }),
-  designer: (role = "designer" as AgentRole) => ({
-    ...baseServers(role),
-    ...pencilServers(),
-  }),
-  frontend: (role = "frontend" as AgentRole) => ({
-    ...baseServers(role),
-    ...pencilServers(), // read-only access to designs
-  }),
-  backend: (role = "backend" as AgentRole) => ({
-    ...baseServers(role),
-  }),
-  qa: (role = "qa" as AgentRole) => ({
-    ...baseServers(role),
-  }),
-  devops: (role = "devops" as AgentRole) => ({
-    ...baseServers(role),
-  }),
-};
+const ROLES_WITH_PENCIL: ReadonlySet<AgentRole> = new Set(["designer", "frontend"]);
+
+function serversForRole(role: AgentRole): Record<string, McpServerEntry> {
+  const servers = baseServers(role);
+
+  if (ROLES_WITH_PENCIL.has(role)) {
+    Object.assign(servers, pencilServers());
+  }
+
+  return servers;
+}
 
 export function generateMcpConfig(role: AgentRole): McpConfig {
   const parsedRole = AgentRoleSchema.parse(role);
-  const serversFn = ROLE_SERVERS[parsedRole];
-  const servers = serversFn();
-
+  const servers = serversForRole(parsedRole);
   return McpConfigSchema.parse({ mcpServers: servers });
 }
 

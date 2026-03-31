@@ -8,31 +8,46 @@ export const NotifyPayloadSchema = z.object({
 });
 export type NotifyPayload = z.infer<typeof NotifyPayloadSchema>;
 
-const OPENCLAW_URL = process.env.OPENCLAW_URL || "http://localhost:3100";
-
 export async function notifyUser(
   config: OrchestraConfig,
   message?: string
 ): Promise<boolean> {
   if (!message) return false;
 
-  // Try OpenClaw first
-  const openClawSent = await sendViaOpenClaw(message);
-  if (openClawSent) return true;
+  const sent = await sendViaOpenClaw(config.openclaw.url, message);
+  if (sent) return true;
 
   // Fallback: log to console
   console.log(`[NOTIFY USER]: ${message}`);
   return false;
 }
 
-async function sendViaOpenClaw(message: string): Promise<boolean> {
+/**
+ * Send a message mirroring agent communication to the user.
+ * Used by Signal Router to keep user informed of agent activity.
+ */
+export async function mirrorToUser(
+  config: OrchestraConfig,
+  from: string,
+  to: string,
+  action: string,
+  message?: string
+): Promise<boolean> {
+  const formatted = `[${from} → ${to}] ${action}${message ? `: ${message}` : ""}`;
+  return sendViaOpenClaw(config.openclaw.url, formatted);
+}
+
+async function sendViaOpenClaw(
+  openclawUrl: string,
+  message: string
+): Promise<boolean> {
   try {
     const payload = NotifyPayloadSchema.parse({
       channel: "telegram",
       message,
     });
 
-    const response = await fetch(`${OPENCLAW_URL}/api/send`, {
+    const response = await fetch(`${openclawUrl}/api/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -49,18 +64,4 @@ async function sendViaOpenClaw(message: string): Promise<boolean> {
     console.warn("OpenClaw not available:", (err as Error).message);
     return false;
   }
-}
-
-/**
- * Send a message mirroring agent communication to the user.
- * Used by Signal Router to keep user informed of agent activity.
- */
-export async function mirrorToUser(
-  from: string,
-  to: string,
-  action: string,
-  message?: string
-): Promise<boolean> {
-  const formatted = `[${from} → ${to}] ${action}${message ? `: ${message}` : ""}`;
-  return sendViaOpenClaw(formatted);
 }

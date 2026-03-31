@@ -1,0 +1,115 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orchestra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orchestra_secret}
+      POSTGRES_DB: orchestra
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: orchestra
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-orchestra_secret}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-admin}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  openproject:
+    image: openproject/openproject:15
+    restart: unless-stopped
+    environment:
+      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET:-a_very_long_secret_key_for_openproject_change_me}
+      OPENPROJECT_HOST__NAME: ${OPENPROJECT_HOST:-localhost:8080}
+      OPENPROJECT_HTTPS: "false"
+      DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/openproject
+    ports:
+      - "8080:80"
+    volumes:
+      - openproject_data:/var/openproject/assets
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  openclaw:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      sh -c "npm install -g openclaw@latest &&
+             openclaw start --config /app/config.yaml"
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./openclaw/config.yaml:/app/config.yaml:ro
+      - openclaw_data:/root/.openclaw
+    depends_on:
+      n8n:
+        condition: service_started
+
+  orchestra-core:
+    build:
+      context: ./orchestra-core
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/orchestra
+      N8N_URL: http://n8n:5678
+      N8N_USER: ${N8N_USER:-admin}
+      N8N_PASSWORD: ${N8N_PASSWORD:-admin}
+      OPENPROJECT_URL: http://openproject:80
+      OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
+      CLAUDE_CLI_PATH: ${CLAUDE_CLI_PATH:-claude}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./prompts:/app/prompts:ro
+      - ./mcp-tools:/app/mcp-tools:ro
+      - ./templates:/app/templates:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sessions_data:/app/data/sessions
+      # Mount host claude config for CLI access
+      - ${HOME}/.claude:/root/.claude:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      n8n:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  n8n_data:
+  openproject_data:
+  openclaw_data:
+  sessions_data:

@@ -1,0 +1,302 @@
+{
+  "name": "Signal Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "signal-router",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Signal",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputKey": "tech-lead",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "tech-lead",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "designer",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "designer",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "frontend",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "frontend",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "backend",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "backend",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "qa",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "qa",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "devops",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "devops",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "user",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.to }}",
+                    "rightValue": "user",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-recipient",
+      "name": "Route by Recipient",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal/dispatch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"role\": \"{{ $json.to }}\",\n  \"projectId\": \"{{ $json.context.project_id }}\",\n  \"taskId\": \"{{ $json.context.task_id }}\",\n  \"prompt\": \"Новый сигнал от {{ $json.from }}.\\nAction: {{ $json.action }}\\nСообщение: {{ $json.context.message }}\",\n  \"workingDir\": \"/projects/{{ $json.context.project_id }}\"\n}",
+        "options": {}
+      },
+      "id": "dispatch-tech-lead",
+      "name": "Dispatch: Tech Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal/dispatch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"role\": \"designer\",\n  \"projectId\": \"{{ $json.context.project_id }}\",\n  \"taskId\": \"{{ $json.context.task_id }}\",\n  \"prompt\": \"Новый сигнал от {{ $json.from }}.\\nAction: {{ $json.action }}\\nСообщение: {{ $json.context.message }}\",\n  \"workingDir\": \"/projects/{{ $json.context.project_id }}\"\n}",
+        "options": {}
+      },
+      "id": "dispatch-designer",
+      "name": "Dispatch: Designer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 175]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal/dispatch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"role\": \"{{ $json.to }}\",\n  \"projectId\": \"{{ $json.context.project_id }}\",\n  \"taskId\": \"{{ $json.context.task_id }}\",\n  \"prompt\": \"Новый сигнал от {{ $json.from }}.\\nAction: {{ $json.action }}\\nСообщение: {{ $json.context.message }}\",\n  \"workingDir\": \"/projects/{{ $json.context.project_id }}\"\n}",
+        "options": {}
+      },
+      "id": "dispatch-dev",
+      "name": "Dispatch: Dev",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal/dispatch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"role\": \"qa\",\n  \"projectId\": \"{{ $json.context.project_id }}\",\n  \"taskId\": \"{{ $json.context.task_id }}\",\n  \"prompt\": \"Новый сигнал от {{ $json.from }}.\\nAction: {{ $json.action }}\\nСообщение: {{ $json.context.message }}\",\n  \"workingDir\": \"/projects/{{ $json.context.project_id }}\"\n}",
+        "options": {}
+      },
+      "id": "dispatch-qa",
+      "name": "Dispatch: QA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal/dispatch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"role\": \"devops\",\n  \"projectId\": \"{{ $json.context.project_id }}\",\n  \"taskId\": \"{{ $json.context.task_id }}\",\n  \"prompt\": \"Новый сигнал от {{ $json.from }}.\\nAction: {{ $json.action }}\\nСообщение: {{ $json.context.message }}\",\n  \"workingDir\": \"/projects/{{ $json.context.project_id }}\"\n}",
+        "options": {}
+      },
+      "id": "dispatch-devops",
+      "name": "Dispatch: DevOps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 550]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://openclaw:3100/api/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channel\": \"telegram\",\n  \"message\": \"[{{ $json.from }}] {{ $json.action }}: {{ $json.context.message }}\"\n}",
+        "options": {
+          "ignore_ssl_issues": true
+        }
+      },
+      "id": "notify-user-telegram",
+      "name": "Notify User (Telegram)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"n8n\",\n  \"to\": \"user\",\n  \"action\": \"mirror\",\n  \"context\": {\n    \"message\": \"[{{ $json.from }} → {{ $json.to }}] {{ $json.action }}: {{ $json.context.message }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "mirror-to-telegram",
+      "name": "Mirror to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'routed', to: $('Webhook: Signal').item.json.to, action: $('Webhook: Signal').item.json.action }) }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Signal": {
+      "main": [
+        [{ "node": "Route by Recipient", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route by Recipient": {
+      "main": [
+        [{ "node": "Dispatch: Tech Lead", "type": "main", "index": 0 }],
+        [{ "node": "Dispatch: Designer", "type": "main", "index": 0 }],
+        [{ "node": "Dispatch: Dev", "type": "main", "index": 0 }],
+        [{ "node": "Dispatch: Dev", "type": "main", "index": 0 }],
+        [{ "node": "Dispatch: QA", "type": "main", "index": 0 }],
+        [{ "node": "Dispatch: DevOps", "type": "main", "index": 0 }],
+        [{ "node": "Notify User (Telegram)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Dispatch: Designer": {
+      "main": [
+        [{ "node": "Mirror to Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dispatch: Tech Lead": {
+      "main": [
+        [{ "node": "Mirror to Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dispatch: Dev": {
+      "main": [
+        [{ "node": "Mirror to Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dispatch: QA": {
+      "main": [
+        [{ "node": "Mirror to Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dispatch: DevOps": {
+      "main": [
+        [{ "node": "Mirror to Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mirror to Telegram": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify User (Telegram)": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "orchestra" }]
+}

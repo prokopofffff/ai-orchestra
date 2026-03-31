@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "signal": {
+      "command": "node",
+      "args": ["/app/mcp-tools/signal-tool/dist/index.js"],
+      "env": {
+        "ORCHESTRA_URL": "http://localhost:3000"
+      }
+    },
+    "openproject": {
+      "command": "node",
+      "args": ["/app/mcp-tools/openproject-tool/dist/index.js"],
+      "env": {
+        "OPENPROJECT_URL": "http://localhost:8080",
+        "OPENPROJECT_API_KEY": ""
+      }
+    }
+  }
+}

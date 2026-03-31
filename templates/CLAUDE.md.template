@@ -1,0 +1,20 @@
+# Project: {{PROJECT_NAME}}
+
+## Description
+{{PROJECT_DESCRIPTION}}
+
+## Stack
+<!-- Tech Lead заполнит после обсуждения с пользователем -->
+
+## Conventions
+<!-- Tech Lead заполнит после определения стека -->
+
+## Architecture decisions
+See `docs/decisions/` for ADRs (Architecture Decision Records).
+
+## Design
+- Design system: `designs/design-system.pen`
+- Style guide: `designs/STYLE.md`
+- Screen designs: `designs/{task_id}-{screen-name}.pen`
+
+Note: .pen files are not tracked in git. Use Pencil MCP tools to view them.

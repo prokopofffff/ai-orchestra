@@ -1,0 +1,185 @@
+{
+  "name": "Git Webhooks (GitHub/GitLab)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "git-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-git",
+      "name": "Webhook: Git Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize GitHub and GitLab webhook payloads into a unified format\nconst headers = $input.first().json.headers || {};\nconst body = $input.first().json.body || $input.first().json;\n\nlet event = {\n  provider: 'unknown',\n  type: 'unknown',\n  action: '',\n  pr_number: null,\n  pr_title: '',\n  pr_url: '',\n  branch: '',\n  repo: '',\n  author: '',\n  raw: body\n};\n\n// GitHub\nconst ghEvent = headers['x-github-event'];\nif (ghEvent) {\n  event.provider = 'github';\n  event.repo = body.repository?.full_name || '';\n  \n  if (ghEvent === 'pull_request') {\n    event.type = 'pull_request';\n    event.action = body.action; // opened, closed, synchronize, reopened\n    event.pr_number = body.pull_request?.number;\n    event.pr_title = body.pull_request?.title || '';\n    event.pr_url = body.pull_request?.html_url || '';\n    event.branch = body.pull_request?.head?.ref || '';\n    event.author = body.pull_request?.user?.login || '';\n  } else if (ghEvent === 'pull_request_review') {\n    event.type = 'pr_review';\n    event.action = body.review?.state; // approved, changes_requested, commented\n    event.pr_number = body.pull_request?.number;\n    event.pr_title = body.pull_request?.title || '';\n    event.pr_url = body.pull_request?.html_url || '';\n    event.branch = body.pull_request?.head?.ref || '';\n    event.author = body.review?.user?.login || '';\n  } else if (ghEvent === 'push') {\n    event.type = 'push';\n    event.branch = (body.ref || '').replace('refs/heads/', '');\n    event.author = body.pusher?.name || '';\n  }\n}\n\n// GitLab\nconst glEvent = headers['x-gitlab-event'];\nif (glEvent) {\n  event.provider = 'gitlab';\n  event.repo = body.project?.path_with_namespace || '';\n  \n  if (glEvent === 'Merge Request Hook') {\n    event.type = 'pull_request';\n    event.action = body.object_attributes?.action; // open, close, merge, update\n    event.pr_number = body.object_attributes?.iid;\n    event.pr_title = body.object_attributes?.title || '';\n    event.pr_url = body.object_attributes?.url || '';\n    event.branch = body.object_attributes?.source_branch || '';\n    event.author = body.user?.username || '';\n  } else if (glEvent === 'Note Hook' && body.merge_request) {\n    event.type = 'pr_review';\n    event.action = 'commented';\n    event.pr_number = body.merge_request?.iid;\n    event.pr_title = body.merge_request?.title || '';\n    event.branch = body.merge_request?.source_branch || '';\n    event.author = body.user?.username || '';\n  } else if (glEvent === 'Push Hook') {\n    event.type = 'push';\n    event.branch = (body.ref || '').replace('refs/heads/', '');\n    event.author = body.user_username || '';\n  }\n}\n\nreturn [{ json: event }];"
+      },
+      "id": "normalize-event",
+      "name": "Normalize Git Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputKey": "pr_opened",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "pull_request",
+                    "operator": { "type": "string", "operation": "equals" }
+                  },
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "opened",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "pr_review",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "pr_review",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "push",
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "push",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-event-type",
+      "name": "Route by Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"github\",\n  \"to\": \"qa\",\n  \"action\": \"pr_created\",\n  \"context\": {\n    \"pr_number\": {{ $json.pr_number }},\n    \"pr_title\": \"{{ $json.pr_title }}\",\n    \"pr_url\": \"{{ $json.pr_url }}\",\n    \"branch\": \"{{ $json.branch }}\",\n    \"repo\": \"{{ $json.repo }}\",\n    \"message\": \"New PR #{{ $json.pr_number }}: {{ $json.pr_title }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "signal-qa-pr-created",
+      "name": "Signal QA: PR Created",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 150]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"github\",\n  \"to\": \"tech-lead\",\n  \"action\": \"pr_review_update\",\n  \"context\": {\n    \"pr_number\": {{ $json.pr_number }},\n    \"pr_title\": \"{{ $json.pr_title }}\",\n    \"review_action\": \"{{ $json.action }}\",\n    \"reviewer\": \"{{ $json.author }}\",\n    \"repo\": \"{{ $json.repo }}\",\n    \"message\": \"PR #{{ $json.pr_number }} review: {{ $json.action }} by {{ $json.author }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "signal-tl-pr-review",
+      "name": "Signal Tech Lead: PR Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"github\",\n  \"to\": \"tech-lead\",\n  \"action\": \"push\",\n  \"context\": {\n    \"branch\": \"{{ $json.branch }}\",\n    \"repo\": \"{{ $json.repo }}\",\n    \"author\": \"{{ $json.author }}\",\n    \"message\": \"Push to {{ $json.branch }} in {{ $json.repo }} by {{ $json.author }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "signal-tl-push",
+      "name": "Signal Tech Lead: Push",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'processed', event_type: $('Normalize Git Event').item.json.type }) }}",
+        "options": {}
+      },
+      "id": "respond-git-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Git Event": {
+      "main": [
+        [{ "node": "Normalize Git Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Normalize Git Event": {
+      "main": [
+        [{ "node": "Route by Event Type", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route by Event Type": {
+      "main": [
+        [{ "node": "Signal QA: PR Created", "type": "main", "index": 0 }],
+        [{ "node": "Signal Tech Lead: PR Review", "type": "main", "index": 0 }],
+        [{ "node": "Signal Tech Lead: Push", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Signal QA: PR Created": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    },
+    "Signal Tech Lead: PR Review": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    },
+    "Signal Tech Lead: Push": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "orchestra" }]
+}

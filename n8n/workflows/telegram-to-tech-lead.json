@@ -1,0 +1,76 @@
+{
+  "name": "Telegram → Tech Lead",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-to-tech-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-telegram",
+      "name": "Webhook: Telegram Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst message = body.message || body.text || '';\nconst userId = body.user_id || body.from?.id || 'unknown';\nconst username = body.username || body.from?.username || 'user';\nconst chatId = body.chat_id || body.chat?.id || '';\n\nreturn [{\n  json: {\n    message,\n    userId,\n    username,\n    chatId,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "parse-telegram",
+      "name": "Parse Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://orchestra-core:3000/api/signal/dispatch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"role\": \"tech-lead\",\n  \"projectId\": \"default\",\n  \"prompt\": \"Сообщение от пользователя {{ $json.username }} через Telegram:\\n\\n{{ $json.message }}\\n\\nОтветь пользователю через notify_user().\"\n}",
+        "options": {}
+      },
+      "id": "dispatch-tech-lead",
+      "name": "Dispatch Tech Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'dispatched', message_from: $('Parse Telegram Message').item.json.username }) }}",
+        "options": {}
+      },
+      "id": "respond-telegram-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Telegram Message": {
+      "main": [
+        [{ "node": "Parse Telegram Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Telegram Message": {
+      "main": [
+        [{ "node": "Dispatch Tech Lead", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dispatch Tech Lead": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "orchestra" }]
+}

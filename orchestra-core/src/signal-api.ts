@@ -8,6 +8,7 @@ import { RateLimiter } from "./rate-limiter.js";
 import { OrchestraConfig } from "./config.js";
 import { notifyUser } from "./notify.js";
 import { parseRow } from "./db-utils.js";
+import { FlowGuard } from "./flow-guard.js";
 
 export const SignalActionSchema = z.enum([
   "assign_dev",
@@ -81,6 +82,7 @@ export function createSignalRouter(
   config: OrchestraConfig,
   pool: Pool,
   sessionManager: SessionManager,
+  flowGuard: FlowGuard,
   spawner?: AgentSpawner,
   rateLimiter?: RateLimiter
 ): Router {
@@ -100,6 +102,21 @@ export function createSignalRouter(
       }
 
       const { from, to, action, context } = parsed.data;
+      const taskId = context.task_id ? String(context.task_id) : undefined;
+
+      // Flow Guard: validate signal
+      const guardResult = await flowGuard.validate(from, to, action, taskId);
+      if (!guardResult.allowed) {
+        res.status(403).json({
+          error: "Signal rejected by Flow Guard",
+          reason: guardResult.reason,
+          from,
+          to,
+          action,
+        });
+        return;
+      }
+
       const id = uuidv4();
 
       // Store signal
@@ -108,6 +125,15 @@ export function createSignalRouter(
          VALUES ($1, $2, $3, $4, $5)`,
         [id, from, to, action, JSON.stringify(context)]
       );
+
+      // Apply state transition if needed
+      if (guardResult.stateTransition && taskId) {
+        await flowGuard.transitionTaskState(
+          taskId,
+          context.project_id || "default",
+          guardResult.stateTransition.to
+        );
+      }
 
       // Log to OpenProject if task_id is in context
       if (context.task_id) {
@@ -127,17 +153,36 @@ export function createSignalRouter(
         return;
       }
 
-      // Forward to n8n for agent session management
-      const n8nResult = await forwardToN8n(config, {
-        id,
-        from,
-        to,
-        action,
-        context,
-      });
+      // Dispatch agent directly (no n8n)
+      if (spawner && rateLimiter) {
+        const canSpawn = await rateLimiter.canSpawn();
+        const projectId = context.project_id || "default";
+        const prompt = `Новый сигнал от ${from}.\nAction: ${action}\nСообщение: ${context.message || ""}`;
+
+        if (!canSpawn) {
+          await rateLimiter.enqueue({
+            role: to as z.infer<typeof AgentRoleSchema>,
+            projectId,
+            taskId,
+            prompt,
+          });
+          await markProcessed(pool, id);
+          res.json({ id, status: "queued" });
+          return;
+        }
+
+        spawner.spawn({
+          role: to as z.infer<typeof AgentRoleSchema>,
+          projectId,
+          taskId,
+          prompt,
+        }).catch((err) => {
+          console.error(`Failed to dispatch ${to}:`, (err as Error).message);
+        });
+      }
 
       await markProcessed(pool, id);
-      res.json({ id, status: "routed", n8nResult });
+      res.json({ id, status: "routed" });
     } catch (err) {
       console.error("Signal error:", err);
       res.status(500).json({ error: "Failed to process signal" });
@@ -273,32 +318,6 @@ async function markProcessed(pool: Pool, signalId: string): Promise<void> {
   );
 }
 
-async function forwardToN8n(
-  config: OrchestraConfig,
-  signal: {
-    id: string;
-    from: string;
-    to: string;
-    action: string;
-    context: SignalContext;
-  }
-): Promise<unknown> {
-  try {
-    const response = await fetch(`${config.n8n.url}/webhook/signal-router`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(signal),
-    });
-    if (!response.ok) {
-      console.warn(`n8n webhook returned ${response.status}`);
-      return { status: response.status };
-    }
-    return await response.json();
-  } catch (err) {
-    console.warn("n8n not reachable, signal queued:", (err as Error).message);
-    return { status: "queued" };
-  }
-}
 
 async function logToOpenProject(
   config: OrchestraConfig,

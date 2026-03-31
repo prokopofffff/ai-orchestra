@@ -17,31 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  n8n:
-    image: n8nio/n8n:latest
-    restart: unless-stopped
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: n8n
-      DB_POSTGRESDB_USER: orchestra
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-orchestra_secret}
-      N8N_HOST: ${N8N_HOST:-localhost}
-      N8N_PORT: 5678
-      N8N_PROTOCOL: http
-      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
-      N8N_BASIC_AUTH_ACTIVE: "true"
-      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-admin}
-    ports:
-      - "5678:5678"
-    volumes:
-      - n8n_data:/home/node/.n8n
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   openproject:
     image: openproject/openproject:15
     restart: unless-stopped
@@ -68,9 +43,6 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/orchestra
-      N8N_URL: http://n8n:5678
-      N8N_USER: ${N8N_USER:-admin}
-      N8N_PASSWORD: ${N8N_PASSWORD:-admin}
       OPENPROJECT_URL: http://openproject:80
       OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
       CLAUDE_CLI_PATH: ${CLAUDE_CLI_PATH:-claude}
@@ -84,16 +56,12 @@ services:
       - ./templates:/app/templates:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - sessions_data:/app/data/sessions
-      # Mount host claude config for CLI access
       - ${HOME}/.claude:/root/.claude:ro
     depends_on:
       postgres:
         condition: service_healthy
-      n8n:
-        condition: service_started
 
 volumes:
   postgres_data:
-  n8n_data:
   openproject_data:
   sessions_data:

@@ -5,6 +5,8 @@ import { SessionManager } from "./session-manager.js";
 import { createSignalRouter } from "./signal-api.js";
 import { AgentSpawner, SpawnAgentInputSchema } from "./agent-spawner.js";
 import { RateLimiter } from "./rate-limiter.js";
+import { FlowGuard } from "./flow-guard.js";
+import { createWebhookRouter } from "./webhooks.js";
 
 async function main() {
   const config = loadConfig();
@@ -12,10 +14,10 @@ async function main() {
 
   app.use(express.json());
 
-  // Shared database pool (single pool for all modules)
+  // Shared database pool
   const pool = new Pool({ connectionString: config.databaseUrl });
 
-  // Init components with shared pool
+  // Init components
   const sessionManager = new SessionManager(config, pool);
   await sessionManager.init();
   console.log("Session manager initialized");
@@ -24,22 +26,25 @@ async function main() {
   await rateLimiter.init();
   console.log("Rate limiter initialized");
 
+  const flowGuard = new FlowGuard(pool);
+  await flowGuard.init();
+  console.log("Flow guard initialized");
+
   const spawner = new AgentSpawner(config, pool, sessionManager);
   spawner.setRateLimiter(rateLimiter);
 
-  // Cleanup stale sessions periodically (every 5 minutes)
+  // Cleanup stale sessions and process queue (every 5 minutes)
   setInterval(async () => {
     const cleaned = await sessionManager.cleanupStaleSessions();
     if (cleaned > 0) {
       console.log(`Cleaned up ${cleaned} stale sessions`);
     }
-
-    // Process queued tasks
     await rateLimiter.processQueue(spawner);
   }, 5 * 60 * 1000);
 
   // Routes
-  app.use("/api/signal", createSignalRouter(config, pool, sessionManager, spawner, rateLimiter));
+  app.use("/api/signal", createSignalRouter(config, pool, sessionManager, flowGuard, spawner, rateLimiter));
+  app.use("/api", createWebhookRouter(config, spawner));
 
   // Agent spawning with rate limiting
   app.post("/api/spawn", async (req, res) => {
@@ -74,7 +79,7 @@ async function main() {
     }
   });
 
-  // Session management endpoints
+  // Session management
   app.get("/api/sessions", async (req, res) => {
     const projectId = req.query.projectId as string | undefined;
     const sessions = await sessionManager.listSessions(projectId);
@@ -101,6 +106,19 @@ async function main() {
     res.json(queue);
   });
 
+  // Flow Guard audit
+  app.get("/api/flow/audit", async (req, res) => {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const log = await flowGuard.getAuditLog(limit);
+    res.json(log);
+  });
+
+  app.get("/api/flow/violations", async (req, res) => {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const violations = await flowGuard.getViolations(limit);
+    res.json(violations);
+  });
+
   // Health check
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -113,19 +131,10 @@ async function main() {
     shuttingDown = true;
 
     console.log(`\nReceived ${signal}, shutting down gracefully...`);
-
-    // 1. Stop accepting new requests
     server.close();
-
-    // 2. Kill active agent processes, mark sessions as sleeping
     await sessionManager.shutdownAll();
-
-    // 3. Reconcile rate limiter state
     await rateLimiter.reconcile();
-
-    // 4. Close database pool
     await pool.end();
-
     console.log("Shutdown complete");
     process.exit(0);
   };

@@ -1,3 +1,2 @@
--- Create separate databases for n8n and OpenProject
-CREATE DATABASE n8n OWNER orchestra;
+-- Create separate database for OpenProject
 CREATE DATABASE openproject OWNER orchestra;

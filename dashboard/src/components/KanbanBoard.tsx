@@ -1,7 +1,10 @@
+import { useState } from "react";
 import type { Task } from "../types";
+import { TaskDetail } from "./TaskDetail";
 
 interface Props {
   tasks: Task[];
+  onRefresh: () => void;
 }
 
 interface KanbanColumn {
@@ -34,9 +37,9 @@ const PRIORITY_ICONS: Record<string, string> = {
   Low: "~",
 };
 
-function TaskCard({ task }: { task: Task }) {
+function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
   return (
-    <div className="kanban-card">
+    <div className="kanban-card" onClick={onClick} role="button" tabIndex={0}>
       <div className="kanban-card-header">
         <span
           className="kanban-type"
@@ -62,15 +65,22 @@ function TaskCard({ task }: { task: Task }) {
   );
 }
 
-export function KanbanBoard({ tasks }: Props) {
+export function KanbanBoard({ tasks, onRefresh }: Props) {
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+
   if (tasks.length === 0) {
     return (
       <div className="section">
         <h2>Kanban Board</h2>
-        <p className="empty">No tasks yet</p>
+        <p className="empty">No tasks yet. Create a project and tasks to get started.</p>
       </div>
     );
   }
+
+  // Keep selectedTask in sync with fresh data
+  const currentTask = selectedTask
+    ? tasks.find((t) => t.id === selectedTask.id) || selectedTask
+    : null;
 
   return (
     <div className="section">
@@ -86,13 +96,25 @@ export function KanbanBoard({ tasks }: Props) {
               </div>
               <div className="kanban-column-body">
                 {columnTasks.map((task) => (
-                  <TaskCard key={task.id} task={task} />
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onClick={() => setSelectedTask(task)}
+                  />
                 ))}
               </div>
             </div>
           );
         })}
       </div>
+
+      {currentTask && (
+        <TaskDetail
+          task={currentTask}
+          onClose={() => setSelectedTask(null)}
+          onUpdated={onRefresh}
+        />
+      )}
     </div>
   );
 }

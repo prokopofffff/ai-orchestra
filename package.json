@@ -1,0 +1,11 @@
+{
+  "name": "ai-orchestra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI agent orchestrator for automated development teams",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter orchestra-core dev",
+    "setup": "pnpm --filter orchestra-core setup"
+  }
+}

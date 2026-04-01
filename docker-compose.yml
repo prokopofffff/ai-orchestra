@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orchestra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orchestra_secret}
+      POSTGRES_DB: orchestra
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  orchestra-core:
+    build:
+      context: ./orchestra-core
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/orchestra
+      CLAUDE_AUTH: ${CLAUDE_AUTH:-max}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_DEFAULT_ORG: ${GITHUB_DEFAULT_ORG:-}
+      GITHUB_DEFAULT_BRANCH: ${GITHUB_DEFAULT_BRANCH:-main}
+      MODEL_TECH_LEAD: ${MODEL_TECH_LEAD:-opus}
+      MODEL_DESIGNER: ${MODEL_DESIGNER:-sonnet}
+      MODEL_FRONTEND: ${MODEL_FRONTEND:-sonnet}
+      MODEL_BACKEND: ${MODEL_BACKEND:-sonnet}
+      MODEL_QA: ${MODEL_QA:-sonnet}
+      MODEL_DEVOPS: ${MODEL_DEVOPS:-sonnet}
+      DASHBOARD_PATH: /app/dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./prompts:/app/prompts:ro
+      - ./mcp-tools:/app/mcp-tools:ro
+      - ./templates:/app/templates:ro
+      - ./dashboard/dist:/app/dashboard:ro
+      - sessions_data:/app/data/sessions
+      - ${HOME}/.claude:/root/.claude:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  sessions_data:

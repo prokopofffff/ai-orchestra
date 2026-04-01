@@ -1,0 +1,28 @@
+# {{PROJECT_NAME}}
+
+## Project Overview
+{{DESCRIPTION}}
+
+## Tech Stack
+<!-- Tech Lead fills this in -->
+
+## Project Structure
+```
+<!-- Tech Lead fills this in with the actual directory structure -->
+```
+
+## Conventions
+<!-- Tech Lead fills this in -->
+
+## Agent Scope Rules
+- Frontend: `src/frontend/`, `src/shared/types/`, `public/`
+- Backend: `src/backend/`, `src/api/`, `database/`, `src/shared/types/`
+- Designer: `design/`, `*.pen`, `STYLE.md`
+- QA: `tests/`, `e2e/`
+- DevOps: `.github/`, `docker-compose.yml`, `Dockerfile`, `ci/`
+
+## Important Notes
+- Do NOT merge PRs — the user handles merges via GitHub UI
+- QA writes ALL tests (unit, integration, e2e)
+- Rebase from main before creating PRs
+- If rebase has conflicts, escalate to Tech Lead

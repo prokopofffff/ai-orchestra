@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.log
+
+# AI Orchestra
+*.pen
+orchestra-sessions/
+.mcp-agent.json

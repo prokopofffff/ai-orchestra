@@ -11,6 +11,8 @@ import {
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
 import { generateMcpConfig } from "./mcp-config-generator.js";
 import { getPool } from "./db.js";
+import { notify } from "./notification-hub.js";
+import { appendLog } from "./logger.js";
 
 const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT
   ?? path.join(process.env.HOME ?? "/tmp", "orchestra-workspaces");
@@ -109,33 +111,36 @@ export async function dispatchTechLead(
 
     await updateSession(session.id, { pid: proc.pid ?? null });
 
-    // Capture output for conversation
+    // Capture output
     let output = "";
-    proc.stdout?.on("data", (d) => { output += d.toString(); });
-    proc.stderr?.on("data", (d) => { console.error(`[tech-lead:${slug}] ${d}`); });
+    proc.stdout?.on("data", (d) => {
+      const chunk = d.toString();
+      output += chunk;
+      appendLog(projectId, session.id, "tech-lead", "stdout", chunk);
+    });
+    proc.stderr?.on("data", (d) => {
+      const chunk = d.toString();
+      appendLog(projectId, session.id, "tech-lead", "stderr", chunk);
+    });
 
     proc.on("exit", async (code) => {
       techLeadProcesses.delete(projectId);
       const status = code === 0 ? "terminated" : "crashed";
       await updateSession(session.id, { status, finishedAt: new Date() });
+      appendLog(projectId, session.id, "tech-lead", "system", `Process exited with code ${code}`);
 
-      // If Tech Lead produced output, store it as a message
+      // Store response in conversation + push to Telegram
       const trimmed = output.trim();
       if (trimmed) {
         try {
-          const { rows: convRows } = await pool.query(
-            "SELECT id FROM conversations WHERE project_id = $1",
-            [projectId],
-          );
-          if (convRows.length) {
-            await pool.query(
-              `INSERT INTO messages (conversation_id, from_role, source, text, metadata)
-               VALUES ($1, 'tech-lead', 'dashboard', $2, '{}')`,
-              [convRows[0].id, trimmed],
-            );
-          }
+          await notify({
+            projectId,
+            text: trimmed,
+            priority: "high",
+            fromRole: "tech-lead",
+          });
         } catch (e) {
-          console.error("Failed to store tech-lead response:", e);
+          console.error("Failed to store/notify tech-lead response:", e);
         }
       }
     });

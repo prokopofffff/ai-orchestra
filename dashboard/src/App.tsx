@@ -10,11 +10,12 @@ import { SignalFeed } from "./components/SignalFeed";
 import { AgentGraph } from "./components/AgentGraph";
 import { AgentCards } from "./components/AgentCards";
 import { TaskQueue } from "./components/TaskQueue";
+import { AgentLogs } from "./components/AgentLogs";
 
 export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"kanban" | "chat" | "signals" | "agents">("kanban");
+  const [tab, setTab] = useState<"kanban" | "chat" | "signals" | "agents" | "logs">("kanban");
 
   const projectsFetcher = useCallback(() => api.fetchProjects(), []);
   const { data: projects, refresh: refreshProjects } = usePolling(projectsFetcher, 10000);
@@ -46,6 +47,7 @@ export function App() {
           <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>Chat</button>
           <button className={tab === "signals" ? "active" : ""} onClick={() => setTab("signals")}>Signals</button>
           <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>Agents</button>
+          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>Logs</button>
         </nav>
       </header>
 
@@ -71,6 +73,10 @@ export function App() {
             <AgentCards projectId={projectId} />
             <TaskQueue />
           </div>
+        )}
+
+        {tab === "logs" && projectId && (
+          <AgentLogs projectId={projectId} />
         )}
 
         {!projectId && (

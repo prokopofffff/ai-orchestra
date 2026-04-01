@@ -10,6 +10,7 @@ import { webhookRouter } from "./webhooks.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { reconcileQueue, getQueueStatus } from "./rate-limiter.js";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker.js";
+import { getLogs } from "./logger.js";
 
 async function main() {
   const config = loadConfig();
@@ -38,6 +39,21 @@ async function main() {
   // ─── Usage ───
   app.get("/api/usage", (_req, res) => {
     res.json(getUsage());
+  });
+
+  // ─── Agent Logs ───
+  app.get("/api/logs", async (req, res, next) => {
+    try {
+      const projectId = req.query.projectId as string;
+      if (!projectId) return res.status(400).json({ error: "projectId required" });
+      const logs = await getLogs(projectId, {
+        sessionId: req.query.sessionId as string | undefined,
+        role: req.query.role as string | undefined,
+        level: req.query.level as "stdout" | "stderr" | "system" | "error" | undefined,
+        limit: Number(req.query.limit) || 200,
+      });
+      res.json(logs);
+    } catch (e) { next(e); }
   });
 
   // ─── API routes ───

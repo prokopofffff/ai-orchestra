@@ -29,7 +29,10 @@ export async function notify(notification: Notification): Promise<void> {
   // 2. Push to Telegram (if configured)
   const telegramChatId = await getTelegramChatId(projectId);
   if (telegramChatId) {
-    await sendTelegramMessage(telegramChatId, text);
+    const sent = await sendTelegramMessage(telegramChatId, text);
+    console.log(`Telegram notify: chatId=${telegramChatId} sent=${sent} text=${text.substring(0, 50)}...`);
+  } else {
+    console.log("Telegram notify: no chatId found, skipping");
   }
 }
 

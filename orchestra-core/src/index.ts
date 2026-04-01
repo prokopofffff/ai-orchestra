@@ -11,6 +11,7 @@ import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { reconcileQueue, getQueueStatus } from "./rate-limiter.js";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker.js";
 import { getLogs } from "./logger.js";
+import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling.js";
 
 async function main() {
   const config = loadConfig();
@@ -99,6 +100,9 @@ async function main() {
   // Start usage tracking
   startUsageTracking();
 
+  // Start Telegram polling (for local dev — in production use webhook)
+  startTelegramPolling();
+
   const server = app.listen(config.port, () => {
     console.log(`Orchestra-core running on port ${config.port}`);
     console.log(`Telegram: ${config.telegramBotToken ? "enabled" : "disabled"}`);
@@ -111,6 +115,7 @@ async function main() {
 
     stopHeartbeat();
     stopUsageTracking();
+    stopTelegramPolling();
 
     server.close();
 

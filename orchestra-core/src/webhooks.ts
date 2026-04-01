@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { getPool } from "./db.js";
 import { addSystemMessage } from "./conversation-api.js";
+import { dispatchTechLead } from "./tech-lead-dispatcher.js";
+import { loadConfig } from "./config.js";
 
 export const webhookRouter: Router = Router();
 
@@ -65,7 +67,9 @@ webhookRouter.post("/telegram/webhook", async (req, res, next) => {
       );
     }
 
-    // TODO Phase 5: Dispatch Tech Lead with this message
+    // Dispatch Tech Lead
+    const config = loadConfig();
+    dispatchTechLead(projectId, text, config).catch(console.error);
 
     res.json({ ok: true });
   } catch (e) { next(e); }

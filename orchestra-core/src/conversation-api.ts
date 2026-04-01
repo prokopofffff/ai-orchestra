@@ -2,6 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { getPool } from "./db.js";
 import { parseRow, parseRows } from "./db-utils.js";
+import { dispatchTechLead } from "./tech-lead-dispatcher.js";
+import { loadConfig } from "./config.js";
 
 export const conversationRouter: Router = Router();
 
@@ -78,6 +80,13 @@ conversationRouter.post("/conversations/:projectId/messages", async (req, res, n
     );
 
     const message = parseRow(messageSchema, rows[0]);
+
+    // Dispatch Tech Lead when user sends a message
+    if (body.fromRole === "user") {
+      const config = loadConfig();
+      dispatchTechLead(projectId, body.text, config).catch(console.error);
+    }
+
     res.status(201).json(message);
   } catch (e) { next(e); }
 });

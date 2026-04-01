@@ -66,7 +66,15 @@ async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string>
   }
 
   fs.mkdirSync(path.dirname(repoDir), { recursive: true });
-  await exec(`git clone "${repoUrl}" "${repoDir}"`);
+
+  // Inject GitHub token into URL if available
+  let cloneUrl = repoUrl;
+  const token = process.env.GITHUB_TOKEN;
+  if (token && cloneUrl.startsWith("https://github.com/")) {
+    cloneUrl = cloneUrl.replace("https://github.com/", `https://${token}@github.com/`);
+  }
+
+  await exec(`git clone "${cloneUrl}" "${repoDir}"`);
   return repoDir;
 }
 

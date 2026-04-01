@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { loadConfig } from "./config.js";
 import { waitForDatabase, runMigrations, getPool } from "./db.js";

@@ -3,6 +3,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { type Config, type AgentRole, getModelForRole } from "./config.js";
 import { createSession, updateSession, type Session } from "./session-manager.js";
+import { appendLog } from "./logger.js";
+import { notify } from "./notification-hub.js";
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
 import { generateMcpConfig } from "./mcp-config-generator.js";
 import { getPool } from "./db.js";
@@ -61,8 +63,12 @@ async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string>
   const repoDir = path.join(workspacePath(projectSlug), "repo");
 
   if (fs.existsSync(path.join(repoDir, ".git"))) {
-    // Only fetch if remote origin exists
-    try { await exec("git remote get-url origin", repoDir); await exec("git fetch origin", repoDir); } catch { /* local repo, no remote */ }
+    // Fetch and update local main from remote
+    try {
+      await exec("git remote get-url origin", repoDir);
+      await exec("git fetch origin", repoDir);
+      await exec("git checkout main && git pull origin main", repoDir);
+    } catch { /* local repo or no remote */ }
     return repoDir;
   }
 
@@ -232,11 +238,34 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
 
   // Update session with PID
   await updateSession(session.id, { pid: proc.pid ?? null });
+  appendLog(projectId, session.id, role, "system", `Agent spawned: model=${model} worktree=${worktreeDir}`);
+
+  // Capture output
+  let output = "";
+  proc.stdout?.on("data", (d) => {
+    const chunk = d.toString();
+    output += chunk;
+    appendLog(projectId, session.id, role, "stdout", chunk);
+  });
+  proc.stderr?.on("data", (d) => {
+    appendLog(projectId, session.id, role, "stderr", d.toString());
+  });
 
   // Handle process exit
   proc.on("exit", async (code) => {
     const status = code === 0 ? "terminated" : "crashed";
     await updateSession(session.id, { status, finishedAt: new Date() });
+    appendLog(projectId, session.id, role, "system", `Process exited with code ${code}`);
+
+    // Notify about agent completion
+    const taskTitle = (await getPool().query("SELECT title FROM tasks WHERE id = $1", [taskId])).rows[0]?.title;
+    await notify({
+      projectId,
+      text: `Agent ${role} finished: ${taskTitle ?? taskId}`,
+      priority: "low",
+      fromRole: "system",
+    }).catch(() => {});
+
     if (status === "terminated") {
       // Cleanup worktree, keep branch for PR
       try { await cleanupWorktree(repoDir, worktreeDir); } catch { /* ignore */ }

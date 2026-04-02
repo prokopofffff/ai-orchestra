@@ -10,6 +10,8 @@ import {
   type SignalPayload,
 } from "./flow-guard.js";
 import { checkUnblocked } from "./dependency-engine.js";
+import { dispatchSignal } from "./dispatcher.js";
+import { loadConfig } from "./config.js";
 
 export const signalRouter: Router = Router();
 
@@ -89,8 +91,11 @@ signalRouter.post("/signal", async (req, res, next) => {
       }
     }
 
-    // 7. Dispatch agent (Phase 3 — dispatcher handles this async)
-    // dispatchSignal(signal, config) is called by the caller if needed
+    // 7. Dispatch agent
+    const config = loadConfig();
+    dispatchSignal(signal, config).catch((err) =>
+      console.error("Dispatch error:", err instanceof Error ? err.message : err),
+    );
 
     res.status(201).json({ id: rows[0].id, status: "accepted" });
   } catch (e) { next(e); }

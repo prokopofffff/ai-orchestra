@@ -61,7 +61,8 @@ async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string>
   const repoDir = path.join(workspacePath(projectSlug), "repo");
 
   if (fs.existsSync(path.join(repoDir, ".git"))) {
-    await exec("git fetch origin", repoDir);
+    // Only fetch if remote origin exists
+    try { await exec("git remote get-url origin", repoDir); await exec("git fetch origin", repoDir); } catch { /* local repo, no remote */ }
     return repoDir;
   }
 
@@ -86,12 +87,20 @@ async function createWorktree(repoDir: string, branch: string, defaultBranch: st
     try { await exec(`git worktree remove "${worktreeDir}" --force`, repoDir); } catch { /* ignore */ }
   }
 
-  // Create branch from default branch
+  // Determine base ref: prefer origin/main, fallback to local main/HEAD
+  let baseRef = `origin/${defaultBranch}`;
   try {
-    await exec(`git branch "${branch}" "origin/${defaultBranch}"`, repoDir);
+    await exec(`git rev-parse --verify ${baseRef}`, repoDir);
   } catch {
-    // Branch might already exist
-    await exec(`git branch -f "${branch}" "origin/${defaultBranch}"`, repoDir);
+    baseRef = defaultBranch; // Use local branch
+  }
+
+  // Create branch from base
+  try {
+    await exec(`git branch "${branch}" "${baseRef}"`, repoDir);
+  } catch {
+    // Branch might already exist — reset it
+    try { await exec(`git branch -f "${branch}" "${baseRef}"`, repoDir); } catch { /* keep existing */ }
   }
 
   await exec(`git worktree add "${worktreeDir}" "${branch}"`, repoDir);
@@ -159,7 +168,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
 
   // Generate MCP config
   const mcpConfigPath = path.join(worktreeDir, ".mcp-agent.json");
-  const mcpConfig = generateMcpConfig(role, config);
+  const mcpConfig = generateMcpConfig(role, config, projectId);
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
 
   // Read system prompt
@@ -194,8 +203,8 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const args = [
     "--dangerously-skip-permissions",
     "--model", model,
-    "--print",
     "--output-format", "text",
+    "--mcp-config", mcpConfigPath,
     "-p", fullPrompt,
   ];
 

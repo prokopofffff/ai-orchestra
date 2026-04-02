@@ -12,6 +12,7 @@ import { reconcileQueue, getQueueStatus } from "./rate-limiter.js";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker.js";
 import { getLogs } from "./logger.js";
 import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling.js";
+import { reconcileOrphanedTasks } from "./dispatcher.js";
 
 async function main() {
   const config = loadConfig();
@@ -102,6 +103,9 @@ async function main() {
 
   // Start Telegram polling (for local dev — in production use webhook)
   startTelegramPolling();
+
+  // Reconcile tasks that are in active states but have no agent running
+  reconcileOrphanedTasks(config).catch(console.error);
 
   const server = app.listen(config.port, () => {
     console.log(`Orchestra-core running on port ${config.port}`);

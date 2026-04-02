@@ -119,3 +119,38 @@ export async function dispatchSignal(
 
   return { dispatched: true, role, queued: true };
 }
+
+/**
+ * On startup, find tasks in active states (designing, in_development, in_testing, in_review)
+ * that have an assignee but no running session — re-enqueue them.
+ */
+export async function reconcileOrphanedTasks(config: Config): Promise<void> {
+  const pool = getPool();
+
+  const activeStates = ["designing", "in_development", "in_testing", "in_review"];
+  const { rows: orphaned } = await pool.query(
+    `SELECT t.id, t.project_id, t.assignee_role, t.state
+     FROM tasks t
+     WHERE t.state = ANY($1)
+       AND t.assignee_role IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM sessions s
+         WHERE s.task_id = t.id AND s.status = 'running'
+       )`,
+    [activeStates],
+  );
+
+  if (!orphaned.length) return;
+
+  console.log(`Reconciling ${orphaned.length} orphaned task(s):`);
+  for (const task of orphaned) {
+    const role = task.assignee_role as AgentRole;
+    console.log(`  [${task.state}] ${role} → task ${task.id}`);
+    await enqueue({
+      projectId: task.project_id,
+      taskId: task.id,
+      role,
+      config,
+    });
+  }
+}

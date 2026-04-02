@@ -39,53 +39,44 @@ async function checkMergedPrs(token: string): Promise<void> {
     const title = task.title as string;
     const currentState = task.state as string;
 
-    // If task is tested and PR is merged → auto-advance to merged (QA done, PR already merged)
-    if (currentState === "tested") {
-      const prMerged = await isPrMerged(prUrl, token);
-      if (prMerged) {
-        await pool.query("UPDATE tasks SET state = 'merged', updated_at = now() WHERE id = $1", [taskId]);
-        appendLog(projectId, null, "system", "system", `Task "${title}" → merged (QA passed + PR merged)`);
-        await notify({ projectId, text: `Task complete: ${title}`, priority: "normal", fromRole: "system" });
+    const prMerged = await isPrMerged(prUrl, token);
+    if (!prMerged) continue;
 
-        const { checkUnblocked } = await import("./dependency-engine.js");
-        const unblocked = await checkUnblocked(taskId, projectId);
-        if (unblocked.length) {
-          appendLog(projectId, null, "system", "system", `"${title}" unblocked ${unblocked.length} task(s)`);
-        }
-        console.log(`Task "${title}" → merged (tested + PR merged)`);
+    // tested + merged → auto-advance to merged
+    if (currentState === "tested") {
+      await pool.query("UPDATE tasks SET state = 'merged', updated_at = now() WHERE id = $1", [taskId]);
+      appendLog(projectId, null, "system", "system", `Task "${title}" → merged (QA passed + PR merged)`);
+      await notify({ projectId, text: `Task complete: ${title}`, priority: "normal", fromRole: "system" });
+
+      const { checkUnblocked } = await import("./dependency-engine.js");
+      const unblocked = await checkUnblocked(taskId, projectId);
+      if (unblocked.length) {
+        appendLog(projectId, null, "system", "system", `"${title}" unblocked ${unblocked.length} task(s)`);
       }
+      console.log(`Task "${title}" → merged (tested + PR merged)`);
       continue;
     }
 
-    const merged = await isPrMerged(prUrl, token);
+    // approved/pr_created + merged → dispatch QA
+    if (["pr_created", "approved", "in_review"].includes(currentState)) {
+      await pool.query("UPDATE tasks SET state = 'in_testing', updated_at = now() WHERE id = $1", [taskId]);
+      appendLog(projectId, null, "system", "system", `PR merged: ${title} → dispatching QA`);
+      await notify({ projectId, text: `PR merged: ${title} — QA testing started`, priority: "normal", fromRole: "system" });
 
-    if (merged) {
-      // Skip if already in testing or beyond
-      if (["in_testing", "in_review", "approved", "merged", "closed"].includes(currentState)) {
-        continue;
-      }
-
-      appendLog(projectId, null, "system", "system", `PR merged on GitHub: ${title} (${prUrl})`);
-
-      // PR merged → move to in_testing → dispatch QA
-      await pool.query(
-        "UPDATE tasks SET state = 'in_testing', updated_at = now() WHERE id = $1",
-        [taskId],
-      );
-
-      await notify({
-        projectId,
-        text: `PR merged: ${title} — dispatching QA for testing`,
-        priority: "normal",
-        fromRole: "system",
-      });
-
-      // Directly enqueue QA agent for testing
       const config = loadConfig();
       const { enqueue } = await import("./rate-limiter.js");
       await enqueue({ projectId, taskId, role: "qa", config });
+      console.log(`PR merged: ${title} → in_testing → QA dispatched`);
+      continue;
+    }
 
-      console.log(`PR merged detected: ${title} → in_testing → QA dispatched`);
+    // Skip states that are already past testing
+    if (["in_testing", "merged", "closed"].includes(currentState)) {
+      continue;
+    }
+
+    // Fallback for any other merged state
+    {
     }
   }
 }

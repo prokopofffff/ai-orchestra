@@ -49,11 +49,11 @@ const validTransitions: Record<string, string[]> = {
   designing: ["design_ready"],
   design_ready: ["in_development"],
   in_development: ["pr_created"],
-  pr_created: ["in_testing", "in_development"],       // allow re-work
+  pr_created: ["in_testing", "in_development", "approved"], // TL can approve directly
   in_testing: ["tested", "in_development"],            // allow fix cycle
-  tested: ["in_review"],
+  tested: ["in_review", "merged"],                     // can skip review if PR already merged
   in_review: ["approved", "in_development", "pr_created"], // allow re-submit
-  approved: ["merged", "in_development"],              // allow re-open
+  approved: ["merged", "in_development", "in_testing"],    // approved + merged → QA
   merged: ["closed"],
   closed: [],
 };

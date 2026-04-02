@@ -65,33 +65,65 @@ export async function dispatchSignal(
     }
   }
 
-  if (action === "answer" && taskId) {
-    // Answer → resume the agent working on this task
-    const { rows } = await getPool().query(
-      "SELECT assignee_role FROM tasks WHERE id = $1",
-      [taskId],
-    );
-    if (rows[0]?.assignee_role) {
-      targetRole = rows[0].assignee_role as AgentRole;
+  if (action === "answer") {
+    if (taskId) {
+      const { rows } = await getPool().query(
+        "SELECT assignee_role FROM tasks WHERE id = $1",
+        [taskId],
+      );
+      if (rows[0]?.assignee_role) {
+        targetRole = rows[0].assignee_role as AgentRole;
+      }
+    } else {
+      // No taskId — dispatch to the signal target role
+      const toRole = signal.to;
+      if (["designer", "frontend", "backend", "qa", "devops"].includes(toRole)) {
+        targetRole = toRole as AgentRole;
+        // Find active task for this role
+        const { rows } = await getPool().query(
+          `SELECT id FROM tasks WHERE project_id = $1 AND assignee_role = $2
+           AND state NOT IN ('merged', 'closed') ORDER BY updated_at DESC LIMIT 1`,
+          [projectId, toRole],
+        );
+        if (rows[0]) (signal as { taskId?: string }).taskId = rows[0].id;
+      }
     }
   }
 
-  if (action === "pr_changes_requested" && taskId) {
-    // Resume dev who made the PR
-    const { rows } = await getPool().query(
-      "SELECT assignee_role FROM tasks WHERE id = $1",
-      [taskId],
-    );
-    if (rows[0]?.assignee_role) {
-      targetRole = rows[0].assignee_role as AgentRole;
+  if (action === "pr_changes_requested") {
+    if (taskId) {
+      const { rows } = await getPool().query(
+        "SELECT assignee_role FROM tasks WHERE id = $1",
+        [taskId],
+      );
+      if (rows[0]?.assignee_role) {
+        targetRole = rows[0].assignee_role as AgentRole;
+      }
+    } else {
+      // No taskId — find the task by signal target role and project
+      const toRole = signal.to;
+      const { rows } = await getPool().query(
+        `SELECT id, assignee_role FROM tasks
+         WHERE project_id = $1 AND assignee_role = $2
+         AND state IN ('pr_created', 'in_development', 'in_review')
+         ORDER BY updated_at DESC LIMIT 1`,
+        [projectId, toRole],
+      );
+      if (rows[0]) {
+        targetRole = rows[0].assignee_role as AgentRole;
+        // Patch taskId for enqueue
+        (signal as { taskId?: string }).taskId = rows[0].id;
+      }
     }
   }
 
   if (!targetRole) {
+    console.log(`Dispatch: no target for ${action} (from=${signal.from} to=${signal.to})`);
     return { dispatched: false, reason: `No dispatch target for action: ${action}` };
   }
 
   const role = targetRole as AgentRole;
+  console.log(`Dispatch: ${action} → ${role} (project=${projectId.slice(0,8)} task=${taskId?.slice(0,8) ?? 'none'})`);
 
   // Check if agent is already running for this role+project
   const existing = await getActiveSessionForRole(projectId, role);
@@ -101,13 +133,14 @@ export async function dispatchSignal(
   }
 
   // Enqueue for rate-limited spawning
-  if (!taskId) {
+  const finalTaskId = signal.taskId ?? taskId;
+  if (!finalTaskId) {
     return { dispatched: false, reason: "No task ID for spawning" };
   }
 
   const queued = await enqueue({
     projectId,
-    taskId,
+    taskId: finalTaskId,
     role,
     config,
   });
@@ -122,7 +155,7 @@ export async function dispatchSignal(
 export async function reconcileOrphanedTasks(config: Config): Promise<void> {
   const pool = getPool();
 
-  const activeStates = ["designing", "in_development", "in_testing", "in_review"];
+  const activeStates = ["designing", "in_development", "in_testing", "in_review", "pr_created"];
   const { rows: orphaned } = await pool.query(
     `SELECT t.id, t.project_id, t.assignee_role, t.state
      FROM tasks t
@@ -138,6 +171,20 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
 
   console.log(`Reconciling ${orphaned.length} orphaned task(s):`);
   for (const task of orphaned) {
+    // For pr_created: only respawn if there's a pending pr_changes_requested signal
+    if (task.state === "pr_created") {
+      const { rows: pendingChanges } = await pool.query(
+        `SELECT id FROM signals WHERE task_id = $1 AND action = 'pr_changes_requested' AND read = false LIMIT 1`,
+        [task.id],
+      );
+      // Also check signals without task_id aimed at this role
+      const { rows: pendingChangesNoTask } = await pool.query(
+        `SELECT id FROM signals WHERE project_id = $1 AND to_role = $2 AND action = 'pr_changes_requested' AND read = false LIMIT 1`,
+        [task.project_id, task.assignee_role],
+      );
+      if (!pendingChanges.length && !pendingChangesNoTask.length) continue;
+    }
+
     // Determine role: in_testing → qa, otherwise use assignee_role
     let role: AgentRole;
     if (task.state === "in_testing") {
@@ -145,7 +192,7 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
     } else if (task.assignee_role) {
       role = task.assignee_role as AgentRole;
     } else {
-      continue; // No role to dispatch
+      continue;
     }
     console.log(`  [${task.state}] ${role} → task ${task.id}`);
     await enqueue({

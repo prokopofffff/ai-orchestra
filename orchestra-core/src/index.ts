@@ -7,6 +7,7 @@ import { signalRouter } from "./signal-api.js";
 import { sessionRouter } from "./session-api.js";
 import { conversationRouter } from "./conversation-api.js";
 import { webhookRouter } from "./webhooks.js";
+import { prRouter } from "./pr-api.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { reconcileQueue, getQueueStatus } from "./rate-limiter.js";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker.js";
@@ -64,6 +65,7 @@ async function main() {
   app.use("/api", sessionRouter);
   app.use("/api", conversationRouter);
   app.use("/api", webhookRouter);
+  app.use("/api", prRouter);
 
   // ─── Static dashboard ───
   app.use(express.static(config.dashboardPath));

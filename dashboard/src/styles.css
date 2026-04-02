@@ -156,11 +156,15 @@ body {
   padding: 12px; border-left: 4px solid;
 }
 .agent-card .card-role { font-weight: 600; font-size: 14px; }
-.agent-card .card-model { font-size: 12px; color: var(--text-muted); }
-.agent-card .card-status { font-size: 12px; margin-top: 4px; }
+.agent-card .card-details { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
 .agent-card.status-running .card-status { color: var(--success); }
 .agent-card.status-crashed .card-status { color: var(--danger); }
-.agent-card .card-heartbeat { font-size: 11px; color: var(--text-muted); }
+.agent-card .card-workdir {
+  font-size: 11px; color: var(--accent); margin-top: 4px;
+  font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agent-card .card-started { font-size: 11px; color: var(--text-muted); }
+.agent-card .card-pid { font-size: 11px; }
 
 /* Task Queue */
 .task-queue h2 { margin-bottom: 10px; }

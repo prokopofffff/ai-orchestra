@@ -22,11 +22,19 @@ export function AgentCards({ projectId }: Props) {
             <div className="card-role" style={{ borderLeftColor: ROLE_COLORS[s.role] ?? "#999" }}>
               {s.role}
             </div>
-            <div className="card-model">{s.model}</div>
-            <div className="card-status">{s.status}</div>
-            {s.lastHeartbeat && (
-              <div className="card-heartbeat">
-                Last heartbeat: {new Date(s.lastHeartbeat).toLocaleTimeString()}
+            <div className="card-details">
+              <span className="card-model">{s.model}</span>
+              <span className="card-status">{s.status}</span>
+              {s.pid && <span className="card-pid">pid:{s.pid}</span>}
+            </div>
+            {s.worktreePath && (
+              <div className="card-workdir" title={s.worktreePath}>
+                {s.worktreePath.replace(/.*orchestra-workspaces\//, "~/")}
+              </div>
+            )}
+            {s.startedAt && (
+              <div className="card-started">
+                Started: {new Date(s.startedAt).toLocaleTimeString()}
               </div>
             )}
           </div>

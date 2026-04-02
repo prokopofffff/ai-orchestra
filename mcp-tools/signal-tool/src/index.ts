@@ -89,6 +89,43 @@ server.tool(
   },
 );
 
+server.tool(
+  "create_pull_request",
+  "Create a GitHub Pull Request for the current branch. Push changes first, then call this tool.",
+  {
+    title: z.string().describe("PR title"),
+    body: z.string().describe("PR description (markdown)"),
+    branch: z.string().describe("Source branch name"),
+    base: z.string().default("main").describe("Target branch (default: main)"),
+  },
+  async ({ title, body, branch, base }) => {
+    try {
+      const res = await fetch(`${ORCHESTRA_URL}/api/pr/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          title,
+          body,
+          head: branch,
+          base,
+          agentRole: AGENT_ROLE,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { content: [{ type: "text" as const, text: `PR creation failed: ${data.error}` }], isError: true };
+      }
+
+      return { content: [{ type: "text" as const, text: `PR created: ${data.url}` }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Failed to create PR: ${err}` }], isError: true };
+    }
+  },
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

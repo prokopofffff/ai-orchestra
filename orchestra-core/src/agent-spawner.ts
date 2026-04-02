@@ -162,6 +162,17 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const branch = branchName(role, taskId);
   const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);
 
+  // Ensure remote origin is configured with auth for push
+  const token = process.env.GITHUB_TOKEN;
+  if (token && repoUrl.includes("github.com")) {
+    const authUrl = repoUrl.replace("https://github.com/", `https://${token}@github.com/`);
+    try {
+      await exec(`git remote set-url origin "${authUrl}"`, worktreeDir);
+    } catch {
+      try { await exec(`git remote add origin "${authUrl}"`, worktreeDir); } catch { /* ignore */ }
+    }
+  }
+
   // Build bootstrap context
   const ctx = await buildBootstrapContext(projectId, role, taskId);
   const bootstrapPrompt = formatBootstrapPrompt(ctx);

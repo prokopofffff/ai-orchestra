@@ -57,7 +57,22 @@ signalRouter.post("/signal", async (req, res, next) => {
     if (signal.taskId) {
       const { rows } = await getPool().query("SELECT state FROM tasks WHERE id = $1", [signal.taskId]);
       if (rows.length) {
-        const stateCheck = validateStateTransition(rows[0].state, signal.action);
+        const currentState = rows[0].state as string;
+        let stateCheck = validateStateTransition(currentState, signal.action);
+
+        // Auto-advance through intermediate states if needed
+        // e.g. new → described is required before assign_dev, so do it automatically
+        if (!stateCheck.allowed && currentState === "new") {
+          const targetState = getTargetState(signal.action);
+          if (targetState && ["designing", "in_development"].includes(targetState)) {
+            await getPool().query(
+              "UPDATE tasks SET state = 'described', updated_at = now() WHERE id = $1",
+              [signal.taskId],
+            );
+            stateCheck = validateStateTransition("described", signal.action);
+          }
+        }
+
         if (!stateCheck.allowed) {
           await logAudit(signal, "rejected", stateCheck.reason);
           return res.status(403).json({ error: stateCheck.reason });

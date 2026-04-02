@@ -30,8 +30,12 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
       );
 
       if (remaining.length === 0) {
-        // All blockers done — this task is unblocked
+        // All blockers done — clear blocked_by array and unblock
         unblockedTaskIds.push(dep.id);
+        await pool.query(
+          "UPDATE tasks SET blocked_by = '{}', updated_at = now() WHERE id = $1",
+          [dep.id],
+        );
 
         // Emit task_unblocked signal to Tech Lead
         await pool.query(

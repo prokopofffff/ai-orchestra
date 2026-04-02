@@ -67,8 +67,10 @@ export async function dispatchTechLead(
     // Fetch conversation history
     const conversationHistory = await getConversationHistory(projectId);
 
-    // MCP config
-    const mcpConfigPath = path.join(workDir, ".mcp-agent.json");
+    // MCP config (outside workDir so git operations don't delete it)
+    const mcpConfigDir = path.join(WORKSPACES_ROOT, slug, ".mcp-configs");
+    fs.mkdirSync(mcpConfigDir, { recursive: true });
+    const mcpConfigPath = path.join(mcpConfigDir, "tech-lead.json");
     const mcpConfig = generateMcpConfig("tech-lead", config, projectId);
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
 

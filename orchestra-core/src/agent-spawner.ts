@@ -16,7 +16,7 @@ const scopeRules: Record<AgentRole, { allowed: string[]; denied: string[] }> = {
   designer: { allowed: ["design/**", "*.pen", "STYLE.md"], denied: ["src/**"] },
   frontend: { allowed: ["src/frontend/**", "src/shared/types/**", "public/**"], denied: ["src/backend/**", "src/api/**", "database/**"] },
   backend: { allowed: ["src/backend/**", "src/api/**", "database/**", "src/shared/types/**"], denied: ["src/frontend/**", "public/**"] },
-  qa: { allowed: ["tests/**", "e2e/**"], denied: [] },
+  qa: { allowed: ["tests/**", "e2e/**", "**/*.config.*", "**/*.test.*", "**/*.spec.*", "package.json"], denied: [] },
   devops: { allowed: [".github/**", "docker-compose.yml", "Dockerfile", "ci/**"], denied: [] },
 };
 
@@ -88,7 +88,8 @@ async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string>
 async function createWorktree(repoDir: string, branch: string, defaultBranch: string): Promise<string> {
   const worktreeDir = path.join(path.dirname(repoDir), "worktrees", branch.replace(/\//g, "-"));
 
-  // Clean up existing worktree if any
+  // Clean up stale worktree registrations
+  await exec("git worktree prune", repoDir).catch(() => {});
   if (fs.existsSync(worktreeDir)) {
     try { await exec(`git worktree remove "${worktreeDir}" --force`, repoDir); } catch { /* ignore */ }
   }
@@ -183,8 +184,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const ctx = await buildBootstrapContext(projectId, role, taskId);
   const bootstrapPrompt = formatBootstrapPrompt(ctx);
 
-  // Generate MCP config
-  const mcpConfigPath = path.join(worktreeDir, ".mcp-agent.json");
+  // Generate MCP config (outside worktree so git operations don't delete it)
+  const mcpConfigDir = path.join(path.dirname(worktreeDir), ".mcp-configs");
+  fs.mkdirSync(mcpConfigDir, { recursive: true });
+  const mcpConfigPath = path.join(mcpConfigDir, `${role}-${taskId}.json`);
   const mcpConfig = generateMcpConfig(role, config, projectId);
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
 

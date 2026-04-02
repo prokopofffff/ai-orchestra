@@ -1,8 +1,6 @@
 import { getPool } from "./db.js";
-import { checkUnblocked } from "./dependency-engine.js";
 import { notify } from "./notification-hub.js";
 import { appendLog } from "./logger.js";
-import { dispatchSignal } from "./dispatcher.js";
 import { loadConfig } from "./config.js";
 
 const CHECK_INTERVAL_MS = 60_000; // every minute
@@ -36,16 +34,34 @@ async function checkMergedPrs(token: string): Promise<void> {
 
   for (const task of tasks) {
     const prUrl = task.pr_url as string;
+    const projectId = task.project_id as string;
+    const taskId = task.id as string;
+    const title = task.title as string;
+    const currentState = task.state as string;
+
+    // If task is tested and PR is merged → auto-advance to merged (QA done, PR already merged)
+    if (currentState === "tested") {
+      const prMerged = await isPrMerged(prUrl, token);
+      if (prMerged) {
+        await pool.query("UPDATE tasks SET state = 'merged', updated_at = now() WHERE id = $1", [taskId]);
+        appendLog(projectId, null, "system", "system", `Task "${title}" → merged (QA passed + PR merged)`);
+        await notify({ projectId, text: `Task complete: ${title}`, priority: "normal", fromRole: "system" });
+
+        const { checkUnblocked } = await import("./dependency-engine.js");
+        const unblocked = await checkUnblocked(taskId, projectId);
+        if (unblocked.length) {
+          appendLog(projectId, null, "system", "system", `"${title}" unblocked ${unblocked.length} task(s)`);
+        }
+        console.log(`Task "${title}" → merged (tested + PR merged)`);
+      }
+      continue;
+    }
+
     const merged = await isPrMerged(prUrl, token);
 
     if (merged) {
-      const projectId = task.project_id as string;
-      const taskId = task.id as string;
-      const title = task.title as string;
-      const currentState = task.state as string;
-
       // Skip if already in testing or beyond
-      if (["in_testing", "tested", "in_review", "approved", "merged", "closed"].includes(currentState)) {
+      if (["in_testing", "in_review", "approved", "merged", "closed"].includes(currentState)) {
         continue;
       }
 
@@ -64,14 +80,8 @@ async function checkMergedPrs(token: string): Promise<void> {
         fromRole: "system",
       });
 
-      // Dispatch QA agent
+      // Directly enqueue QA agent for testing
       const config = loadConfig();
-      await dispatchSignal(
-        { from: "system", to: "qa", action: "tests_passed", projectId, taskId },
-        config,
-      ).catch(() => {});
-
-      // Also directly enqueue QA since the signal action doesn't map to QA dispatch
       const { enqueue } = await import("./rate-limiter.js");
       await enqueue({ projectId, taskId, role: "qa", config });
 

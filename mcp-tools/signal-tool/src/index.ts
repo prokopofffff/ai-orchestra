@@ -126,6 +126,79 @@ server.tool(
   },
 );
 
+server.tool(
+  "get_pr_diff",
+  "Get the diff/changes of a GitHub Pull Request for code review.",
+  {
+    prUrl: z.string().describe("Full PR URL (e.g. https://github.com/owner/repo/pull/1)"),
+  },
+  async ({ prUrl }) => {
+    try {
+      const res = await fetch(`${ORCHESTRA_URL}/api/pr/diff`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prUrl }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) return { content: [{ type: "text" as const, text: `Error: ${data.error}` }], isError: true };
+      return { content: [{ type: "text" as const, text: data.diff as string }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Failed: ${err}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "review_pr",
+  "Submit a review on a GitHub Pull Request with comments on specific files/lines. Use after reading the diff with get_pr_diff.",
+  {
+    prUrl: z.string().describe("Full PR URL"),
+    event: z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]).describe("Review action"),
+    body: z.string().describe("Overall review comment"),
+    comments: z.array(z.object({
+      path: z.string().describe("File path relative to repo root"),
+      line: z.number().describe("Line number in the diff to comment on"),
+      body: z.string().describe("Comment text"),
+    })).optional().describe("Inline comments on specific lines"),
+  },
+  async ({ prUrl, event, body, comments }) => {
+    try {
+      const res = await fetch(`${ORCHESTRA_URL}/api/pr/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prUrl, event, body, comments }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) return { content: [{ type: "text" as const, text: `Error: ${data.error}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `Review submitted: ${event}` }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Failed: ${err}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_pr_reviews",
+  "Get existing review comments on a GitHub Pull Request. Use this to see what feedback was given.",
+  {
+    prUrl: z.string().describe("Full PR URL"),
+  },
+  async ({ prUrl }) => {
+    try {
+      const res = await fetch(`${ORCHESTRA_URL}/api/pr/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prUrl }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) return { content: [{ type: "text" as const, text: `Error: ${data.error}` }], isError: true };
+      return { content: [{ type: "text" as const, text: JSON.stringify(data.reviews, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: `Failed: ${err}` }], isError: true };
+    }
+  },
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

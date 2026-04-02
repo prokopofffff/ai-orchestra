@@ -13,6 +13,7 @@ import { reconcileQueue, getQueueStatus } from "./rate-limiter.js";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker.js";
 import { getLogs } from "./logger.js";
 import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling.js";
+import { startPrWatcher, stopPrWatcher } from "./pr-watcher.js";
 import { reconcileOrphanedTasks } from "./dispatcher.js";
 
 async function main() {
@@ -109,6 +110,9 @@ async function main() {
   // Reconcile tasks that are in active states but have no agent running
   reconcileOrphanedTasks(config).catch(console.error);
 
+  // Watch for merged PRs on GitHub
+  startPrWatcher();
+
   const server = app.listen(config.port, () => {
     console.log(`Orchestra-core running on port ${config.port}`);
     console.log(`Telegram: ${config.telegramBotToken ? "enabled" : "disabled"}`);
@@ -122,6 +126,7 @@ async function main() {
     stopHeartbeat();
     stopUsageTracking();
     stopTelegramPolling();
+    stopPrWatcher();
 
     server.close();
 

@@ -12,6 +12,7 @@ import {
 import { checkUnblocked } from "./dependency-engine.js";
 import { dispatchSignal } from "./dispatcher.js";
 import { loadConfig } from "./config.js";
+import { notify } from "./notification-hub.js";
 
 export const signalRouter: Router = Router();
 
@@ -91,7 +92,19 @@ signalRouter.post("/signal", async (req, res, next) => {
       }
     }
 
-    // 7. Dispatch agent
+    // 7. Notify user for user-facing signals
+    if (signal.to === "user" || ["pr_approved", "task_done", "escalate"].includes(signal.action)) {
+      const payload = signal.payload as Record<string, unknown> | undefined;
+      const message = (payload?.message as string) ?? `${signal.from}: ${signal.action}`;
+      notify({
+        projectId: signal.projectId,
+        text: message,
+        priority: signal.action === "escalate" ? "high" : "normal",
+        fromRole: signal.from === "tech-lead" ? "tech-lead" : "system",
+      }).catch(console.error);
+    }
+
+    // 8. Dispatch agent
     const config = loadConfig();
     dispatchSignal(signal, config).catch((err) =>
       console.error("Dispatch error:", err instanceof Error ? err.message : err),

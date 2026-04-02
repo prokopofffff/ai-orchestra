@@ -150,14 +150,24 @@ describe("flow-guard", () => {
       expect(result.reason).toContain("Invalid transition: new → in_development");
     });
 
-    it("rejects pr_created → approved via pr_approved (must go through testing)", () => {
-      const result = validateStateTransition("pr_created", "pr_approved");
+    it("rejects new → pr_created via pr_created (must go through development)", () => {
+      const result = validateStateTransition("new", "pr_created");
       expect(result.allowed).toBe(false);
     });
 
     it("rejects designing → in_development via assign_dev (must finish design first)", () => {
       const result = validateStateTransition("designing", "assign_dev");
       expect(result.allowed).toBe(false);
+    });
+
+    it("allows idempotent transitions (same state → same state)", () => {
+      expect(validateStateTransition("in_development", "assign_dev").allowed).toBe(true);
+      expect(validateStateTransition("designing", "create_design").allowed).toBe(true);
+      expect(validateStateTransition("pr_created", "pr_created").allowed).toBe(true);
+    });
+
+    it("allows in_review → pr_created (re-submit after changes)", () => {
+      expect(validateStateTransition("in_review", "pr_created").allowed).toBe(true);
     });
 
     it("allows actions without state mapping (question, notify)", () => {
@@ -224,7 +234,7 @@ describe("flow-guard", () => {
     it("returns valid transitions for known states", () => {
       expect(getValidTransitions("new")).toEqual(["described"]);
       expect(getValidTransitions("described")).toEqual(["designing", "in_development"]);
-      expect(getValidTransitions("in_review")).toEqual(["approved", "in_development"]);
+      expect(getValidTransitions("in_review")).toEqual(["approved", "in_development", "pr_created"]);
     });
 
     it("returns empty array for terminal state", () => {

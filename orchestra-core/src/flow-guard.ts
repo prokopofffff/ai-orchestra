@@ -18,7 +18,7 @@ const allowedRoutes: Record<string, string[]> = {
 const allowedActions: Record<string, string[]> = {
   "tech-lead": [
     "create_design_system", "create_design", "assign_dev",
-    "answer", "pr_approved", "pr_changes_requested",
+    "answer", "question", "pr_approved", "pr_changes_requested",
     "task_done", "deploy", "setup_cicd", "notify", "escalate",
   ],
   designer: [
@@ -49,11 +49,11 @@ const validTransitions: Record<string, string[]> = {
   designing: ["design_ready"],
   design_ready: ["in_development"],
   in_development: ["pr_created"],
-  pr_created: ["in_testing"],
-  in_testing: ["tested"],
+  pr_created: ["in_testing", "in_development"],       // allow re-work
+  in_testing: ["tested", "in_development"],            // allow fix cycle
   tested: ["in_review"],
-  in_review: ["approved", "in_development"],
-  approved: ["merged"],
+  in_review: ["approved", "in_development", "pr_created"], // allow re-submit
+  approved: ["merged", "in_development"],              // allow re-open
   merged: ["closed"],
   closed: [],
 };
@@ -117,6 +117,11 @@ export function validateStateTransition(currentState: string, action: string): V
   const targetState = actionToTransition[action];
   if (!targetState) {
     // Action doesn't trigger a state transition (e.g., question, notify)
+    return { allowed: true };
+  }
+
+  // Idempotent: if already in target state, allow (no-op)
+  if (currentState === targetState) {
     return { allowed: true };
   }
 

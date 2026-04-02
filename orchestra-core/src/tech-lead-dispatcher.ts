@@ -97,12 +97,12 @@ export async function dispatchTechLead(
       worktreePath: workDir,
     });
 
-    // Spawn Claude
+    // Spawn Claude with MCP tools for task/signal management
     const args = [
       "--dangerously-skip-permissions",
       "--model", model,
-      "--print",
       "--output-format", "text",
+      "--mcp-config", mcpConfigPath,
       "-p", fullPrompt,
     ];
 

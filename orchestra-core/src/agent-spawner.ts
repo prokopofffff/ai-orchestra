@@ -150,7 +150,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   if (taskRows.length && (taskRows[0].blocked_by as string[]).length > 0) {
     const blockers = taskRows[0].blocked_by as string[];
     const { rows: blockerRows } = await pool.query(
-      "SELECT id FROM tasks WHERE id = ANY($1) AND state NOT IN ('merged', 'closed', 'design_ready', 'approved', 'tested')",
+      "SELECT id FROM tasks WHERE id = ANY($1) AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')",
       [blockers],
     );
     if (blockerRows.length > 0) {

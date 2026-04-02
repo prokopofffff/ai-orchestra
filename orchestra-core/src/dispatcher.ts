@@ -132,7 +132,6 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
     `SELECT t.id, t.project_id, t.assignee_role, t.state
      FROM tasks t
      WHERE t.state = ANY($1)
-       AND t.assignee_role IS NOT NULL
        AND NOT EXISTS (
          SELECT 1 FROM sessions s
          WHERE s.task_id = t.id AND s.status = 'running'
@@ -144,7 +143,15 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
 
   console.log(`Reconciling ${orphaned.length} orphaned task(s):`);
   for (const task of orphaned) {
-    const role = task.assignee_role as AgentRole;
+    // Determine role: in_testing → qa, otherwise use assignee_role
+    let role: AgentRole;
+    if (task.state === "in_testing") {
+      role = "qa";
+    } else if (task.assignee_role) {
+      role = task.assignee_role as AgentRole;
+    } else {
+      continue; // No role to dispatch
+    }
     console.log(`  [${task.state}] ${role} → task ${task.id}`);
     await enqueue({
       projectId: task.project_id,

@@ -87,8 +87,9 @@ signalRouter.post("/signal", async (req, res, next) => {
     // 6. Check if state change unblocks other tasks
     if (signal.taskId) {
       const targetState = getTargetState(signal.action);
-      if (targetState === "merged" || targetState === "closed") {
-        // Not in actionToTransition yet, but handle manual state updates
+      const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
+      if (targetState && doneStates.includes(targetState)) {
+        checkUnblocked(signal.taskId, signal.projectId).catch(console.error);
       }
     }
 

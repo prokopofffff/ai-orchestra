@@ -2,6 +2,8 @@ import { getPool } from "./db.js";
 import { checkUnblocked } from "./dependency-engine.js";
 import { notify } from "./notification-hub.js";
 import { appendLog } from "./logger.js";
+import { dispatchSignal } from "./dispatcher.js";
+import { loadConfig } from "./config.js";
 
 const CHECK_INTERVAL_MS = 60_000; // every minute
 let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -40,38 +42,40 @@ async function checkMergedPrs(token: string): Promise<void> {
       const projectId = task.project_id as string;
       const taskId = task.id as string;
       const title = task.title as string;
+      const currentState = task.state as string;
 
-      // Update task state to merged
+      // Skip if already in testing or beyond
+      if (["in_testing", "tested", "in_review", "approved", "merged", "closed"].includes(currentState)) {
+        continue;
+      }
+
+      appendLog(projectId, null, "system", "system", `PR merged on GitHub: ${title} (${prUrl})`);
+
+      // PR merged → move to in_testing → dispatch QA
       await pool.query(
-        "UPDATE tasks SET state = 'merged', updated_at = now() WHERE id = $1",
+        "UPDATE tasks SET state = 'in_testing', updated_at = now() WHERE id = $1",
         [taskId],
       );
 
-      appendLog(projectId, null, "system", "system", `PR merged: ${title} (${prUrl})`);
-
-      // Notify user
       await notify({
         projectId,
-        text: `PR merged: ${title}\n${prUrl}`,
+        text: `PR merged: ${title} — dispatching QA for testing`,
         priority: "normal",
         fromRole: "system",
       });
 
-      // Signal Tech Lead
-      await pool.query(
-        `INSERT INTO signals (project_id, task_id, from_role, to_role, action, payload)
-         VALUES ($1, $2, 'system', 'tech-lead', 'notify', $3)`,
-        [projectId, taskId, JSON.stringify({ message: `PR merged: ${title}` })],
-      );
+      // Dispatch QA agent
+      const config = loadConfig();
+      await dispatchSignal(
+        { from: "system", to: "qa", action: "tests_passed", projectId, taskId },
+        config,
+      ).catch(() => {});
 
-      // Check if this unblocks other tasks
-      const unblocked = await checkUnblocked(taskId, projectId);
-      if (unblocked.length > 0) {
-        appendLog(projectId, null, "system", "system",
-          `Merge of "${title}" unblocked ${unblocked.length} task(s)`);
-      }
+      // Also directly enqueue QA since the signal action doesn't map to QA dispatch
+      const { enqueue } = await import("./rate-limiter.js");
+      await enqueue({ projectId, taskId, role: "qa", config });
 
-      console.log(`PR merged detected: ${title} → task ${taskId} → merged`);
+      console.log(`PR merged detected: ${title} → in_testing → QA dispatched`);
     }
   }
 }

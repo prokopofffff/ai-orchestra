@@ -12,7 +12,7 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
   const { rows: dependents } = await pool.query(
     `SELECT id, title, blocked_by FROM tasks
      WHERE project_id = $1 AND $2 = ANY(blocked_by)
-     AND state NOT IN ('merged', 'closed', 'design_ready', 'approved', 'tested')`,
+     AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')`,
     [projectId, taskId],
   );
 
@@ -25,7 +25,7 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
     if (blockedBy.length > 0) {
       const { rows: remaining } = await pool.query(
         `SELECT id FROM tasks
-         WHERE id = ANY($1) AND state NOT IN ('merged', 'closed', 'design_ready', 'approved', 'tested')`,
+         WHERE id = ANY($1) AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')`,
         [blockedBy],
       );
 
@@ -66,7 +66,7 @@ export async function getBlockers(taskId: string): Promise<Array<{ id: string; t
 
   const { rows } = await pool.query(
     `SELECT id, title, state FROM tasks
-     WHERE id = ANY($1) AND state NOT IN ('merged', 'closed', 'design_ready', 'approved', 'tested')`,
+     WHERE id = ANY($1) AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')`,
     [blockedBy],
   );
 

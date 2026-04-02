@@ -224,7 +224,8 @@ taskRouter.patch("/tasks/:id", async (req, res, next) => {
 
     // Check if this state change unblocks other tasks
     const parsed = parseRow(taskSchema, rows[0]);
-    if (body.state && (body.state === "merged" || body.state === "closed")) {
+    const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
+    if (body.state && doneStates.includes(body.state)) {
       const unblocked = await checkUnblocked(parsed.id, parsed.projectId);
       if (unblocked.length > 0) {
         (parsed as Record<string, unknown>).unblockedTasks = unblocked;

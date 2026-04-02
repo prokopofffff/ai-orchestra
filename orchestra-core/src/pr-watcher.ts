@@ -42,10 +42,32 @@ async function checkMergedPrs(token: string): Promise<void> {
     const prMerged = await isPrMerged(prUrl, token);
     if (!prMerged) continue;
 
-    // tested + merged → auto-advance to merged
+    // tested — check if QA test PR is also merged before advancing to merged
     if (currentState === "tested") {
+      // Find QA test branch PR for this task
+      const { rows: qaSessions } = await pool.query(
+        `SELECT worktree_path FROM sessions WHERE task_id = $1 AND role = 'qa' ORDER BY started_at DESC LIMIT 1`,
+        [taskId],
+      );
+      // Look for any open PRs from test branches
+      const pr = parsePrUrl(prUrl);
+      if (pr) {
+        const qaPrs = await fetch(
+          `https://api.github.com/repos/${pr.owner}/${pr.repo}/pulls?state=all&per_page=10`,
+          { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" } },
+        ).then(r => r.json()) as Array<Record<string, unknown>>;
+
+        const qaPr = (qaPrs as Array<{ head: { ref: string }; merged: boolean }>)
+          .find(p => (p.head.ref as string).startsWith("test/") && p.merged);
+
+        if (!qaPr) {
+          // QA PR not merged yet — don't advance
+          continue;
+        }
+      }
+
       await pool.query("UPDATE tasks SET state = 'merged', updated_at = now() WHERE id = $1", [taskId]);
-      appendLog(projectId, null, "system", "system", `Task "${title}" → merged (QA passed + PR merged)`);
+      appendLog(projectId, null, "system", "system", `Task "${title}" → merged (code + tests PRs merged)`);
       await notify({ projectId, text: `Task complete: ${title}`, priority: "normal", fromRole: "system" });
 
       const { checkUnblocked } = await import("./dependency-engine.js");
@@ -53,7 +75,7 @@ async function checkMergedPrs(token: string): Promise<void> {
       if (unblocked.length) {
         appendLog(projectId, null, "system", "system", `"${title}" unblocked ${unblocked.length} task(s)`);
       }
-      console.log(`Task "${title}" → merged (tested + PR merged)`);
+      console.log(`Task "${title}" → merged (code + tests PRs merged)`);
       continue;
     }
 
@@ -79,6 +101,12 @@ async function checkMergedPrs(token: string): Promise<void> {
     {
     }
   }
+}
+
+function parsePrUrl(prUrl: string): { owner: string; repo: string; number: string } | null {
+  const match = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!match) return null;
+  return { owner: match[1], repo: match[2], number: match[3] };
 }
 
 async function isPrMerged(prUrl: string, token: string): Promise<boolean> {

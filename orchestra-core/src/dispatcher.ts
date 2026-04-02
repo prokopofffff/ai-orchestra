@@ -17,7 +17,7 @@ const dispatchMap: Record<string, AgentRole | "tech-lead-resume" | null> = {
   design_system_ready: "tech-lead",
   design_ready: "tech-lead",
   question: "tech-lead",
-  pr_created: null,         // dispatches QA
+  pr_created: "tech-lead",  // Tech Lead reviews PR, then user merges
   tests_passed: "tech-lead",
   tests_failed: "tech-lead",
 
@@ -63,11 +63,6 @@ export async function dispatchSignal(
     } else {
       return { dispatched: false, reason: "Task has no assignee_role" };
     }
-  }
-
-  if (action === "pr_created" && taskId) {
-    // PR created → dispatch QA
-    targetRole = "qa";
   }
 
   if (action === "answer" && taskId) {

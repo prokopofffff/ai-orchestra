@@ -64,6 +64,9 @@ export async function dispatchTechLead(
     const ctx = await buildBootstrapContext(projectId, "tech-lead");
     const bootstrapPrompt = formatBootstrapPrompt(ctx);
 
+    // Fetch conversation history
+    const conversationHistory = await getConversationHistory(projectId);
+
     // MCP config
     const mcpConfigPath = path.join(workDir, ".mcp-agent.json");
     const mcpConfig = generateMcpConfig("tech-lead", config, projectId);
@@ -80,8 +83,10 @@ export async function dispatchTechLead(
       systemPrompt,
       "\n---\n",
       bootstrapPrompt,
-      "\n## User Message\n",
+      conversationHistory,
+      "\n## Latest User Message\n",
       userMessage,
+      "\n\nRespond to the user's latest message above. You have the full conversation history — do NOT ask the user to repeat themselves. Continue where the conversation left off.",
     ].join("\n");
 
     // Create session
@@ -175,4 +180,38 @@ function ensureTempDir(slug: string): string {
   const dir = path.join(WORKSPACES_ROOT, slug, "workspace");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+async function getConversationHistory(projectId: string): Promise<string> {
+  const pool = getPool();
+
+  const { rows: convRows } = await pool.query(
+    "SELECT id FROM conversations WHERE project_id = $1",
+    [projectId],
+  );
+  if (!convRows.length) return "";
+
+  // Get last 30 messages for context
+  const { rows } = await pool.query(
+    `SELECT from_role, source, text, created_at FROM messages
+     WHERE conversation_id = $1
+     ORDER BY created_at DESC LIMIT 30`,
+    [convRows[0].id],
+  );
+
+  if (!rows.length) return "";
+
+  // Reverse to chronological order
+  const messages = rows.reverse();
+
+  const lines = ["\n## Conversation History\n"];
+  for (const msg of messages) {
+    const role = msg.from_role as string;
+    const label = role === "user" ? "User" : role === "tech-lead" ? "You (Tech Lead)" : "System";
+    lines.push(`**${label}:**`);
+    lines.push(msg.text as string);
+    lines.push("");
+  }
+
+  return lines.join("\n");
 }

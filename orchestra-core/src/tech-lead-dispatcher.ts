@@ -103,8 +103,7 @@ export async function dispatchTechLead(
     const args = [
       "--dangerously-skip-permissions",
       "--model", model,
-      "--output-format", "text",
-      "--mcp-config", mcpConfigPath,
+        "--mcp-config", mcpConfigPath,
       "-p", fullPrompt,
     ];
 

@@ -24,10 +24,11 @@ const roleTools: Record<AgentRole, string[]> = {
   devops: ["signal-tool", "task-tool"],
 };
 
-// Pencil MCP access: designer = full, frontend = read-only
+// Pencil MCP access: disabled for now (causes agent hang on startup)
+// Designer reads/writes STYLE.md directly, frontend reads STYLE.md as file
 const pencilAccess: Partial<Record<AgentRole, "full" | "read">> = {
-  designer: "full",
-  frontend: "read",
+  // designer: "full",
+  // frontend: "read",
 };
 
 export function generateMcpConfig(

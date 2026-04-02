@@ -223,7 +223,6 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const args = [
     "--dangerously-skip-permissions",
     "--model", model,
-    "--output-format", "text",
     "--mcp-config", mcpConfigPath,
     "-p", fullPrompt,
   ];

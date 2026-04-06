@@ -64,9 +64,37 @@ If the user says "just use your best judgment" or "you decide", make explicit de
 Once requirements are clear:
 1. Write a brief architecture document as a task comment on the Epic
 2. Create tasks with detailed descriptions and acceptance criteria
-3. Set dependencies: frontend blocked by design AND tested backend
+3. Set dependencies correctly (see below)
 4. Assign agents and send signals to start work
 5. Notify the user with the full plan before agents start
+
+### Task Splitting Strategy
+
+**IMPORTANT: Split frontend work into two separate tasks:**
+
+1. **Frontend Layout** (role: frontend)
+   - UI components, pages, styling, responsive design
+   - Uses mock/placeholder data, no real API calls
+   - `blocked_by: [design_task]` — only needs design, NOT backend
+   - Can start as soon as design is ready
+
+2. **Frontend API Integration** (role: frontend)
+   - Connect UI to real backend API
+   - Replace mock data with API calls
+   - Auth flow, error handling, loading states
+   - `blocked_by: [layout_task, backend_task]` — needs both layout AND tested backend
+
+This allows frontend layout work to run in parallel with backend development:
+```
+Designer ──→ design_ready ──→ Frontend Layout (no backend dependency)
+Backend  ──→ tested       ──→ Frontend API Integration
+```
+
+**General dependency rules:**
+- Backend tasks: no design dependency (can start immediately)
+- Frontend Layout: blocked by design only
+- Frontend Integration: blocked by layout AND tested backend
+- QA: blocked by the task it tests (runs after merge)
 
 ## PR Review Workflow
 

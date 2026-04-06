@@ -11,6 +11,7 @@ import { AgentGraph } from "./components/AgentGraph";
 import { AgentCards } from "./components/AgentCards";
 import { TaskQueue } from "./components/TaskQueue";
 import { AgentLogs } from "./components/AgentLogs";
+import { UsageWidget } from "./components/UsageWidget";
 
 export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -71,7 +72,10 @@ export function App() {
           <div className="agents-view">
             <AgentGraph />
             <AgentCards projectId={projectId} />
-            <TaskQueue />
+            <div className="agents-bottom-row">
+              <TaskQueue />
+              <UsageWidget />
+            </div>
           </div>
         )}
 

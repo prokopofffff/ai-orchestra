@@ -4,16 +4,20 @@ import { getUsage } from "../usage-tracker";
 describe("usage-tracker", () => {
   it("returns usage info shape", () => {
     const usage = getUsage();
-    expect(usage).toHaveProperty("percent");
-    expect(usage).toHaveProperty("status");
+    expect(usage).toHaveProperty("sessions");
+    expect(usage).toHaveProperty("byRole");
+    expect(usage).toHaveProperty("byModel");
     expect(usage).toHaveProperty("lastChecked");
-    expect(usage).toHaveProperty("raw");
-    expect(["ok", "warning", "critical", "unknown"]).toContain(usage.status);
+    expect(usage.sessions).toHaveProperty("total");
+    expect(usage.sessions).toHaveProperty("running");
+    expect(usage.sessions).toHaveProperty("completed");
+    expect(usage.sessions).toHaveProperty("crashed");
   });
 
-  it("initial status is unknown", () => {
+  it("initial state has zero counts", () => {
     const usage = getUsage();
-    expect(usage.status).toBe("unknown");
-    expect(usage.percent).toBeNull();
+    expect(usage.sessions.total).toBe(0);
+    expect(usage.sessions.running).toBe(0);
+    expect(Object.keys(usage.byRole)).toHaveLength(0);
   });
 });

@@ -73,5 +73,14 @@ export const sendMessage = (projectId: string, text: string) =>
 // Queue
 export const fetchQueueStatus = () => get<QueueStatus>("/queue/status");
 
+// Usage
+export interface UsageInfo {
+  sessions: { total: number; running: number; completed: number; crashed: number };
+  byRole: Record<string, { sessions: number; running: number }>;
+  byModel: Record<string, number>;
+  lastChecked: string;
+}
+export const fetchUsage = () => get<UsageInfo>("/usage");
+
 // Health
 export const fetchHealth = () => get<{ status: string; timestamp: string }>("/health");

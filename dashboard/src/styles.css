@@ -176,6 +176,32 @@ body {
 
 /* Agents view */
 .agents-view { display: flex; flex-direction: column; gap: 20px; }
+.agents-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* Usage Widget */
+.usage-widget { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.usage-widget h2 { margin-bottom: 12px; font-size: 15px; }
+.usage-widget h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin: 12px 0 6px; }
+.usage-sessions { display: flex; gap: 12px; flex-wrap: wrap; }
+.usage-stat {
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--bg); padding: 8px 14px; border-radius: 6px; min-width: 60px;
+}
+.usage-stat.running .usage-value { color: var(--success); }
+.usage-stat.crashed .usage-value { color: var(--danger); }
+.usage-value { font-size: 20px; font-weight: 700; }
+.usage-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+.usage-bars { display: flex; flex-direction: column; gap: 6px; }
+.usage-bar-row { display: flex; align-items: center; gap: 8px; }
+.usage-bar-label { font-size: 12px; font-weight: 600; min-width: 70px; }
+.usage-bar-track { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.usage-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.usage-bar-count { font-size: 11px; color: var(--text-muted); min-width: 80px; text-align: right; }
+.usage-model-list { display: flex; flex-direction: column; gap: 4px; }
+.usage-model-row { display: flex; justify-content: space-between; font-size: 12px; }
+.usage-model-name { font-weight: 500; }
+.usage-model-count { color: var(--text-muted); }
+.usage-updated { font-size: 10px; color: var(--text-muted); margin-top: 10px; text-align: right; }
 
 /* Forms */
 .create-forms { margin-bottom: 16px; }

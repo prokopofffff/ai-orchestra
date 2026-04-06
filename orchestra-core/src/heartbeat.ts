@@ -2,21 +2,26 @@ import { getPool } from "./db";
 import {
   getActiveSessions,
   updateSession,
-  getSession,
   type Session,
 } from "./session-manager";
 import { enqueue } from "./rate-limiter";
 import { loadConfig } from "./config";
+import { notify } from "./notification-hub";
+import { appendLog } from "./logger";
+import { logBackgroundError } from "./error-handler";
 
 const CHECK_INTERVAL_MS = 30_000;
-const STALE_THRESHOLD_MS = 10 * 60_000; // 10 minutes
-const TECH_LEAD_MAX_AGE_MS = 8 * 60 * 60_000; // 8 hours — session timeout
+const STALE_THRESHOLD_MS = 10 * 60_000; // 10 minutes no heartbeat
+const TECH_LEAD_MAX_AGE_MS = 8 * 60 * 60_000; // 8 hours session timeout
+
+const MAX_RETRIES = 3;
+const BACKOFF_BASE_MS = 30_000; // 30s, 60s, 120s
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export function startHeartbeat(): void {
   if (intervalId) return;
-  intervalId = setInterval(checkSessions, CHECK_INTERVAL_MS);
+  intervalId = setInterval(() => checkSessions().catch((e) => logBackgroundError("heartbeat", e)), CHECK_INTERVAL_MS);
   console.log("Heartbeat monitor started (every 30s)");
 }
 
@@ -27,12 +32,19 @@ export function stopHeartbeat(): void {
   }
 }
 
+export interface SessionHealth {
+  sessionId: string;
+  role: string;
+  status: "healthy" | "crashed" | "hung";
+  reason?: string;
+}
+
 export async function checkSessions(): Promise<SessionHealth[]> {
   const sessions = await getActiveSessions();
   const results: SessionHealth[] = [];
 
   for (const session of sessions) {
-    const health = await checkSession(session);
+    const health = checkSessionHealth(session);
     results.push(health);
 
     if (health.status === "crashed" || health.status === "hung") {
@@ -43,26 +55,19 @@ export async function checkSessions(): Promise<SessionHealth[]> {
   return results;
 }
 
-export interface SessionHealth {
-  sessionId: string;
-  role: string;
-  status: "healthy" | "crashed" | "hung";
-  reason?: string;
-}
-
-async function checkSession(session: Session): Promise<SessionHealth> {
+function checkSessionHealth(session: Session): SessionHealth {
   const base = { sessionId: session.id, role: session.role };
 
   // Check if process is alive
   if (session.pid) {
     try {
-      process.kill(session.pid, 0); // Signal 0 = check if process exists
+      process.kill(session.pid, 0);
     } catch {
       return { ...base, status: "crashed", reason: "Process not found" };
     }
   }
 
-  // Check for stale session (no heartbeat for too long)
+  // Check for stale session
   if (session.lastHeartbeat) {
     const elapsed = Date.now() - session.lastHeartbeat.getTime();
     if (elapsed > STALE_THRESHOLD_MS) {
@@ -70,11 +75,11 @@ async function checkSession(session: Session): Promise<SessionHealth> {
     }
   }
 
-  // Tech Lead session age check (A model: 8h timeout)
+  // Tech Lead session age check
   if (session.role === "tech-lead") {
     const age = Date.now() - session.startedAt.getTime();
     if (age > TECH_LEAD_MAX_AGE_MS) {
-      return { ...base, status: "hung", reason: `Tech Lead session exceeded ${TECH_LEAD_MAX_AGE_MS / 3600000}h — context likely degraded` };
+      return { ...base, status: "hung", reason: "Tech Lead session exceeded 8h — context likely degraded" };
     }
   }
 
@@ -83,73 +88,100 @@ async function checkSession(session: Session): Promise<SessionHealth> {
 
 async function handleUnhealthy(session: Session, health: SessionHealth): Promise<void> {
   const pool = getPool();
+  const projectId = session.projectId;
 
-  // Check retry count
+  // Get retry count from queue history
   const { rows } = await pool.query(
     "SELECT retry_count FROM task_queue WHERE task_id = $1 AND role = $2 ORDER BY created_at DESC LIMIT 1",
     [session.taskId, session.role],
   );
   const retryCount = rows[0]?.retry_count ?? 0;
 
-  if (retryCount >= 2) {
-    // Max retries reached — mark as crashed, escalate to user
-    await updateSession(session.id, { status: "crashed", finishedAt: new Date() });
-    console.error(`Agent ${session.role} (session ${session.id}) failed after ${retryCount} retries. Escalating.`);
+  appendLog(projectId, session.id, session.role, "error",
+    `Agent ${health.status}: ${health.reason} (retry ${retryCount}/${MAX_RETRIES})`);
 
-    // Create escalation signal
+  // Tech Lead context overflow — special handling: fresh session, no retry counting
+  if (session.role === "tech-lead" && health.reason?.includes("context")) {
+    await updateSession(session.id, { status: "terminated", finishedAt: new Date() });
+    appendLog(projectId, session.id, "tech-lead", "system", "Context overflow — spawning fresh session");
+
+    const config = loadConfig();
+    const { rows: taskRows } = await pool.query(
+      `SELECT id FROM tasks WHERE project_id = $1 AND assignee_role = 'tech-lead'
+       AND state NOT IN ('merged', 'closed') ORDER BY created_at DESC LIMIT 1`,
+      [projectId],
+    );
+    const taskId = taskRows[0]?.id ?? session.taskId;
+    if (taskId) {
+      await enqueue({ projectId, taskId, role: "tech-lead", config, retryCount: 0 });
+    }
+    return;
+  }
+
+  // Max retries exceeded — mark failed and escalate
+  if (retryCount >= MAX_RETRIES) {
+    await updateSession(session.id, { status: "crashed", finishedAt: new Date() });
+
+    const message = `Agent ${session.role} failed permanently after ${retryCount} retries: ${health.reason}`;
+    console.error(`[heartbeat] ${message}`);
+    appendLog(projectId, session.id, session.role, "error", message);
+
+    // Escalate to user
+    await notify({
+      projectId,
+      text: `Agent ${session.role} crashed and could not recover after ${retryCount} retries.\nReason: ${health.reason}\nManual intervention may be needed.`,
+      priority: "high",
+      fromRole: "system",
+    }).catch((e) => logBackgroundError("heartbeat:notify", e, projectId));
+
+    // Store escalation signal
     if (session.taskId) {
       await pool.query(
         `INSERT INTO signals (project_id, task_id, from_role, to_role, action, payload)
          VALUES ($1, $2, 'system', 'user', 'escalate', $3)`,
-        [
-          session.projectId,
-          session.taskId,
-          JSON.stringify({ message: `Agent ${session.role} crashed after ${retryCount} retries: ${health.reason}` }),
-        ],
+        [projectId, session.taskId, JSON.stringify({ message })],
       );
     }
     return;
   }
 
-  // Mark current session as crashed/terminated
-  const newStatus = session.role === "tech-lead" && health.reason?.includes("context") ? "terminated" : "crashed";
-  await updateSession(session.id, { status: newStatus, finishedAt: new Date() });
+  // Retry with exponential backoff
+  await updateSession(session.id, { status: "crashed", finishedAt: new Date() });
 
-  // For Tech Lead context overflow: create fresh session with full bootstrap (no resume)
-  if (session.role === "tech-lead" && newStatus === "terminated") {
-    console.log(`Tech Lead session ${session.id} context overflow — spawning fresh session with bootstrap`);
-    const config = loadConfig();
-    // Find the current epic/active task for tech-lead
-    const { rows: taskRows } = await pool.query(
-      `SELECT id FROM tasks WHERE project_id = $1 AND assignee_role = 'tech-lead' AND state NOT IN ('merged', 'closed') ORDER BY created_at DESC LIMIT 1`,
-      [session.projectId],
-    );
-    const taskId = taskRows[0]?.id ?? session.taskId;
-    if (taskId) {
+  const nextRetry = retryCount + 1;
+  const backoffMs = BACKOFF_BASE_MS * Math.pow(2, retryCount); // 30s, 60s, 120s
+  const backoffSec = Math.round(backoffMs / 1000);
+
+  appendLog(projectId, session.id, session.role, "system",
+    `Scheduling retry ${nextRetry}/${MAX_RETRIES} in ${backoffSec}s (exponential backoff)`);
+
+  // Notify user about retry (only on 2nd+ retry)
+  if (nextRetry >= 2) {
+    await notify({
+      projectId,
+      text: `Agent ${session.role} crashed (attempt ${nextRetry}/${MAX_RETRIES}). Retrying in ${backoffSec}s...`,
+      priority: "normal",
+      fromRole: "system",
+    }).catch((e) => logBackgroundError("heartbeat:notify", e, projectId));
+  }
+
+  // Schedule retry after backoff delay
+  setTimeout(async () => {
+    if (!session.taskId) return;
+    try {
+      const config = loadConfig();
       await enqueue({
-        projectId: session.projectId,
-        taskId,
-        role: "tech-lead",
+        projectId,
+        taskId: session.taskId,
+        role: session.role,
         config,
-        // No resumeSessionId — fresh session with bootstrap context
-        retryCount: 0,
+        resumeSessionId: session.claudeSessionId ?? undefined,
+        retryCount: nextRetry,
       });
+      appendLog(projectId, null, session.role, "system",
+        `Retry ${nextRetry}/${MAX_RETRIES} enqueued for task ${session.taskId}`);
+    } catch (e) {
+      logBackgroundError("heartbeat:retry-enqueue", e, projectId);
     }
-    return;
-  }
-
-  // Re-enqueue for retry (resume first approach)
-  if (session.taskId) {
-    const config = loadConfig();
-    await enqueue({
-      projectId: session.projectId,
-      taskId: session.taskId,
-      role: session.role,
-      config,
-      resumeSessionId: session.claudeSessionId ?? undefined,
-      retryCount: retryCount + 1,
-    });
-
-    console.log(`Re-enqueued ${session.role} for task ${session.taskId} (retry ${retryCount + 1})`);
-  }
+  }, backoffMs);
 }

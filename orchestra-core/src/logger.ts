@@ -30,7 +30,7 @@ export function appendLog(
     `INSERT INTO agent_logs (project_id, session_id, role, level, message)
      VALUES ($1, $2, $3, $4, $5)`,
     [projectId, sessionId, role, level, message],
-  ).catch(() => { /* ignore — logging should never crash the app */ });
+  ).catch((e) => { console.error(`[logger] Failed to write log: ${e instanceof Error ? e.message : e}`); });
 }
 
 /**

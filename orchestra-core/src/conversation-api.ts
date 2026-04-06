@@ -4,6 +4,7 @@ import { getPool } from "./db.js";
 import { parseRow, parseRows } from "./db-utils.js";
 import { dispatchTechLead } from "./tech-lead-dispatcher.js";
 import { loadConfig } from "./config.js";
+import { background } from "./error-handler.js";
 
 export const conversationRouter: Router = Router();
 
@@ -84,7 +85,7 @@ conversationRouter.post("/conversations/:projectId/messages", async (req, res, n
     // Dispatch Tech Lead when user sends a message
     if (body.fromRole === "user") {
       const config = loadConfig();
-      dispatchTechLead(projectId, body.text, config).catch(console.error);
+      background(dispatchTechLead(projectId, body.text, config), "conversation:dispatch", projectId);
     }
 
     res.status(201).json(message);

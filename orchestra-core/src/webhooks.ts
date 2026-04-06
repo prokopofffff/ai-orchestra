@@ -3,6 +3,7 @@ import { getPool } from "./db.js";
 import { addSystemMessage } from "./conversation-api.js";
 import { dispatchTechLead } from "./tech-lead-dispatcher.js";
 import { loadConfig } from "./config.js";
+import { background } from "./error-handler.js";
 
 export const webhookRouter: Router = Router();
 
@@ -69,7 +70,7 @@ webhookRouter.post("/telegram/webhook", async (req, res, next) => {
 
     // Dispatch Tech Lead
     const config = loadConfig();
-    dispatchTechLead(projectId, text, config).catch(console.error);
+    background(dispatchTechLead(projectId, text, config), "webhook:dispatch", projectId);
 
     res.json({ ok: true });
   } catch (e) { next(e); }

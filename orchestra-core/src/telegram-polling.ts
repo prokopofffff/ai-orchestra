@@ -1,6 +1,7 @@
 import { getPool } from "./db.js";
 import { dispatchTechLead } from "./tech-lead-dispatcher.js";
 import { loadConfig } from "./config.js";
+import { background } from "./error-handler.js";
 import { sendTelegramMessage } from "./notify.js";
 
 let polling = false;
@@ -111,7 +112,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 
   // Dispatch Tech Lead
   const config = loadConfig();
-  dispatchTechLead(projectId, text, config).catch(console.error);
+  background(dispatchTechLead(projectId, text, config), "telegram:dispatch", projectId);
 }
 
 async function handleCommand(chatId: string, text: string): Promise<void> {

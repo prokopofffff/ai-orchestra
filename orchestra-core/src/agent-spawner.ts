@@ -5,6 +5,7 @@ import { type Config, type AgentRole, getModelForRole } from "./config.js";
 import { createSession, updateSession, type Session } from "./session-manager.js";
 import { appendLog } from "./logger.js";
 import { notify } from "./notification-hub.js";
+import { logBackgroundError } from "./error-handler.js";
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
 import { generateMcpConfig } from "./mcp-config-generator.js";
 import { getPool } from "./db.js";
@@ -68,7 +69,7 @@ async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string>
       await exec("git remote get-url origin", repoDir);
       await exec("git fetch origin", repoDir);
       await exec("git checkout main && git pull origin main", repoDir);
-    } catch { /* local repo or no remote */ }
+    } catch (e) { console.log(`[ensureRepo] git fetch/pull skipped: ${e instanceof Error ? e.message.split("\n")[0] : e}`); }
     return repoDir;
   }
 
@@ -266,7 +267,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       text: `Agent ${role} finished: ${taskTitle ?? taskId}`,
       priority: "low",
       fromRole: "system",
-    }).catch(() => {});
+    }).catch((e) => logBackgroundError("agent:notify-completion", e, projectId));
 
     if (status === "terminated") {
       // Cleanup worktree, keep branch for PR

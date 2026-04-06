@@ -13,6 +13,7 @@ import { checkUnblocked } from "./dependency-engine.js";
 import { dispatchSignal } from "./dispatcher.js";
 import { loadConfig } from "./config.js";
 import { notify } from "./notification-hub.js";
+import { background, logBackgroundError } from "./error-handler.js";
 
 export const signalRouter: Router = Router();
 
@@ -104,7 +105,7 @@ signalRouter.post("/signal", async (req, res, next) => {
       const targetState = getTargetState(signal.action);
       const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
       if (targetState && doneStates.includes(targetState)) {
-        checkUnblocked(signal.taskId, signal.projectId).catch(console.error);
+        background(checkUnblocked(signal.taskId, signal.projectId), "checkUnblocked", signal.projectId);
       }
     }
 
@@ -117,14 +118,12 @@ signalRouter.post("/signal", async (req, res, next) => {
         text: message,
         priority: signal.action === "escalate" ? "high" : "normal",
         fromRole: signal.from === "tech-lead" ? "tech-lead" : "system",
-      }).catch(console.error);
+      }).catch((err) => logBackgroundError("signal:notify", err, signal.projectId));
     }
 
     // 8. Dispatch agent
     const config = loadConfig();
-    dispatchSignal(signal, config).catch((err) =>
-      console.error("Dispatch error:", err instanceof Error ? err.message : err),
-    );
+    background(dispatchSignal(signal, config), "signal:dispatch", signal.projectId);
 
     res.status(201).json({ id: rows[0].id, status: "accepted" });
   } catch (e) { next(e); }

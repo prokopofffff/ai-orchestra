@@ -108,7 +108,7 @@ async function main() {
   startTelegramPolling();
 
   // Reconcile tasks that are in active states but have no agent running
-  reconcileOrphanedTasks(config).catch(console.error);
+  reconcileOrphanedTasks(config).catch((e) => console.error("[startup] reconcile failed:", e instanceof Error ? e.message : e));
 
   // Watch for merged PRs on GitHub
   startPrWatcher();

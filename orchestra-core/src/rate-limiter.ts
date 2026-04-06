@@ -1,6 +1,7 @@
 import { getPool } from "./db.js";
 import { type Config, type AgentRole } from "./config.js";
 import { spawnAgent } from "./agent-spawner.js";
+import { logBackgroundError } from "./error-handler.js";
 
 // ─── Priority per role ───
 
@@ -43,7 +44,7 @@ export async function enqueue(params: EnqueueParams): Promise<string> {
   );
 
   // Trigger processing (async, don't await)
-  processQueue(params.config).catch(console.error);
+  processQueue(params.config).catch((e) => logBackgroundError("queue:process", e));
 
   return rows[0].id;
 }

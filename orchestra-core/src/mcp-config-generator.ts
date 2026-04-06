@@ -24,12 +24,9 @@ const roleTools: Record<AgentRole, string[]> = {
   devops: ["signal-tool", "task-tool"],
 };
 
-// Pencil MCP access: disabled for now (causes agent hang on startup)
-// Designer reads/writes STYLE.md directly, frontend reads STYLE.md as file
-const pencilAccess: Partial<Record<AgentRole, "full" | "read">> = {
-  // designer: "full",
-  // frontend: "read",
-};
+// Pencil MCP is loaded automatically via Claude Code plugin (frontend-design@claude-plugins-official).
+// No need to add to MCP config — it's available when Pencil desktop app is running.
+// Designer gets full access, frontend gets read access (enforced by prompt instructions).
 
 export function generateMcpConfig(
   role: AgentRole,
@@ -51,18 +48,6 @@ export function generateMcpConfig(
         ORCHESTRA_URL: orchestraUrl,
         AGENT_ROLE: role,
         AGENT_PROJECT_ID: projectId ?? "",
-      },
-    };
-  }
-
-  // Pencil MCP for designer/frontend
-  const pencil = pencilAccess[role];
-  if (pencil) {
-    mcpServers["pencil"] = {
-      command: "npx",
-      args: ["-y", "@anthropic-ai/pencil-mcp"],
-      env: {
-        PENCIL_ACCESS: pencil,
       },
     };
   }

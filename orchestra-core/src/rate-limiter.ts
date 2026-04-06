@@ -37,10 +37,10 @@ export async function enqueue(params: EnqueueParams): Promise<string> {
   const priority = rolePriority[params.role] ?? 40;
 
   const { rows } = await pool.query(
-    `INSERT INTO task_queue (project_id, task_id, role, priority, retry_count)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO task_queue (project_id, task_id, role, priority, retry_count, resume_session_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id`,
-    [params.projectId, params.taskId, params.role, priority, params.retryCount ?? 0],
+    [params.projectId, params.taskId, params.role, priority, params.retryCount ?? 0, params.resumeSessionId ?? null],
   );
 
   // Trigger processing (async, don't await)
@@ -85,7 +85,7 @@ export async function processQueue(config: Config): Promise<void> {
         taskId: item.task_id,
         role: item.role as AgentRole,
         config,
-        resumeSessionId: undefined, // TODO: pass from enqueue params
+        resumeSessionId: item.resume_session_id ?? undefined,
       });
 
       // Mark as completed

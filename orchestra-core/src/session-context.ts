@@ -61,8 +61,18 @@ export async function buildBootstrapContext(
     assigneeRole: r.assignee_role as string | null,
   }));
 
-  // TODO: read last session summary from filesystem
-  const lastSummary: string | null = null;
+  // Read last session summary from task comments or agent logs
+  let lastSummary: string | null = null;
+  const { rows: summaryRows } = await pool.query(
+    `SELECT body FROM task_comments
+     WHERE author = $1
+     AND task_id IN (SELECT id FROM tasks WHERE project_id = $2)
+     ORDER BY created_at DESC LIMIT 1`,
+    [role, projectId],
+  );
+  if (summaryRows[0]) {
+    lastSummary = summaryRows[0].body as string;
+  }
 
   return {
     role,

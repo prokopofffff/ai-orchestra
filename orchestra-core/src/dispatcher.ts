@@ -1,39 +1,45 @@
 import { type Config, type AgentRole } from "./config";
 import { getActiveSessionForRole } from "./session-manager";
-import { spawnAgent } from "./agent-spawner";
 import { enqueue } from "./rate-limiter";
 import { getPool } from "./db";
+import { checkUnblocked } from "./dependency-engine";
+import { notify } from "./notification-hub";
+import { appendLog } from "./logger";
+import { logBackgroundError } from "./error-handler";
 
-// Maps signal action → which role should be dispatched
-const dispatchMap: Record<string, AgentRole | "tech-lead-resume" | null> = {
+/**
+ * Dispatch map: signal action → target role.
+ * null = requires special handling (see dispatchSignal).
+ */
+const dispatchMap: Record<string, AgentRole | null> = {
   // Tech Lead → agents
   create_design_system: "designer",
   create_design: "designer",
-  assign_dev: null,         // role is determined from task.assignee_role
+  assign_dev: null,         // role from task.assignee_role
   setup_cicd: "devops",
   deploy: "devops",
 
-  // Agents → Tech Lead
-  design_system_ready: "tech-lead",
-  design_ready: "tech-lead",
-  question: "tech-lead",
-  pr_created: "tech-lead",  // Tech Lead reviews PR, then user merges
-  tests_passed: "tech-lead",
-  tests_failed: "tech-lead",
+  // Require Tech Lead decision
+  pr_created: "tech-lead",   // PR review — must go through TL
+  question: "tech-lead",     // Questions need TL answer
+  tests_failed: "tech-lead", // Failed tests need TL decision
 
-  // System → Tech Lead
-  task_blocked: "tech-lead",
-  task_unblocked: "tech-lead",
+  // Auto-dispatch (bypass Tech Lead, notify only)
+  design_system_ready: null, // auto-handle: update state + unblock
+  design_ready: null,        // auto-handle: update state + unblock
+  tests_passed: null,        // auto-handle: update state + unblock
+  task_blocked: null,        // informational
+  task_unblocked: null,      // auto-handle: dispatch unblocked agent
 
-  // Agents → User (no dispatch needed, handled by notification hub)
+  // User-facing (no agent dispatch)
   escalate: null,
   notify: null,
 
   // Tech Lead → agents (responses)
-  answer: null,             // resume the agent that asked
-  pr_approved: null,        // notify user, no agent dispatch
-  pr_changes_requested: null, // resume the dev who made the PR
-  task_done: null,          // notify user
+  answer: null,
+  pr_approved: null,
+  pr_changes_requested: null,
+  task_done: null,
 };
 
 export interface DispatchResult {
@@ -49,15 +55,45 @@ export async function dispatchSignal(
 ): Promise<DispatchResult> {
   const { action, projectId, taskId } = signal;
 
-  // Determine target role
-  let targetRole = dispatchMap[action];
+  // ─── Auto-dispatch signals (bypass Tech Lead) ───
 
-  // Special cases: determine role from context
-  if (action === "assign_dev" && taskId) {
+  // design_ready / design_system_ready → notify TL, trigger unblock
+  if ((action === "design_ready" || action === "design_system_ready") && taskId) {
+    await notifyTechLead(projectId, `Design completed for task ${taskId}`);
+    await checkUnblocked(taskId, projectId).catch((e) => logBackgroundError("dispatch:unblock", e, projectId));
+    return { dispatched: true, reason: "Auto-handled: design ready, checked unblock" };
+  }
+
+  // tests_passed → notify TL, trigger unblock
+  if (action === "tests_passed" && taskId) {
+    await notifyTechLead(projectId, `Tests passed for task ${taskId}`);
+    await checkUnblocked(taskId, projectId).catch((e) => logBackgroundError("dispatch:unblock", e, projectId));
+    return { dispatched: true, reason: "Auto-handled: tests passed, checked unblock" };
+  }
+
+  // task_unblocked → auto-dispatch the unblocked agent
+  if (action === "task_unblocked" && taskId) {
     const { rows } = await getPool().query(
       "SELECT assignee_role FROM tasks WHERE id = $1",
       [taskId],
     );
+    const role = rows[0]?.assignee_role as AgentRole | undefined;
+    if (role) {
+      console.log(`Dispatch: task_unblocked → auto-dispatching ${role} (task=${taskId?.slice(0, 8)})`);
+      return await enqueueAgent(projectId, taskId, role, config);
+    }
+    // No assignee — notify Tech Lead to assign
+    await notifyTechLead(projectId, `Task ${taskId} unblocked but has no assignee`);
+    return { dispatched: false, reason: "Unblocked task has no assignee" };
+  }
+
+  // ─── Standard dispatch ───
+
+  let targetRole = dispatchMap[action] ?? null;
+
+  // assign_dev → role from task.assignee_role
+  if (action === "assign_dev" && taskId) {
+    const { rows } = await getPool().query("SELECT assignee_role FROM tasks WHERE id = $1", [taskId]);
     if (rows[0]?.assignee_role) {
       targetRole = rows[0].assignee_role as AgentRole;
     } else {
@@ -65,21 +101,15 @@ export async function dispatchSignal(
     }
   }
 
+  // answer → resume the agent who asked
   if (action === "answer") {
     if (taskId) {
-      const { rows } = await getPool().query(
-        "SELECT assignee_role FROM tasks WHERE id = $1",
-        [taskId],
-      );
-      if (rows[0]?.assignee_role) {
-        targetRole = rows[0].assignee_role as AgentRole;
-      }
+      const { rows } = await getPool().query("SELECT assignee_role FROM tasks WHERE id = $1", [taskId]);
+      if (rows[0]?.assignee_role) targetRole = rows[0].assignee_role as AgentRole;
     } else {
-      // No taskId — dispatch to the signal target role
       const toRole = signal.to;
       if (["designer", "frontend", "backend", "qa", "devops"].includes(toRole)) {
         targetRole = toRole as AgentRole;
-        // Find active task for this role
         const { rows } = await getPool().query(
           `SELECT id FROM tasks WHERE project_id = $1 AND assignee_role = $2
            AND state NOT IN ('merged', 'closed') ORDER BY updated_at DESC LIMIT 1`,
@@ -90,17 +120,12 @@ export async function dispatchSignal(
     }
   }
 
+  // pr_changes_requested → resume the dev
   if (action === "pr_changes_requested") {
     if (taskId) {
-      const { rows } = await getPool().query(
-        "SELECT assignee_role FROM tasks WHERE id = $1",
-        [taskId],
-      );
-      if (rows[0]?.assignee_role) {
-        targetRole = rows[0].assignee_role as AgentRole;
-      }
+      const { rows } = await getPool().query("SELECT assignee_role FROM tasks WHERE id = $1", [taskId]);
+      if (rows[0]?.assignee_role) targetRole = rows[0].assignee_role as AgentRole;
     } else {
-      // No taskId — find the task by signal target role and project
       const toRole = signal.to;
       const { rows } = await getPool().query(
         `SELECT id, assignee_role FROM tasks
@@ -111,7 +136,6 @@ export async function dispatchSignal(
       );
       if (rows[0]) {
         targetRole = rows[0].assignee_role as AgentRole;
-        // Patch taskId for enqueue
         (signal as { taskId?: string }).taskId = rows[0].id;
       }
     }
@@ -122,35 +146,46 @@ export async function dispatchSignal(
     return { dispatched: false, reason: `No dispatch target for action: ${action}` };
   }
 
-  const role = targetRole as AgentRole;
-  console.log(`Dispatch: ${action} → ${role} (project=${projectId.slice(0,8)} task=${taskId?.slice(0,8) ?? 'none'})`);
+  console.log(`Dispatch: ${action} → ${targetRole} (project=${projectId.slice(0, 8)} task=${taskId?.slice(0, 8) ?? "none"})`);
 
-  // Check if agent is already running for this role+project
-  const existing = await getActiveSessionForRole(projectId, role);
+  // Check if agent already running
+  const existing = await getActiveSessionForRole(projectId, targetRole);
   if (existing) {
-    // Agent already running — it will pick up the signal via pending signals
-    return { dispatched: true, role, reason: "Agent already running, signal queued" };
+    return { dispatched: true, role: targetRole, reason: "Agent already running, signal queued" };
   }
 
-  // Enqueue for rate-limited spawning
   const finalTaskId = signal.taskId ?? taskId;
   if (!finalTaskId) {
     return { dispatched: false, reason: "No task ID for spawning" };
   }
 
-  const queued = await enqueue({
-    projectId,
-    taskId: finalTaskId,
-    role,
-    config,
-  });
+  return await enqueueAgent(projectId, finalTaskId, targetRole, config);
+}
 
+async function enqueueAgent(
+  projectId: string,
+  taskId: string,
+  role: AgentRole,
+  config: Config,
+): Promise<DispatchResult> {
+  await enqueue({ projectId, taskId, role, config });
   return { dispatched: true, role, queued: true };
 }
 
 /**
- * On startup, find tasks in active states (designing, in_development, in_testing, in_review)
- * that have an assignee but no running session — re-enqueue them.
+ * Send a non-blocking notification to Tech Lead (signal stored, no dispatch).
+ * Tech Lead picks it up on next session. Does NOT block the pipeline.
+ */
+async function notifyTechLead(projectId: string, message: string): Promise<void> {
+  await getPool().query(
+    `INSERT INTO signals (project_id, from_role, to_role, action, payload)
+     VALUES ($1, 'system', 'tech-lead', 'notify', $2)`,
+    [projectId, JSON.stringify({ message })],
+  ).catch((e) => logBackgroundError("dispatch:notifyTL", e, projectId));
+}
+
+/**
+ * On startup, find tasks in active states with no running session — re-enqueue them.
  */
 export async function reconcileOrphanedTasks(config: Config): Promise<void> {
   const pool = getPool();
@@ -171,21 +206,17 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
 
   console.log(`Reconciling ${orphaned.length} orphaned task(s):`);
   for (const task of orphaned) {
-    // For pr_created: only respawn if there's a pending pr_changes_requested signal
+    // pr_created: only respawn if pending pr_changes_requested
     if (task.state === "pr_created") {
-      const { rows: pendingChanges } = await pool.query(
-        `SELECT id FROM signals WHERE task_id = $1 AND action = 'pr_changes_requested' AND read = false LIMIT 1`,
-        [task.id],
+      const { rows: pending } = await pool.query(
+        `SELECT id FROM signals
+         WHERE (task_id = $1 OR (project_id = $2 AND to_role = $3))
+         AND action = 'pr_changes_requested' AND read = false LIMIT 1`,
+        [task.id, task.project_id, task.assignee_role],
       );
-      // Also check signals without task_id aimed at this role
-      const { rows: pendingChangesNoTask } = await pool.query(
-        `SELECT id FROM signals WHERE project_id = $1 AND to_role = $2 AND action = 'pr_changes_requested' AND read = false LIMIT 1`,
-        [task.project_id, task.assignee_role],
-      );
-      if (!pendingChanges.length && !pendingChangesNoTask.length) continue;
+      if (!pending.length) continue;
     }
 
-    // Determine role: in_testing → qa, otherwise use assignee_role
     let role: AgentRole;
     if (task.state === "in_testing") {
       role = "qa";
@@ -194,12 +225,8 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
     } else {
       continue;
     }
+
     console.log(`  [${task.state}] ${role} → task ${task.id}`);
-    await enqueue({
-      projectId: task.project_id,
-      taskId: task.id,
-      role,
-      config,
-    });
+    await enqueue({ projectId: task.project_id, taskId: task.id, role, config });
   }
 }

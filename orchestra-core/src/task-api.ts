@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getPool } from "./db.js";
-import { parseRow, parseRows } from "./db-utils.js";
-import { checkUnblocked } from "./dependency-engine.js";
+import { getPool } from "./db";
+import { parseRow, parseRows } from "./db-utils";
+import { checkUnblocked } from "./dependency-engine";
 
 export const taskRouter: Router = Router();
 

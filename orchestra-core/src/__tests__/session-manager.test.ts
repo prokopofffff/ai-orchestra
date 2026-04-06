@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
 import {
   createSession,
   updateSession,
@@ -9,7 +9,7 @@ import {
   getLastSessionForRole,
   terminateSession,
   updateHeartbeat,
-} from "../session-manager.js";
+} from "../session-manager";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

@@ -1,4 +1,4 @@
-import { type AgentRole } from "./config.js";
+import { type AgentRole } from "./config";
 
 // ─── Scope rules per role ───
 

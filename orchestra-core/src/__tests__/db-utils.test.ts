@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { parseRow, parseRows, camelToSnake } from "../db-utils.js";
+import { parseRow, parseRows, camelToSnake } from "../db-utils";
 
 describe("db-utils", () => {
   describe("parseRow", () => {

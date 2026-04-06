@@ -1,5 +1,5 @@
-import { getPool } from "./db.js";
-import { type AgentRole } from "./config.js";
+import { getPool } from "./db";
+import { type AgentRole } from "./config";
 
 export interface BootstrapContext {
   role: AgentRole;

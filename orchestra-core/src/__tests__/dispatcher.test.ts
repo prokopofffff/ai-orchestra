@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
-import { dispatchSignal } from "../dispatcher.js";
-import { configSchema } from "../config.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
+import { dispatchSignal } from "../dispatcher";
+import { configSchema } from "../config";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

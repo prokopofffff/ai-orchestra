@@ -1,5 +1,5 @@
-import { getPool } from "./db.js";
-import { logAudit } from "./flow-guard.js";
+import { getPool } from "./db";
+import { logAudit } from "./flow-guard";
 
 /**
  * Check if a task state change unblocks other tasks.

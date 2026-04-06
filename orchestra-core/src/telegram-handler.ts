@@ -1,8 +1,8 @@
-import { getPool } from "./db.js";
-import { sendTelegramMessage } from "./notify.js";
-import { dispatchTechLead } from "./tech-lead-dispatcher.js";
-import { loadConfig } from "./config.js";
-import { background } from "./error-handler.js";
+import { getPool } from "./db";
+import { sendTelegramMessage } from "./notify";
+import { dispatchTechLead } from "./tech-lead-dispatcher";
+import { loadConfig } from "./config";
+import { background } from "./error-handler";
 
 /**
  * Handle an incoming Telegram message (text, not command).

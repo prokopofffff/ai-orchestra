@@ -1,8 +1,8 @@
-import { type Config, type AgentRole } from "./config.js";
-import { getActiveSessionForRole } from "./session-manager.js";
-import { spawnAgent } from "./agent-spawner.js";
-import { enqueue } from "./rate-limiter.js";
-import { getPool } from "./db.js";
+import { type Config, type AgentRole } from "./config";
+import { getActiveSessionForRole } from "./session-manager";
+import { spawnAgent } from "./agent-spawner";
+import { enqueue } from "./rate-limiter";
+import { getPool } from "./db";
 
 // Maps signal action → which role should be dispatched
 const dispatchMap: Record<string, AgentRole | "tech-lead-resume" | null> = {

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import express from "express";
 import { type Server } from "node:http";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
-import { webhookRouter } from "../webhooks.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
+import { webhookRouter } from "../webhooks";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

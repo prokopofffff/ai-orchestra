@@ -1,5 +1,5 @@
-import { sendTelegramMessage } from "./notify.js";
-import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler.js";
+import { sendTelegramMessage } from "./notify";
+import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler";
 
 let polling = false;
 let offset = 0;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
-import { buildBootstrapContext, formatBootstrapPrompt } from "../session-context.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
+import { buildBootstrapContext, formatBootstrapPrompt } from "../session-context";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

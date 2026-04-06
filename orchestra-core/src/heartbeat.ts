@@ -1,12 +1,12 @@
-import { getPool } from "./db.js";
+import { getPool } from "./db";
 import {
   getActiveSessions,
   updateSession,
   getSession,
   type Session,
-} from "./session-manager.js";
-import { enqueue } from "./rate-limiter.js";
-import { loadConfig } from "./config.js";
+} from "./session-manager";
+import { enqueue } from "./rate-limiter";
+import { loadConfig } from "./config";
 
 const CHECK_INTERVAL_MS = 30_000;
 const STALE_THRESHOLD_MS = 10 * 60_000; // 10 minutes

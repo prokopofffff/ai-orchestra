@@ -5,7 +5,7 @@ import {
   getTargetState,
   getValidTransitions,
   type SignalPayload,
-} from "../flow-guard.js";
+} from "../flow-guard";
 
 const signal = (overrides: Partial<SignalPayload> = {}): SignalPayload => ({
   from: "tech-lead",

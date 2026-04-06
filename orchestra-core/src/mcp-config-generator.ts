@@ -1,5 +1,5 @@
 import path from "node:path";
-import { type AgentRole, type Config } from "./config.js";
+import { type AgentRole, type Config } from "./config";
 
 interface McpServerConfig {
   command: string;

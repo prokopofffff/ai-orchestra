@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { getPool } from "./db.js";
-import { parseRows } from "./db-utils.js";
+import { getPool } from "./db";
+import { parseRows } from "./db-utils";
 
 export type LogLevel = "stdout" | "stderr" | "system" | "error";
 

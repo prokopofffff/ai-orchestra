@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getPool } from "./db.js";
-import { parseRow, parseRows } from "./db-utils.js";
-import { dispatchTechLead } from "./tech-lead-dispatcher.js";
-import { loadConfig } from "./config.js";
-import { background } from "./error-handler.js";
+import { getPool } from "./db";
+import { parseRow, parseRows } from "./db-utils";
+import { dispatchTechLead } from "./tech-lead-dispatcher";
+import { loadConfig } from "./config";
+import { background } from "./error-handler";
 
 export const conversationRouter: Router = Router();
 

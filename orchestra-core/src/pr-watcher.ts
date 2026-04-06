@@ -1,7 +1,7 @@
-import { getPool } from "./db.js";
-import { notify } from "./notification-hub.js";
-import { appendLog } from "./logger.js";
-import { loadConfig } from "./config.js";
+import { getPool } from "./db";
+import { notify } from "./notification-hub";
+import { appendLog } from "./logger";
+import { loadConfig } from "./config";
 
 const CHECK_INTERVAL_MS = 60_000; // every minute
 let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -70,7 +70,7 @@ async function checkMergedPrs(token: string): Promise<void> {
       appendLog(projectId, null, "system", "system", `Task "${title}" → merged (code + tests PRs merged)`);
       await notify({ projectId, text: `Task complete: ${title}`, priority: "normal", fromRole: "system" });
 
-      const { checkUnblocked } = await import("./dependency-engine.js");
+      const { checkUnblocked } = await import("./dependency-engine");
       const unblocked = await checkUnblocked(taskId, projectId);
       if (unblocked.length) {
         appendLog(projectId, null, "system", "system", `"${title}" unblocked ${unblocked.length} task(s)`);
@@ -86,7 +86,7 @@ async function checkMergedPrs(token: string): Promise<void> {
       await notify({ projectId, text: `PR merged: ${title} — QA testing started`, priority: "normal", fromRole: "system" });
 
       const config = loadConfig();
-      const { enqueue } = await import("./rate-limiter.js");
+      const { enqueue } = await import("./rate-limiter");
       await enqueue({ projectId, taskId, role: "qa", config });
       console.log(`PR merged: ${title} → in_testing → QA dispatched`);
       continue;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getUsage } from "../usage-tracker.js";
+import { getUsage } from "../usage-tracker";
 
 describe("usage-tracker", () => {
   it("returns usage info shape", () => {

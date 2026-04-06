@@ -1,14 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
-import { type Config, type AgentRole, getModelForRole } from "./config.js";
-import { createSession, updateSession, type Session } from "./session-manager.js";
-import { appendLog } from "./logger.js";
-import { notify } from "./notification-hub.js";
-import { logBackgroundError } from "./error-handler.js";
-import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
-import { generateMcpConfig } from "./mcp-config-generator.js";
-import { getPool } from "./db.js";
+import { type Config, type AgentRole, getModelForRole } from "./config";
+import { createSession, updateSession, type Session } from "./session-manager";
+import { appendLog } from "./logger";
+import { notify } from "./notification-hub";
+import { logBackgroundError } from "./error-handler";
+import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context";
+import { generateMcpConfig } from "./mcp-config-generator";
+import { getPool } from "./db";
 import {
   ensureRepo,
   createWorktree,
@@ -16,7 +16,7 @@ import {
   configureRemoteAuth,
   branchName,
   workspacePath,
-} from "./repo-manager.js";
+} from "./repo-manager";
 
 // ─── Scope Rules ───
 

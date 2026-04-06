@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { getPool } from "./db.js";
-import { type AgentRole } from "./config.js";
-import { parseRow, parseRows } from "./db-utils.js";
+import { getPool } from "./db";
+import { type AgentRole } from "./config";
+import { parseRow, parseRows } from "./db-utils";
 
 const sessionSchema = z.object({
   id: z.string().uuid(),

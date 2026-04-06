@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
-import { checkUnblocked, getBlockers, wouldCreateCycle } from "../dependency-engine.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
+import { checkUnblocked, getBlockers, wouldCreateCycle } from "../dependency-engine";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

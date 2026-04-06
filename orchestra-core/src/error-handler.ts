@@ -1,4 +1,4 @@
-import { appendLog } from "./logger.js";
+import { appendLog } from "./logger";
 
 /**
  * Log an error from a background operation that can't throw.

@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { getPool } from "./db.js";
-import { addSystemMessage } from "./conversation-api.js";
-import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler.js";
+import { getPool } from "./db";
+import { addSystemMessage } from "./conversation-api";
+import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler";
 
 export const webhookRouter: Router = Router();
 

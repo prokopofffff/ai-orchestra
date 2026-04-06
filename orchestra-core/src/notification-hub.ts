@@ -1,6 +1,6 @@
-import { addSystemMessage, addTechLeadMessage } from "./conversation-api.js";
-import { sendTelegramMessage } from "./notify.js";
-import { getPool } from "./db.js";
+import { addSystemMessage, addTechLeadMessage } from "./conversation-api";
+import { sendTelegramMessage } from "./notify";
+import { getPool } from "./db";
 
 export type NotificationPriority = "high" | "normal" | "low";
 

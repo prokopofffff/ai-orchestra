@@ -5,9 +5,9 @@ import {
   getActiveSessions,
   terminateSession,
   updateHeartbeat,
-} from "./session-manager.js";
-import { spawnAgent } from "./agent-spawner.js";
-import { loadConfig } from "./config.js";
+} from "./session-manager";
+import { spawnAgent } from "./agent-spawner";
+import { loadConfig } from "./config";
 
 export const sessionRouter: Router = Router();
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkFileScope, checkFilesScope, formatViolations, getScopeRules } from "../scope-check.js";
+import { checkFileScope, checkFilesScope, formatViolations, getScopeRules } from "../scope-check";
 
 describe("scope-check", () => {
   describe("frontend", () => {

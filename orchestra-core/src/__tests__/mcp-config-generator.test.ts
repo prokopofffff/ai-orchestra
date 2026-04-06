@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateMcpConfig } from "../mcp-config-generator.js";
-import { configSchema } from "../config.js";
+import { generateMcpConfig } from "../mcp-config-generator";
+import { configSchema } from "../config";
 
 const config = configSchema.parse({
   databaseUrl: "postgres://localhost:5432/test",

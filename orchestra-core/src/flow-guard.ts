@@ -1,5 +1,5 @@
-import type { AgentRole } from "./config.js";
-import { getPool } from "./db.js";
+import type { AgentRole } from "./config";
+import { getPool } from "./db";
 
 // ─── Allowed Routes ───
 

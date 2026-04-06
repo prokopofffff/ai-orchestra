@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getPool } from "./db.js";
+import { getPool } from "./db";
 
 export const prRouter: Router = Router();
 

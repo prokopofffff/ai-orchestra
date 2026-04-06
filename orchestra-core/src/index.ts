@@ -1,20 +1,20 @@
 import "dotenv/config";
 import express from "express";
-import { loadConfig } from "./config.js";
-import { waitForDatabase, runMigrations, getPool } from "./db.js";
-import { taskRouter } from "./task-api.js";
-import { signalRouter } from "./signal-api.js";
-import { sessionRouter } from "./session-api.js";
-import { conversationRouter } from "./conversation-api.js";
-import { webhookRouter } from "./webhooks.js";
-import { prRouter } from "./pr-api.js";
-import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
-import { reconcileQueue, getQueueStatus } from "./rate-limiter.js";
-import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker.js";
-import { getLogs } from "./logger.js";
-import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling.js";
-import { startPrWatcher, stopPrWatcher } from "./pr-watcher.js";
-import { reconcileOrphanedTasks } from "./dispatcher.js";
+import { loadConfig } from "./config";
+import { waitForDatabase, runMigrations, getPool } from "./db";
+import { taskRouter } from "./task-api";
+import { signalRouter } from "./signal-api";
+import { sessionRouter } from "./session-api";
+import { conversationRouter } from "./conversation-api";
+import { webhookRouter } from "./webhooks";
+import { prRouter } from "./pr-api";
+import { startHeartbeat, stopHeartbeat } from "./heartbeat";
+import { reconcileQueue, getQueueStatus } from "./rate-limiter";
+import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
+import { getLogs } from "./logger";
+import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling";
+import { startPrWatcher, stopPrWatcher } from "./pr-watcher";
+import { reconcileOrphanedTasks } from "./dispatcher";
 
 async function main() {
   const config = loadConfig();

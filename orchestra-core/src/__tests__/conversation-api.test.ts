@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import express from "express";
 import { type Server } from "node:http";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
-import { conversationRouter, addSystemMessage, addTechLeadMessage } from "../conversation-api.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
+import { conversationRouter, addSystemMessage, addTechLeadMessage } from "../conversation-api";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

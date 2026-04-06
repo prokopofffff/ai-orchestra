@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
-import { enqueue, getQueueStatus, reconcileQueue } from "../rate-limiter.js";
-import { configSchema } from "../config.js";
+import { waitForDatabase, runMigrations, getPool } from "../db";
+import { enqueue, getQueueStatus, reconcileQueue } from "../rate-limiter";
+import { configSchema } from "../config";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

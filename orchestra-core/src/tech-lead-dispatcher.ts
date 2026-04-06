@@ -1,18 +1,18 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { type Config, getModelForRole } from "./config.js";
+import { type Config, getModelForRole } from "./config";
 import {
   createSession,
   updateSession,
   getActiveSessionForRole,
-} from "./session-manager.js";
-import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
-import { generateMcpConfig } from "./mcp-config-generator.js";
-import { getPool } from "./db.js";
-import { notify } from "./notification-hub.js";
-import { appendLog } from "./logger.js";
-import { ensureRepo, ensureTempDir, getWorkspacesRoot } from "./repo-manager.js";
+} from "./session-manager";
+import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context";
+import { generateMcpConfig } from "./mcp-config-generator";
+import { getPool } from "./db";
+import { notify } from "./notification-hub";
+import { appendLog } from "./logger";
+import { ensureRepo, ensureTempDir, getWorkspacesRoot } from "./repo-manager";
 
 // Track running Tech Lead processes
 const techLeadProcesses = new Map<string, ChildProcess>();

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import express from "express";
 import { type Server } from "node:http";
-import { taskRouter } from "../task-api.js";
-import { signalRouter } from "../signal-api.js";
-import { waitForDatabase, runMigrations, getPool } from "../db.js";
+import { taskRouter } from "../task-api";
+import { signalRouter } from "../signal-api";
+import { waitForDatabase, runMigrations, getPool } from "../db";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

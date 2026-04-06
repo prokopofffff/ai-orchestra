@@ -1,7 +1,7 @@
-import { getPool } from "./db.js";
-import { type Config, type AgentRole } from "./config.js";
-import { spawnAgent } from "./agent-spawner.js";
-import { logBackgroundError } from "./error-handler.js";
+import { getPool } from "./db";
+import { type Config, type AgentRole } from "./config";
+import { spawnAgent } from "./agent-spawner";
+import { logBackgroundError } from "./error-handler";
 
 // ─── Priority per role ───
 

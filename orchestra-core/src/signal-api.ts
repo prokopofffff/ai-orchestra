@@ -1,19 +1,19 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getPool } from "./db.js";
-import { parseRows } from "./db-utils.js";
+import { getPool } from "./db";
+import { parseRows } from "./db-utils";
 import {
   validateSignal,
   validateStateTransition,
   getTargetState,
   logAudit,
   type SignalPayload,
-} from "./flow-guard.js";
-import { checkUnblocked } from "./dependency-engine.js";
-import { dispatchSignal } from "./dispatcher.js";
-import { loadConfig } from "./config.js";
-import { notify } from "./notification-hub.js";
-import { background, logBackgroundError } from "./error-handler.js";
+} from "./flow-guard";
+import { checkUnblocked } from "./dependency-engine";
+import { dispatchSignal } from "./dispatcher";
+import { loadConfig } from "./config";
+import { notify } from "./notification-hub";
+import { background, logBackgroundError } from "./error-handler";
 
 export const signalRouter: Router = Router();
 

@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getPool } from "./db";
+import { checkFilesScope, formatViolations } from "./scope-check";
+import type { AgentRole } from "./config";
+import { exec } from "./repo-manager";
 
 export const prRouter: Router = Router();
 
@@ -44,17 +47,34 @@ prRouter.post("/pr/create", async (req, res, next) => {
     );
 
     if (sessionRows[0]?.worktree_path) {
-      const { execSync } = await import("node:child_process");
       const cwd = sessionRows[0].worktree_path;
+
+      // Scope validation: check all changed files against role permissions
+      const agentRole = (body.agentRole ?? req.headers["x-agent-role"]) as string | undefined;
+      if (agentRole && agentRole !== "tech-lead") {
+        try {
+          const { stdout: changedFiles } = await exec("git diff --name-only origin/main...HEAD", cwd);
+          const files = changedFiles.split("\n").filter(Boolean);
+          const violations = checkFilesScope(agentRole as AgentRole, files);
+          if (violations.length > 0) {
+            return res.status(403).json({
+              error: "Scope violation: PR contains out-of-scope files",
+              violations: formatViolations(agentRole as AgentRole, violations),
+            });
+          }
+        } catch {
+          // If diff fails (e.g. no origin/main), skip scope check
+        }
+      }
+
       try {
-        // Set remote URL with token
+        const { execSync } = await import("node:child_process");
         const authUrl = `https://${token}@github.com/${owner}/${repo}.git`;
         execSync(`git remote set-url origin "${authUrl}" 2>/dev/null || git remote add origin "${authUrl}"`, { cwd, stdio: "pipe" });
         execSync(`git push -u origin "${body.head}" --force`, { cwd, stdio: "pipe" });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("Git push failed:", msg);
-        // Continue anyway — branch might already be pushed
       }
     }
 

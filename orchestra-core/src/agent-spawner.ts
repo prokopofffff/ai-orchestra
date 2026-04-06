@@ -17,6 +17,7 @@ import {
   branchName,
   workspacePath,
 } from "./repo-manager";
+import { installScopeHook } from "./scope-enforcer";
 
 // ─── Scope Rules ───
 
@@ -76,6 +77,9 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const branch = branchName(role, taskId);
   const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);
   await configureRemoteAuth(worktreeDir, repoUrl);
+
+  // Install git pre-commit hook to enforce scope (hard boundary)
+  installScopeHook(worktreeDir, role);
 
   // Build bootstrap context
   const ctx = await buildBootstrapContext(projectId, role, taskId);

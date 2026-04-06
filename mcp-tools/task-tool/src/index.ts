@@ -10,10 +10,15 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
+const AGENT_ROLE = process.env.AGENT_ROLE ?? "";
+
 async function apiCall(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`${ORCHESTRA_URL}/api${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Role": AGENT_ROLE,
+    },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   return res.json();

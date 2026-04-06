@@ -14,6 +14,7 @@ import { dispatchSignal } from "./dispatcher";
 import { loadConfig } from "./config";
 import { notify } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
+import { validateSignalSender } from "./agent-auth";
 
 export const signalRouter: Router = Router();
 
@@ -46,6 +47,16 @@ signalRouter.post("/signal", async (req, res, next) => {
   try {
     const body = signalBodySchema.parse(req.body);
     const signal: SignalPayload = body;
+
+    // 0. Validate sender identity (prevent role impersonation)
+    const agentRole = req.headers["x-agent-role"] as string | undefined;
+    if (agentRole) {
+      const senderCheck = validateSignalSender(signal.from, agentRole);
+      if (!senderCheck.allowed) {
+        await logAudit(signal, "rejected", senderCheck.reason);
+        return res.status(403).json({ error: senderCheck.reason });
+      }
+    }
 
     // 1. Validate route + action
     const routeCheck = validateSignal(signal);

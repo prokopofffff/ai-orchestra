@@ -3,6 +3,8 @@ import { z } from "zod";
 import { getPool } from "./db";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked } from "./dependency-engine";
+import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
+import type { AgentRole } from "./config";
 
 export const taskRouter: Router = Router();
 
@@ -151,6 +153,13 @@ taskRouter.get("/tasks", async (req, res, next) => {
 
 taskRouter.post("/tasks", async (req, res, next) => {
   try {
+    // Validate agent permission to create tasks
+    const agentRole = req.headers["x-agent-role"] as string | undefined;
+    if (agentRole) {
+      const check = canCreateTask(agentRole as AgentRole);
+      if (!check.allowed) return res.status(403).json({ error: check.reason });
+    }
+
     const body = z.object({
       projectId: z.string().uuid(),
       parentId: z.string().uuid().optional(),
@@ -185,6 +194,21 @@ taskRouter.get("/tasks/:id", async (req, res, next) => {
 
 taskRouter.patch("/tasks/:id", async (req, res, next) => {
   try {
+    // Validate agent permission to update this task
+    const agentRole = req.headers["x-agent-role"] as string | undefined;
+    if (agentRole) {
+      const { rows: taskRows } = await getPool().query(
+        "SELECT assignee_role FROM tasks WHERE id = $1",
+        [req.params.id],
+      );
+      const check = canUpdateTask(
+        agentRole as AgentRole,
+        (taskRows[0]?.assignee_role as string) ?? null,
+        req.body,
+      );
+      if (!check.allowed) return res.status(403).json({ error: check.reason });
+    }
+
     const body = z.object({
       title: z.string().optional(),
       description: z.string().optional(),
@@ -238,6 +262,12 @@ taskRouter.patch("/tasks/:id", async (req, res, next) => {
 
 taskRouter.delete("/tasks/:id", async (req, res, next) => {
   try {
+    const agentRole = req.headers["x-agent-role"] as string | undefined;
+    if (agentRole) {
+      const check = canDeleteTask(agentRole as AgentRole);
+      if (!check.allowed) return res.status(403).json({ error: check.reason });
+    }
+
     const { rowCount } = await getPool().query("DELETE FROM tasks WHERE id = $1", [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: "Task not found" });
     res.json({ deleted: true });

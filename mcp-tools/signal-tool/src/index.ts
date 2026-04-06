@@ -30,7 +30,7 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/signal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
         body: JSON.stringify({
           from: AGENT_ROLE,
           to,
@@ -65,7 +65,7 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/signal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
         body: JSON.stringify({
           from: AGENT_ROLE,
           to: "user",
@@ -102,7 +102,7 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
         body: JSON.stringify({
           projectId: PROJECT_ID,
           title,
@@ -136,7 +136,7 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/diff`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
         body: JSON.stringify({ prUrl }),
       });
       const data = await res.json() as Record<string, unknown>;
@@ -165,7 +165,7 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/review`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
         body: JSON.stringify({ prUrl, event, body, comments }),
       });
       const data = await res.json() as Record<string, unknown>;
@@ -187,7 +187,7 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/reviews`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
         body: JSON.stringify({ prUrl }),
       });
       const data = await res.json() as Record<string, unknown>;

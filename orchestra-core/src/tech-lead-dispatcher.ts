@@ -6,25 +6,17 @@ import {
   createSession,
   updateSession,
   getActiveSessionForRole,
-  type Session,
 } from "./session-manager.js";
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
 import { generateMcpConfig } from "./mcp-config-generator.js";
 import { getPool } from "./db.js";
 import { notify } from "./notification-hub.js";
 import { appendLog } from "./logger.js";
-
-const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT
-  ?? path.join(process.env.HOME ?? "/tmp", "orchestra-workspaces");
+import { ensureRepo, ensureTempDir, getWorkspacesRoot } from "./repo-manager.js";
 
 // Track running Tech Lead processes
 const techLeadProcesses = new Map<string, ChildProcess>();
 
-/**
- * Dispatch Tech Lead for a project. Called when user sends a message.
- * - If Tech Lead is already running, sends a signal to resume (it will pick up pending messages)
- * - If not running, spawns a new Tech Lead session
- */
 export async function dispatchTechLead(
   projectId: string,
   userMessage: string,
@@ -34,8 +26,6 @@ export async function dispatchTechLead(
     // Check if Tech Lead already running
     const existing = await getActiveSessionForRole(projectId, "tech-lead");
     if (existing) {
-      // Tech Lead is running — it will pick up the message from pending signals/conversations
-      // Send a signal to make sure it wakes up
       await getPool().query(
         `INSERT INTO signals (project_id, from_role, to_role, action, payload)
          VALUES ($1, 'user', 'tech-lead', 'notify', $2)`,
@@ -55,20 +45,18 @@ export async function dispatchTechLead(
     const { slug, repo_url: repoUrl, settings } = projRows[0];
     const model = getModelForRole(config, "tech-lead", settings as Record<string, unknown>);
 
-    // Prepare working directory
+    // Prepare working directory (shared repo-manager)
     const workDir = repoUrl
-      ? await ensureRepoClone(repoUrl, slug)
+      ? await ensureRepo(repoUrl, slug)
       : ensureTempDir(slug);
 
     // Build context
     const ctx = await buildBootstrapContext(projectId, "tech-lead");
     const bootstrapPrompt = formatBootstrapPrompt(ctx);
-
-    // Fetch conversation history
     const conversationHistory = await getConversationHistory(projectId);
 
-    // MCP config (outside workDir so git operations don't delete it)
-    const mcpConfigDir = path.join(WORKSPACES_ROOT, slug, ".mcp-configs");
+    // MCP config (outside workDir)
+    const mcpConfigDir = path.join(getWorkspacesRoot(), slug, ".mcp-configs");
     fs.mkdirSync(mcpConfigDir, { recursive: true });
     const mcpConfigPath = path.join(mcpConfigDir, "tech-lead.json");
     const mcpConfig = generateMcpConfig("tech-lead", config, projectId);
@@ -99,11 +87,11 @@ export async function dispatchTechLead(
       worktreePath: workDir,
     });
 
-    // Spawn Claude with MCP tools for task/signal management
+    // Spawn Claude
     const args = [
       "--dangerously-skip-permissions",
       "--model", model,
-        "--mcp-config", mcpConfigPath,
+      "--mcp-config", mcpConfigPath,
       "-p", fullPrompt,
     ];
 
@@ -114,7 +102,6 @@ export async function dispatchTechLead(
     });
 
     techLeadProcesses.set(projectId, proc);
-
     await updateSession(session.id, { pid: proc.pid ?? null });
 
     // Capture output
@@ -125,8 +112,7 @@ export async function dispatchTechLead(
       appendLog(projectId, session.id, "tech-lead", "stdout", chunk);
     });
     proc.stderr?.on("data", (d) => {
-      const chunk = d.toString();
-      appendLog(projectId, session.id, "tech-lead", "stderr", chunk);
+      appendLog(projectId, session.id, "tech-lead", "stderr", d.toString());
     });
 
     proc.on("exit", async (code) => {
@@ -135,16 +121,10 @@ export async function dispatchTechLead(
       await updateSession(session.id, { status, finishedAt: new Date() });
       appendLog(projectId, session.id, "tech-lead", "system", `Process exited with code ${code}`);
 
-      // Store response in conversation + push to Telegram
       const trimmed = output.trim();
       if (trimmed) {
         try {
-          await notify({
-            projectId,
-            text: trimmed,
-            priority: "high",
-            fromRole: "tech-lead",
-          });
+          await notify({ projectId, text: trimmed, priority: "high", fromRole: "tech-lead" });
         } catch (e) {
           console.error("Failed to store/notify tech-lead response:", e);
         }
@@ -159,30 +139,6 @@ export async function dispatchTechLead(
   }
 }
 
-async function ensureRepoClone(repoUrl: string, slug: string): Promise<string> {
-  const repoDir = path.join(WORKSPACES_ROOT, slug, "repo");
-  if (fs.existsSync(path.join(repoDir, ".git"))) return repoDir;
-
-  fs.mkdirSync(path.dirname(repoDir), { recursive: true });
-
-  // Inject GitHub token into URL if available
-  let cloneUrl = repoUrl;
-  const token = process.env.GITHUB_TOKEN;
-  if (token && cloneUrl.startsWith("https://github.com/")) {
-    cloneUrl = cloneUrl.replace("https://github.com/", `https://${token}@github.com/`);
-  }
-
-  const { execSync } = await import("node:child_process");
-  execSync(`git clone "${cloneUrl}" "${repoDir}"`, { stdio: "pipe" });
-  return repoDir;
-}
-
-function ensureTempDir(slug: string): string {
-  const dir = path.join(WORKSPACES_ROOT, slug, "workspace");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
 async function getConversationHistory(projectId: string): Promise<string> {
   const pool = getPool();
 
@@ -192,9 +148,8 @@ async function getConversationHistory(projectId: string): Promise<string> {
   );
   if (!convRows.length) return "";
 
-  // Get last 30 messages for context
   const { rows } = await pool.query(
-    `SELECT from_role, source, text, created_at FROM messages
+    `SELECT from_role, text FROM messages
      WHERE conversation_id = $1
      ORDER BY created_at DESC LIMIT 30`,
     [convRows[0].id],
@@ -202,9 +157,7 @@ async function getConversationHistory(projectId: string): Promise<string> {
 
   if (!rows.length) return "";
 
-  // Reverse to chronological order
   const messages = rows.reverse();
-
   const lines = ["\n## Conversation History\n"];
   for (const msg of messages) {
     const role = msg.from_role as string;

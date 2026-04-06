@@ -9,6 +9,14 @@ import { logBackgroundError } from "./error-handler.js";
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context.js";
 import { generateMcpConfig } from "./mcp-config-generator.js";
 import { getPool } from "./db.js";
+import {
+  ensureRepo,
+  createWorktree,
+  cleanupWorktree,
+  configureRemoteAuth,
+  branchName,
+  workspacePath,
+} from "./repo-manager.js";
 
 // ─── Scope Rules ───
 
@@ -20,106 +28,6 @@ const scopeRules: Record<AgentRole, { allowed: string[]; denied: string[] }> = {
   qa: { allowed: ["tests/**", "e2e/**", "**/*.config.*", "**/*.test.*", "**/*.spec.*", "package.json"], denied: [] },
   devops: { allowed: [".github/**", "docker-compose.yml", "Dockerfile", "ci/**"], denied: [] },
 };
-
-// ─── Branch naming ───
-
-function branchName(role: AgentRole, taskId: string): string {
-  const prefixes: Record<AgentRole, string> = {
-    "tech-lead": "chore",
-    designer: "design",
-    frontend: "feature/frontend",
-    backend: "feature/backend",
-    qa: "test",
-    devops: "ci",
-  };
-  return `${prefixes[role]}/${taskId}`;
-}
-
-// ─── Workspace paths ───
-
-const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT
-  ?? path.join(process.env.HOME ?? "/tmp", "orchestra-workspaces");
-
-function workspacePath(projectSlug: string): string {
-  return path.join(WORKSPACES_ROOT, projectSlug);
-}
-
-// ─── Git operations ───
-
-async function exec(cmd: string, cwd?: string): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("bash", ["-c", cmd], { cwd });
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (d) => { stdout += d; });
-    proc.stderr.on("data", (d) => { stderr += d; });
-    proc.on("close", (code) => {
-      if (code !== 0) reject(new Error(`Command failed (${code}): ${cmd}\n${stderr}`));
-      else resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-    });
-  });
-}
-
-async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string> {
-  const repoDir = path.join(workspacePath(projectSlug), "repo");
-
-  if (fs.existsSync(path.join(repoDir, ".git"))) {
-    // Fetch and update local main from remote
-    try {
-      await exec("git remote get-url origin", repoDir);
-      await exec("git fetch origin", repoDir);
-      await exec("git checkout main && git pull origin main", repoDir);
-    } catch (e) { console.log(`[ensureRepo] git fetch/pull skipped: ${e instanceof Error ? e.message.split("\n")[0] : e}`); }
-    return repoDir;
-  }
-
-  fs.mkdirSync(path.dirname(repoDir), { recursive: true });
-
-  // Inject GitHub token into URL if available
-  let cloneUrl = repoUrl;
-  const token = process.env.GITHUB_TOKEN;
-  if (token && cloneUrl.startsWith("https://github.com/")) {
-    cloneUrl = cloneUrl.replace("https://github.com/", `https://${token}@github.com/`);
-  }
-
-  await exec(`git clone "${cloneUrl}" "${repoDir}"`);
-  return repoDir;
-}
-
-async function createWorktree(repoDir: string, branch: string, defaultBranch: string): Promise<string> {
-  const worktreeDir = path.join(path.dirname(repoDir), "worktrees", branch.replace(/\//g, "-"));
-
-  // Clean up stale worktree registrations
-  await exec("git worktree prune", repoDir).catch(() => {});
-  if (fs.existsSync(worktreeDir)) {
-    try { await exec(`git worktree remove "${worktreeDir}" --force`, repoDir); } catch { /* ignore */ }
-  }
-
-  // Determine base ref: prefer origin/main, fallback to local main/HEAD
-  let baseRef = `origin/${defaultBranch}`;
-  try {
-    await exec(`git rev-parse --verify ${baseRef}`, repoDir);
-  } catch {
-    baseRef = defaultBranch; // Use local branch
-  }
-
-  // Create branch from base
-  try {
-    await exec(`git branch "${branch}" "${baseRef}"`, repoDir);
-  } catch {
-    // Branch might already exist — reset it
-    try { await exec(`git branch -f "${branch}" "${baseRef}"`, repoDir); } catch { /* keep existing */ }
-  }
-
-  await exec(`git worktree add "${worktreeDir}" "${branch}"`, repoDir);
-  return worktreeDir;
-}
-
-async function cleanupWorktree(repoDir: string, worktreeDir: string): Promise<void> {
-  try {
-    await exec(`git worktree remove "${worktreeDir}" --force`, repoDir);
-  } catch { /* ignore */ }
-}
 
 // ─── Spawn Agent ───
 
@@ -163,30 +71,18 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   // Determine model
   const model = getModelForRole(config, role, settings as Record<string, unknown>);
 
-  // Ensure repo is cloned
+  // Ensure repo + worktree
   const repoDir = await ensureRepo(repoUrl, slug);
-
-  // Create worktree
   const branch = branchName(role, taskId);
   const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);
-
-  // Ensure remote origin is configured with auth for push
-  const token = process.env.GITHUB_TOKEN;
-  if (token && repoUrl.includes("github.com")) {
-    const authUrl = repoUrl.replace("https://github.com/", `https://${token}@github.com/`);
-    try {
-      await exec(`git remote set-url origin "${authUrl}"`, worktreeDir);
-    } catch {
-      try { await exec(`git remote add origin "${authUrl}"`, worktreeDir); } catch { /* ignore */ }
-    }
-  }
+  await configureRemoteAuth(worktreeDir, repoUrl);
 
   // Build bootstrap context
   const ctx = await buildBootstrapContext(projectId, role, taskId);
   const bootstrapPrompt = formatBootstrapPrompt(ctx);
 
   // Generate MCP config (outside worktree so git operations don't delete it)
-  const mcpConfigDir = path.join(path.dirname(worktreeDir), ".mcp-configs");
+  const mcpConfigDir = path.join(workspacePath(slug), ".mcp-configs");
   fs.mkdirSync(mcpConfigDir, { recursive: true });
   const mcpConfigPath = path.join(mcpConfigDir, `${role}-${taskId}.json`);
   const mcpConfig = generateMcpConfig(role, config, projectId);
@@ -270,8 +166,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     }).catch((e) => logBackgroundError("agent:notify-completion", e, projectId));
 
     if (status === "terminated") {
-      // Cleanup worktree, keep branch for PR
-      try { await cleanupWorktree(repoDir, worktreeDir); } catch { /* ignore */ }
+      await cleanupWorktree(repoDir, worktreeDir);
     }
   });
 

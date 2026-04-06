@@ -28,8 +28,10 @@ export interface Task {
 
 export type TaskState =
   | "new" | "described" | "designing" | "design_ready"
-  | "in_development" | "pr_created" | "in_testing" | "tested"
-  | "in_review" | "approved" | "merged" | "closed";
+  | "in_development" | "pr_created" | "revisions"
+  | "in_testing" | "tested"
+  | "in_review" | "approved" | "merged" | "closed"
+  | "failed" | "cancelled";
 
 export interface TaskComment {
   id: string;
@@ -89,10 +91,11 @@ export interface QueueStatus {
 export const KANBAN_PHASES = {
   Backlog: ["new", "described"],
   Design: ["designing", "design_ready"],
-  Development: ["in_development", "pr_created"],
+  Development: ["in_development", "pr_created", "revisions"],
   Testing: ["in_testing", "tested"],
   Review: ["in_review", "approved"],
   Done: ["merged", "closed"],
+  Blocked: ["failed", "cancelled"],
 } as const;
 
 export const ROLE_COLORS: Record<string, string> = {

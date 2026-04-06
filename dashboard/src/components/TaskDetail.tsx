@@ -6,8 +6,10 @@ import { ROLE_COLORS } from "../types";
 
 const ALL_STATES: TaskState[] = [
   "new", "described", "designing", "design_ready",
-  "in_development", "pr_created", "in_testing", "tested",
+  "in_development", "pr_created", "revisions",
+  "in_testing", "tested",
   "in_review", "approved", "merged", "closed",
+  "failed", "cancelled",
 ];
 
 const ALL_ROLES = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"];

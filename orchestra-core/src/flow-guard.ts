@@ -43,19 +43,40 @@ const allowedActions: Record<string, string[]> = {
 
 // ─── Task State Machine ───
 
+/*
+ * State machine with full lifecycle including revisions, failure, and cancellation.
+ *
+ * Happy path:
+ *   new → described → designing → design_ready → in_development → pr_created
+ *   → in_testing → tested → in_review → approved → merged → closed
+ *
+ * Revisions loop:
+ *   pr_created → revisions (TL requests changes) → pr_created (dev re-submits)
+ *
+ * Failure/cancellation (from any active state):
+ *   * → failed     (unrecoverable error)
+ *   * → cancelled  (user/TL cancels task)
+ *
+ * Recovery from failure:
+ *   failed → in_development  (retry)
+ *   cancelled → new          (reopen)
+ */
 const validTransitions: Record<string, string[]> = {
-  new: ["described"],
-  described: ["designing", "in_development"],
-  designing: ["design_ready"],
-  design_ready: ["in_development"],
-  in_development: ["pr_created"],
-  pr_created: ["in_testing", "in_development", "approved"], // TL can approve directly
-  in_testing: ["tested", "in_development"],            // allow fix cycle
-  tested: ["in_review", "merged"],                     // can skip review if PR already merged
-  in_review: ["approved", "in_development", "pr_created"], // allow re-submit
-  approved: ["merged", "in_development", "in_testing"],    // approved + merged → QA
-  merged: ["closed"],
-  closed: [],
+  new:            ["described", "cancelled"],
+  described:      ["designing", "in_development", "cancelled"],
+  designing:      ["design_ready", "failed", "cancelled"],
+  design_ready:   ["in_development", "cancelled"],
+  in_development: ["pr_created", "failed", "cancelled"],
+  pr_created:     ["in_testing", "revisions", "approved", "cancelled"],
+  revisions:      ["pr_created", "in_development", "failed", "cancelled"],
+  in_testing:     ["tested", "in_development", "failed", "cancelled"],
+  tested:         ["in_review", "merged"],
+  in_review:      ["approved", "revisions", "in_development", "cancelled"],
+  approved:       ["merged", "in_testing"],
+  merged:         ["closed"],
+  closed:         [],
+  failed:         ["in_development", "new", "cancelled"],
+  cancelled:      ["new"],
 };
 
 // Action → state transition mapping
@@ -67,9 +88,9 @@ const actionToTransition: Record<string, string> = {
   assign_dev: "in_development",
   pr_created: "pr_created",
   tests_passed: "tested",
-  tests_failed: "in_development",
+  tests_failed: "failed",
   pr_approved: "approved",
-  pr_changes_requested: "in_development",
+  pr_changes_requested: "revisions",
 };
 
 // ─── Validation ───

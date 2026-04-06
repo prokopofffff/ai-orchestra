@@ -140,8 +140,30 @@ describe("flow-guard", () => {
       expect(validateStateTransition("in_review", "pr_approved").allowed).toBe(true);
     });
 
-    it("allows in_review → in_development via pr_changes_requested", () => {
+    it("allows in_review → revisions via pr_changes_requested", () => {
       expect(validateStateTransition("in_review", "pr_changes_requested").allowed).toBe(true);
+    });
+
+    it("allows pr_created → revisions via pr_changes_requested", () => {
+      expect(validateStateTransition("pr_created", "pr_changes_requested").allowed).toBe(true);
+    });
+
+    it("allows revisions → pr_created via pr_created (re-submit)", () => {
+      expect(validateStateTransition("revisions", "pr_created").allowed).toBe(true);
+    });
+
+    it("allows any active state → failed via tests_failed", () => {
+      expect(validateStateTransition("in_development", "tests_failed").allowed).toBe(true);
+      expect(validateStateTransition("in_testing", "tests_failed").allowed).toBe(false); // in_testing allows tested not failed directly
+    });
+
+    it("allows failed → in_development (retry)", () => {
+      expect(validateStateTransition("failed", "assign_dev").allowed).toBe(true);
+    });
+
+    it("allows cancelled → new (reopen)", () => {
+      const transitions = getValidTransitions("cancelled");
+      expect(transitions).toContain("new");
     });
 
     it("rejects new → in_development via assign_dev", () => {
@@ -207,9 +229,9 @@ describe("flow-guard", () => {
       expect(validateStateTransition("described", "assign_dev").allowed).toBe(true);
     });
 
-    it("validates changes_requested loop: in_review → in_development → pr_created → ...", () => {
-      expect(validateStateTransition("in_review", "pr_changes_requested").allowed).toBe(true);
-      expect(validateStateTransition("in_development", "pr_created").allowed).toBe(true);
+    it("validates changes_requested loop: in_review → revisions → pr_created → ...", () => {
+      expect(validateStateTransition("in_review", "pr_changes_requested").allowed).toBe(true); // → revisions
+      expect(validateStateTransition("revisions", "pr_created").allowed).toBe(true); // → pr_created
     });
   });
 
@@ -232,9 +254,11 @@ describe("flow-guard", () => {
 
   describe("getValidTransitions", () => {
     it("returns valid transitions for known states", () => {
-      expect(getValidTransitions("new")).toEqual(["described"]);
-      expect(getValidTransitions("described")).toEqual(["designing", "in_development"]);
-      expect(getValidTransitions("in_review")).toEqual(["approved", "in_development", "pr_created"]);
+      expect(getValidTransitions("new")).toEqual(["described", "cancelled"]);
+      expect(getValidTransitions("described")).toEqual(["designing", "in_development", "cancelled"]);
+      expect(getValidTransitions("in_review")).toEqual(["approved", "revisions", "in_development", "cancelled"]);
+      expect(getValidTransitions("failed")).toEqual(["in_development", "new", "cancelled"]);
+      expect(getValidTransitions("cancelled")).toEqual(["new"]);
     });
 
     it("returns empty array for terminal state", () => {

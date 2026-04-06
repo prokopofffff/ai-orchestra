@@ -92,8 +92,19 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const mcpConfig = generateMcpConfig(role, config, projectId);
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
 
-  // Read system prompt
-  const promptPath = path.join(process.cwd(), "prompts", `${role === "tech-lead" ? "tech-lead" : role === "frontend" ? "dev-frontend" : role === "backend" ? "dev-backend" : role}.md`);
+  // Read system prompt (select designer variant based on Pencil availability)
+  let promptFile: string;
+  if (role === "designer" && !config.pencilEnabled) {
+    promptFile = "designer-no-pencil";
+  } else {
+    const promptMap: Record<string, string> = {
+      "tech-lead": "tech-lead", designer: "designer",
+      frontend: "dev-frontend", backend: "dev-backend",
+      qa: "qa", devops: "devops",
+    };
+    promptFile = promptMap[role] ?? role;
+  }
+  const promptPath = path.join(process.cwd(), "prompts", `${promptFile}.md`);
   let systemPrompt = "";
   if (fs.existsSync(promptPath)) {
     systemPrompt = fs.readFileSync(promptPath, "utf-8");

@@ -24,6 +24,9 @@ export const configSchema = z.object({
   modelQa: modelSchema.default("sonnet"),
   modelDevops: modelSchema.default("sonnet"),
 
+  pencilEnabled: z.coerce.boolean().default(false),
+  pencilModel: z.string().default("claude-sonnet-4-6"),
+
   dashboardPath: z.string().default("./dashboard/dist"),
 });
 
@@ -49,6 +52,8 @@ export function loadConfig(): Config {
     modelBackend: process.env.MODEL_BACKEND,
     modelQa: process.env.MODEL_QA,
     modelDevops: process.env.MODEL_DEVOPS,
+    pencilEnabled: process.env.PENCIL_ENABLED,
+    pencilModel: process.env.PENCIL_MODEL,
     dashboardPath: process.env.DASHBOARD_PATH,
   });
 }

@@ -1,16 +1,20 @@
+import { z } from "zod";
 import { getPool } from "./db.js";
+import { parseRows } from "./db-utils.js";
 
 export type LogLevel = "stdout" | "stderr" | "system" | "error";
 
-export interface LogEntry {
-  id: string;
-  projectId: string;
-  sessionId: string | null;
-  role: string;
-  level: LogLevel;
-  message: string;
-  createdAt: string;
-}
+const logEntrySchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  sessionId: z.string().uuid().nullable(),
+  role: z.string(),
+  level: z.enum(["stdout", "stderr", "system", "error"]),
+  message: z.string(),
+  createdAt: z.coerce.date(),
+});
+
+export type LogEntry = z.infer<typeof logEntrySchema>;
 
 /**
  * Append a log entry. Non-blocking — errors are silently ignored.
@@ -57,13 +61,5 @@ export async function getLogs(
     vals,
   );
 
-  return rows.map((r) => ({
-    id: r.id as string,
-    projectId: r.project_id as string,
-    sessionId: r.session_id as string | null,
-    role: r.role as string,
-    level: r.level as LogLevel,
-    message: r.message as string,
-    createdAt: (r.created_at as Date).toISOString(),
-  }));
+  return parseRows(logEntrySchema, rows);
 }

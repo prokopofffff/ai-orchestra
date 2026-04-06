@@ -1,20 +1,24 @@
+import { z } from "zod";
 import { getPool } from "./db.js";
 import { type AgentRole } from "./config.js";
+import { parseRow, parseRows } from "./db-utils.js";
 
-export interface Session {
-  id: string;
-  projectId: string;
-  role: AgentRole;
-  taskId: string | null;
-  claudeSessionId: string | null;
-  pid: number | null;
-  status: "running" | "sleeping" | "terminated" | "crashed";
-  model: string;
-  worktreePath: string | null;
-  lastHeartbeat: Date | null;
-  startedAt: Date;
-  finishedAt: Date | null;
-}
+const sessionSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  role: z.enum(["tech-lead", "designer", "frontend", "backend", "qa", "devops"]),
+  taskId: z.string().uuid().nullable(),
+  claudeSessionId: z.string().nullable(),
+  pid: z.number().nullable(),
+  status: z.enum(["running", "sleeping", "terminated", "crashed"]),
+  model: z.string(),
+  worktreePath: z.string().nullable(),
+  lastHeartbeat: z.coerce.date().nullable(),
+  startedAt: z.coerce.date(),
+  finishedAt: z.coerce.date().nullable(),
+});
+
+export type Session = z.infer<typeof sessionSchema>;
 
 export interface CreateSessionParams {
   projectId: string;
@@ -32,7 +36,7 @@ export async function createSession(params: CreateSessionParams): Promise<Sessio
      RETURNING *`,
     [params.projectId, params.role, params.taskId ?? null, params.model, params.worktreePath ?? null],
   );
-  return rowToSession(rows[0]);
+  return parseRow(sessionSchema, rows[0]);
 }
 
 export async function updateSession(
@@ -56,7 +60,7 @@ export async function updateSession(
     `UPDATE sessions SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
     vals,
   );
-  return rows.length ? rowToSession(rows[0]) : null;
+  return rows.length ? parseRow(sessionSchema, rows[0]) : null;
 }
 
 export async function updateHeartbeat(id: string): Promise<void> {
@@ -65,7 +69,7 @@ export async function updateHeartbeat(id: string): Promise<void> {
 
 export async function getSession(id: string): Promise<Session | null> {
   const { rows } = await getPool().query("SELECT * FROM sessions WHERE id = $1", [id]);
-  return rows.length ? rowToSession(rows[0]) : null;
+  return rows.length ? parseRow(sessionSchema, rows[0]) : null;
 }
 
 export async function getActiveSessionForRole(projectId: string, role: AgentRole): Promise<Session | null> {
@@ -75,7 +79,7 @@ export async function getActiveSessionForRole(projectId: string, role: AgentRole
      ORDER BY started_at DESC LIMIT 1`,
     [projectId, role],
   );
-  return rows.length ? rowToSession(rows[0]) : null;
+  return rows.length ? parseRow(sessionSchema, rows[0]) : null;
 }
 
 export async function getActiveSessions(projectId?: string): Promise<Session[]> {
@@ -84,12 +88,12 @@ export async function getActiveSessions(projectId?: string): Promise<Session[]> 
       "SELECT * FROM sessions WHERE project_id = $1 AND status IN ('running', 'sleeping') ORDER BY started_at DESC",
       [projectId],
     );
-    return rows.map(rowToSession);
+    return parseRows(sessionSchema, rows);
   }
   const { rows } = await getPool().query(
     "SELECT * FROM sessions WHERE status IN ('running', 'sleeping') ORDER BY started_at DESC",
   );
-  return rows.map(rowToSession);
+  return parseRows(sessionSchema, rows);
 }
 
 export async function getLastSessionForRole(projectId: string, role: AgentRole): Promise<Session | null> {
@@ -99,7 +103,7 @@ export async function getLastSessionForRole(projectId: string, role: AgentRole):
      ORDER BY started_at DESC LIMIT 1`,
     [projectId, role],
   );
-  return rows.length ? rowToSession(rows[0]) : null;
+  return rows.length ? parseRow(sessionSchema, rows[0]) : null;
 }
 
 export async function terminateSession(id: string): Promise<void> {
@@ -107,21 +111,4 @@ export async function terminateSession(id: string): Promise<void> {
     "UPDATE sessions SET status = 'terminated', finished_at = now() WHERE id = $1",
     [id],
   );
-}
-
-function rowToSession(row: Record<string, unknown>): Session {
-  return {
-    id: row.id as string,
-    projectId: row.project_id as string,
-    role: row.role as AgentRole,
-    taskId: row.task_id as string | null,
-    claudeSessionId: row.claude_session_id as string | null,
-    pid: row.pid as number | null,
-    status: row.status as Session["status"],
-    model: row.model as string,
-    worktreePath: row.worktree_path as string | null,
-    lastHeartbeat: row.last_heartbeat ? new Date(row.last_heartbeat as string) : null,
-    startedAt: new Date(row.started_at as string),
-    finishedAt: row.finished_at ? new Date(row.finished_at as string) : null,
-  };
 }

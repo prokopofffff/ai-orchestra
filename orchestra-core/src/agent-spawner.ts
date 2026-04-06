@@ -23,7 +23,7 @@ import { installScopeHook } from "./scope-enforcer";
 
 const scopeRules: Record<AgentRole, { allowed: string[]; denied: string[] }> = {
   "tech-lead": { allowed: ["**/*"], denied: [] },
-  designer: { allowed: ["design/**", "*.pen", "STYLE.md"], denied: ["src/**"] },
+  designer: { allowed: ["design/**", "**/*.pen", "STYLE.md"], denied: ["src/**"] },
   frontend: { allowed: ["src/frontend/**", "src/shared/types/**", "public/**"], denied: ["src/backend/**", "src/api/**", "database/**"] },
   backend: { allowed: ["src/backend/**", "src/api/**", "database/**", "src/shared/types/**"], denied: ["src/frontend/**", "public/**"] },
   qa: { allowed: ["tests/**", "e2e/**", "**/*.config.*", "**/*.test.*", "**/*.spec.*", "package.json"], denied: [] },

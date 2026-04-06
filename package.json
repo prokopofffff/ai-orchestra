@@ -7,5 +7,8 @@
     "build": "pnpm -r build",
     "dev": "pnpm --filter orchestra-core dev",
     "setup": "pnpm --filter orchestra-core setup"
+  },
+  "dependencies": {
+    "@pencil.dev/cli": "^0.2.4"
   }
 }

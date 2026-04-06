@@ -9,7 +9,7 @@ interface ScopeRule {
 
 const scopeRules: Record<AgentRole, ScopeRule> = {
   "tech-lead": { allowed: ["**/*"], denied: [] },
-  designer: { allowed: ["design/**", "**/*.pen", "STYLE.md"], denied: ["src/**"] },
+  designer: { allowed: ["design/**", "**/*.pen", "STYLE.md", "design/screenshots/**"], denied: ["src/**"] },
   frontend: {
     allowed: ["src/frontend/**", "src/shared/types/**", "public/**"],
     denied: ["src/backend/**", "src/api/**", "database/**"],

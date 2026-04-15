@@ -18,7 +18,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   const pool = getPool();
-  await pool.query("DELETE FROM task_queue");
+  await pool.query("DELETE FROM graphile_worker._private_jobs").catch(() => {});
   await pool.query("DELETE FROM sessions");
   await pool.query("DELETE FROM signals");
   await pool.query("DELETE FROM task_comments");
@@ -63,13 +63,13 @@ describe("dispatcher", () => {
     expect(result.role).toBe("backend");
   });
 
-  it("dispatches pr_created to qa", async () => {
+  it("dispatches pr_created to tech-lead for review", async () => {
     const result = await dispatchSignal(
-      { from: "backend", to: "qa", action: "pr_created", projectId, taskId },
+      { from: "backend", to: "tech-lead", action: "pr_created", projectId, taskId },
       config,
     );
     expect(result.dispatched).toBe(true);
-    expect(result.role).toBe("qa");
+    expect(result.role).toBe("tech-lead");
   });
 
   it("dispatches question to tech-lead", async () => {
@@ -81,13 +81,14 @@ describe("dispatcher", () => {
     expect(result.role).toBe("tech-lead");
   });
 
-  it("dispatches tests_passed to tech-lead", async () => {
+  it("auto-handles tests_passed (notify TL, no role dispatch)", async () => {
     const result = await dispatchSignal(
       { from: "qa", to: "tech-lead", action: "tests_passed", projectId, taskId },
       config,
     );
     expect(result.dispatched).toBe(true);
-    expect(result.role).toBe("tech-lead");
+    expect(result.role).toBeUndefined();
+    expect(result.reason).toMatch(/auto-handled/i);
   });
 
   it("dispatches setup_cicd to devops", async () => {

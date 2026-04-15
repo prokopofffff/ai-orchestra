@@ -44,7 +44,7 @@ beforeEach(async () => {
   await pool.query("DELETE FROM telegram_users");
   await pool.query("DELETE FROM flow_audit");
   await pool.query("DELETE FROM signals");
-  await pool.query("DELETE FROM task_queue");
+  await pool.query("DELETE FROM graphile_worker._private_jobs").catch(() => {});
   await pool.query("DELETE FROM sessions");
   await pool.query("DELETE FROM task_comments");
   await pool.query("DELETE FROM tasks");

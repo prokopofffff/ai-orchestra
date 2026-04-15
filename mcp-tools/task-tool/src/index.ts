@@ -106,7 +106,7 @@ server.tool(
   },
   async ({ taskId, body }) => {
     const author = process.env.AGENT_ROLE ?? "agent";
-    const comment = await apiCall(`/tasks/${taskId}/comments`, "POST", { author, body });
+    await apiCall(`/tasks/${taskId}/comments`, "POST", { author, body });
     return { content: [{ type: "text" as const, text: `Comment added to task ${taskId}` }] };
   },
 );

@@ -26,7 +26,7 @@ export async function buildBootstrapContext(
   // Task info
   let taskTitle: string | null = null;
   let taskDescription: string | null = null;
-  let acceptanceCriteria: string | null = null;
+  const acceptanceCriteria: string | null = null;
   if (taskId) {
     const { rows: taskRows } = await pool.query("SELECT title, description FROM tasks WHERE id = $1", [taskId]);
     if (taskRows[0]) {

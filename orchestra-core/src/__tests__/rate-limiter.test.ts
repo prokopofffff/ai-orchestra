@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { waitForDatabase, runMigrations, getPool } from "../db";
-import { enqueue, getQueueStatus, reconcileQueue } from "../rate-limiter";
+import { enqueue, getQueueStatus, getRetryCount } from "../rate-limiter";
 import { configSchema } from "../config";
 
 const DATABASE_URL = process.env.DATABASE_URL
@@ -18,7 +18,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   const pool = getPool();
-  await pool.query("DELETE FROM task_queue");
+  await pool.query("DELETE FROM graphile_worker._private_jobs").catch(() => {});
   await pool.query("DELETE FROM sessions");
   await pool.query("DELETE FROM signals");
   await pool.query("DELETE FROM task_comments");
@@ -45,95 +45,98 @@ afterAll(async () => {
 
 describe("rate-limiter", () => {
   describe("enqueue", () => {
-    it("adds item to queue", async () => {
-      const id = await enqueue({
-        projectId,
-        taskId,
-        role: "backend",
-        config,
-      });
+    it("schedules an agent-run job in graphile-worker", async () => {
+      const id = await enqueue({ projectId, taskId, role: "backend", config });
       expect(id).toBeDefined();
 
-      // Item may have been processed async (and failed due to no real repo),
-      // so check it exists in any status
-      const { rows } = await getPool().query("SELECT * FROM task_queue WHERE id = $1", [id]);
+      const { rows } = await getPool().query(
+        `SELECT t.identifier AS task_identifier, j.priority, j.flags, j.payload
+         FROM graphile_worker._private_jobs j
+         JOIN graphile_worker._private_tasks t ON t.id = j.task_id
+         WHERE j.payload->>'taskId' = $1`,
+        [taskId],
+      );
       expect(rows.length).toBe(1);
-      expect(rows[0].role).toBe("backend");
+      expect(rows[0].task_identifier).toBe("agent-run");
       expect(rows[0].priority).toBe(40);
-      expect(["queued", "running", "failed"]).toContain(rows[0].status);
+      expect(rows[0].flags).toHaveProperty("bucket:claude:api", true);
+      expect(rows[0].payload).toMatchObject({ projectId, taskId, role: "backend" });
     });
 
     it("assigns correct priority per role", async () => {
       const pool = getPool();
-
-      // Create tasks for different roles
       const roles = [
         { role: "tech-lead", expected: 100 },
-        { role: "designer", expected: 50 },
-        { role: "frontend", expected: 40 },
-        { role: "qa", expected: 30 },
-        { role: "devops", expected: 20 },
+        { role: "designer",  expected: 50 },
+        { role: "frontend",  expected: 40 },
+        { role: "qa",        expected: 30 },
+        { role: "devops",    expected: 20 },
       ] as const;
 
       for (const { role, expected } of roles) {
-        const { rows } = await pool.query(
+        const { rows: taskRows } = await pool.query(
           "INSERT INTO tasks (project_id, title) VALUES ($1, $2) RETURNING id",
           [projectId, `Task for ${role}`],
         );
+        await enqueue({ projectId, taskId: taskRows[0].id, role, config });
 
-        const id = await enqueue({
-          projectId,
-          taskId: rows[0].id,
-          role,
-          config,
-        });
-
-        const { rows: qRows } = await pool.query("SELECT priority FROM task_queue WHERE id = $1", [id]);
-        expect(qRows[0].priority).toBe(expected);
+        const { rows: jobRows } = await pool.query(
+          `SELECT j.priority
+           FROM graphile_worker._private_jobs j
+           WHERE j.payload->>'taskId' = $1`,
+          [taskRows[0].id],
+        );
+        expect(jobRows[0].priority).toBe(expected);
       }
     });
 
-    it("sets retry count", async () => {
-      // Use the same projectId/taskId from beforeEach (already created)
-      const id = await enqueue({
-        projectId,
-        taskId,
-        role: "backend",
-        config,
-        retryCount: 2,
+    it("passes resumeSessionId through to the job payload", async () => {
+      await enqueue({
+        projectId, taskId, role: "backend", config,
+        resumeSessionId: "resume-abc",
       });
+      const { rows } = await getPool().query(
+        `SELECT payload FROM graphile_worker._private_jobs WHERE payload->>'taskId' = $1`,
+        [taskId],
+      );
+      expect(rows[0].payload.resumeSessionId).toBe("resume-abc");
+    });
+  });
 
-      const { rows } = await getPool().query("SELECT retry_count FROM task_queue WHERE id = $1", [id]);
-      expect(rows[0].retry_count).toBe(2);
+  describe("getRetryCount", () => {
+    it("returns 0 when no agent-run exists yet", async () => {
+      expect(await getRetryCount(taskId, "backend")).toBe(0);
+    });
+
+    it("returns `attempts` of the most recent matching agent-run job", async () => {
+      await enqueue({ projectId, taskId, role: "backend", config });
+      // Simulate a run by bumping attempts directly on graphile-worker's table.
+      await getPool().query(
+        `UPDATE graphile_worker._private_jobs SET attempts = 2
+         WHERE payload->>'taskId' = $1`,
+        [taskId],
+      );
+      expect(await getRetryCount(taskId, "backend")).toBe(2);
     });
   });
 
   describe("getQueueStatus", () => {
-    it("returns queue status shape", async () => {
+    it("returns the expected shape", async () => {
       const status = await getQueueStatus();
-      expect(status).toHaveProperty("rateLimited");
-      expect(status).toHaveProperty("rateLimitResetTime");
-      expect(status).toHaveProperty("queued");
-      expect(status).toHaveProperty("running");
-      expect(status).toHaveProperty("completed");
-      expect(status).toHaveProperty("failed");
-      expect(status.rateLimited).toBe(false);
+      expect(status).toMatchObject({
+        rateLimited: false,
+        rateLimitResetTime: null,
+        queued: expect.any(Number),
+        running: expect.any(Number),
+        completed: 0, // graphile-worker deletes completed jobs
+        failed: expect.any(Number),
+      });
     });
-  });
 
-  describe("reconcileQueue", () => {
-    it("moves stuck running items back to queued", async () => {
-      const pool = getPool();
-      // Manually insert a 'running' item (simulating crash)
-      await pool.query(
-        "INSERT INTO task_queue (project_id, task_id, role, priority, status) VALUES ($1, $2, 'backend', 40, 'running')",
-        [projectId, taskId],
-      );
-
-      await reconcileQueue();
-
-      const { rows } = await pool.query("SELECT status FROM task_queue WHERE task_id = $1", [taskId]);
-      expect(rows[0].status).toBe("queued");
+    it("counts queued agent-run jobs", async () => {
+      await enqueue({ projectId, taskId, role: "backend", config });
+      const status = await getQueueStatus();
+      expect(status.queued).toBeGreaterThanOrEqual(1);
     });
   });
 });

@@ -311,10 +311,10 @@ describe("Signal API", () => {
     expect(body.error).toContain("Action not allowed");
   });
 
-  it("rejects invalid state transition (new → in_development)", async () => {
+  it("rejects invalid state transition (new → pr_created — must go through development)", async () => {
     const { status, body } = await api("/api/signal", {
       method: "POST",
-      body: JSON.stringify({ from: "tech-lead", to: "backend", action: "assign_dev", projectId, taskId }),
+      body: JSON.stringify({ from: "backend", to: "tech-lead", action: "pr_created", projectId, taskId }),
     });
     expect(status).toBe(403);
     expect(body.error).toContain("Invalid transition");

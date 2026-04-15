@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { configSchema, getModelForRole, type Config } from "../config";
+import { describe, it, expect } from "vitest";
+import { configSchema, getModelForRole } from "../config";
 
 describe("config", () => {
   describe("configSchema", () => {

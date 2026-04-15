@@ -154,7 +154,7 @@ describe("flow-guard", () => {
 
     it("allows any active state → failed via tests_failed", () => {
       expect(validateStateTransition("in_development", "tests_failed").allowed).toBe(true);
-      expect(validateStateTransition("in_testing", "tests_failed").allowed).toBe(false); // in_testing allows tested not failed directly
+      expect(validateStateTransition("in_testing", "tests_failed").allowed).toBe(true);
     });
 
     it("allows failed → in_development (retry)", () => {
@@ -254,11 +254,12 @@ describe("flow-guard", () => {
 
   describe("getValidTransitions", () => {
     it("returns valid transitions for known states", () => {
-      expect(getValidTransitions("new")).toEqual(["described", "cancelled"]);
-      expect(getValidTransitions("described")).toEqual(["designing", "in_development", "cancelled"]);
-      expect(getValidTransitions("in_review")).toEqual(["approved", "revisions", "in_development", "cancelled"]);
-      expect(getValidTransitions("failed")).toEqual(["in_development", "new", "cancelled"]);
-      expect(getValidTransitions("cancelled")).toEqual(["new"]);
+      // Order is derived (not meaningful) — compare as sets.
+      expect(new Set(getValidTransitions("new"))).toEqual(new Set(["described", "cancelled"]));
+      expect(new Set(getValidTransitions("described"))).toEqual(new Set(["designing", "in_development", "cancelled"]));
+      expect(new Set(getValidTransitions("in_review"))).toEqual(new Set(["approved", "revisions", "pr_created", "in_development", "cancelled"]));
+      expect(new Set(getValidTransitions("failed"))).toEqual(new Set(["in_development", "new", "cancelled"]));
+      expect(new Set(getValidTransitions("cancelled"))).toEqual(new Set(["new"]));
     });
 
     it("returns empty array for terminal state", () => {

@@ -52,7 +52,6 @@ describe("session-manager", () => {
     expect(session.role).toBe("backend");
     expect(session.status).toBe("running");
     expect(session.model).toBe("sonnet");
-    expect(session.pid).toBeNull();
     sessionId = session.id;
   });
 
@@ -70,10 +69,8 @@ describe("session-manager", () => {
 
   it("updates session fields", async () => {
     const updated = await updateSession(sessionId, {
-      pid: 12345,
       claudeSessionId: "claude-abc123",
     });
-    expect(updated!.pid).toBe(12345);
     expect(updated!.claudeSessionId).toBe("claude-abc123");
   });
 

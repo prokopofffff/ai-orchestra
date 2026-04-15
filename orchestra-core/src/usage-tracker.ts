@@ -1,5 +1,7 @@
+import { z } from "zod";
 import { getPool } from "./db";
-import { exec } from "./repo-manager";
+import { registerHandler, registerCron } from "./scheduler";
+import { log } from "./obs";
 
 export interface UsageInfo {
   sessions: {
@@ -20,22 +22,24 @@ let cachedUsage: UsageInfo = {
   lastChecked: new Date().toISOString(),
 };
 
-let intervalId: ReturnType<typeof setInterval> | null = null;
-const CHECK_INTERVAL_MS = 30_000;
+const USAGE_KIND = "usage-tracker:refresh";
 
-export function startUsageTracking(): void {
-  if (intervalId) return;
-  refreshUsage();
-  intervalId = setInterval(refreshUsage, CHECK_INTERVAL_MS);
-  console.log("Usage tracking started (every 30s)");
+registerHandler(USAGE_KIND, z.object({}), async () => {
+  await refreshUsage();
+});
+
+export async function startUsageTracking(): Promise<void> {
+  // Prime the cache immediately so first reader doesn't see zeros.
+  await refreshUsage();
+  await registerCron({
+    key: "usage-tracker",
+    kind: USAGE_KIND,
+    intervalSeconds: 30,
+  });
+  log.info("usage-tracker scheduled (every 30s)");
 }
 
-export function stopUsageTracking(): void {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
-}
+export function stopUsageTracking(): void {}
 
 export function getUsage(): UsageInfo {
   return { ...cachedUsage };

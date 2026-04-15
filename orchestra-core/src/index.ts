@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { loadConfig } from "./config";
+import { log, requestMiddleware, installProcessTraps } from "./obs";
 import { waitForDatabase, runMigrations, getPool } from "./db";
 import { taskRouter } from "./task-api";
 import { signalRouter } from "./signal-api";
@@ -9,18 +10,22 @@ import { conversationRouter } from "./conversation-api";
 import { webhookRouter } from "./webhooks";
 import { prRouter } from "./pr-api";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
-import { reconcileQueue, getQueueStatus } from "./rate-limiter";
+import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
 import { getLogs } from "./logger";
 import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling";
 import { startPrWatcher, stopPrWatcher } from "./pr-watcher";
 import { reconcileOrphanedTasks } from "./dispatcher";
+import { startScheduler, stopScheduler, registerBucket } from "./scheduler";
+import "./agents/check-handlers"; // side-effect: registers agent:observe-check handler
 
 async function main() {
+  installProcessTraps();
   const config = loadConfig();
   const app = express();
 
   app.use(express.json());
+  app.use(requestMiddleware());
 
   // ─── Health check ───
   app.get("/api/health", async (_req, res) => {
@@ -78,7 +83,7 @@ async function main() {
 
   // ─── Error handler ───
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error("Unhandled error:", err.message);
+    log.error({ err }, "unhandled express error");
     if (err.name === "ZodError") {
       return res.status(400).json({ error: "Validation error", details: err });
     }
@@ -86,10 +91,10 @@ async function main() {
   });
 
   // ─── Startup ───
-  console.log("Waiting for database...");
+  log.info("waiting for database");
   await waitForDatabase(config.databaseUrl);
 
-  console.log("Running migrations...");
+  log.info("running migrations");
   await runMigrations(config.databaseUrl);
 
   // Create first project if configured
@@ -98,35 +103,48 @@ async function main() {
   // Reconcile queue (items stuck as 'running' after restart)
   await reconcileQueue();
 
-  // Start heartbeat monitor
-  startHeartbeat();
+  // ─── Job scheduler buckets (must exist before crons reference them) ───
+  // GitHub: 5000 req/hr per token = ~1.39/s; keep some headroom.
+  await registerBucket({ key: "github:rest", capacity: 100, refillPerSecond: 1 });
+  await registerBucket({ key: "github:search", capacity: 30, refillPerSecond: 0.5 });
+  // Claude API: drained on 429 to ~5min cooldown. Capacity 50 / refill 0.17/s = ~5min full refill.
+  await registerBucket({ key: CLAUDE_BUCKET, capacity: 50, refillPerSecond: 0.17 });
 
-  // Start usage tracking
-  startUsageTracking();
+  // Bind agent runner so the agent-run job handler can spawn agents.
+  bindAgentRunner(config);
 
-  // Start Telegram polling (for local dev — in production use webhook)
+  // Schedule recurring jobs
+  await startHeartbeat();
+  await startUsageTracking();
+  await startPrWatcher();
+
+  // Start Telegram polling (long-poll loop, not a tick — kept as-is)
   startTelegramPolling();
 
   // Reconcile tasks that are in active states but have no agent running
-  reconcileOrphanedTasks(config).catch((e) => console.error("[startup] reconcile failed:", e instanceof Error ? e.message : e));
+  reconcileOrphanedTasks(config).catch((err) => log.error({ err }, "startup reconcile failed"));
 
-  // Watch for merged PRs on GitHub
-  startPrWatcher();
+  // Start workers — dispatches all crons + ad-hoc jobs
+  startScheduler({ concurrency: 4 });
 
   const server = app.listen(config.port, () => {
-    console.log(`Orchestra-core running on port ${config.port}`);
-    console.log(`Telegram: ${config.telegramBotToken ? "enabled" : "disabled"}`);
-    console.log(`GitHub: ${config.githubToken ? "enabled" : "disabled"}`);
+    log.info({
+      port: config.port,
+      telegram: !!config.telegramBotToken,
+      github: !!config.githubToken,
+      runtime: process.env.AGENT_RUNTIME ?? "cli",
+    }, "orchestra-core listening");
   });
 
   // ─── Graceful shutdown ───
   const shutdown = async (signal: string) => {
-    console.log(`\n${signal} received. Shutting down gracefully...`);
+    log.info({ signal }, "shutting down");
 
     stopHeartbeat();
     stopUsageTracking();
     stopTelegramPolling();
     stopPrWatcher();
+    await stopScheduler();
 
     server.close();
 
@@ -136,7 +154,7 @@ async function main() {
       const { rowCount } = await pool.query(
         "UPDATE sessions SET status = 'sleeping' WHERE status = 'running'",
       );
-      if (rowCount) console.log(`Marked ${rowCount} session(s) as sleeping`);
+      if (rowCount) log.info({ count: rowCount }, "marked sessions as sleeping");
       await pool.end();
     } catch { /* DB might already be down */ }
 
@@ -164,10 +182,10 @@ async function createFirstProject(): Promise<void> {
   );
 
   await pool.query("INSERT INTO conversations (project_id) VALUES ($1)", [created[0].id]);
-  console.log(`Created first project: ${name} (${created[0].id})`);
+  log.info({ name, projectId: created[0].id }, "created first project");
 }
 
 main().catch((err) => {
-  console.error("Failed to start:", err);
+  log.fatal({ err }, "failed to start");
   process.exit(1);
 });

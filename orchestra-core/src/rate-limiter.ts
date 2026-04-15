@@ -1,7 +1,11 @@
-import { getPool } from "./db";
+import { z } from "zod";
+import { sql } from "drizzle-orm";
+import { getPool, getDb } from "./db";
 import { type Config, type AgentRole } from "./config";
 import { spawnAgent } from "./agent-spawner";
 import { logBackgroundError } from "./error-handler";
+import { registerHandler, enqueue as scheduleJob } from "./scheduler";
+import { log } from "./obs";
 
 // ─── Priority per role ───
 
@@ -14,12 +18,13 @@ const rolePriority: Record<AgentRole, number> = {
   devops: 20,
 };
 
-// ─── State ───
+// ─── Bucket ───
 
-let rateLimited = false;
-let rateLimitResetTime: Date | null = null;
-let resetTimeoutId: ReturnType<typeof setTimeout> | null = null;
-let processing = false;
+export const CLAUDE_BUCKET = "claude:api";
+
+// On a 429, we drain the bucket so subsequent claims defer.
+// Refill rate stays constant — tokens come back over the cooldown window.
+// (Worker also treats jobs as retryable, so they re-claim once tokens return.)
 
 // ─── Enqueue ───
 
@@ -32,142 +37,131 @@ export interface EnqueueParams {
   retryCount?: number;
 }
 
+const AGENT_RUN_KIND = "agent-run";
+
+const AgentRunPayload = z.object({
+  projectId: z.string(),
+  taskId: z.string(),
+  role: z.enum(["tech-lead", "designer", "frontend", "backend", "qa", "devops"]),
+  resumeSessionId: z.string().optional(),
+});
+
 export async function enqueue(params: EnqueueParams): Promise<string> {
-  const pool = getPool();
   const priority = rolePriority[params.role] ?? 40;
 
-  const { rows } = await pool.query(
-    `INSERT INTO task_queue (project_id, task_id, role, priority, retry_count, resume_session_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id`,
-    [params.projectId, params.taskId, params.role, priority, params.retryCount ?? 0, params.resumeSessionId ?? null],
-  );
+  // graphile-worker owns the queue; no separate ledger row. `attempts` on the
+  // job itself is the source of truth for retry counts (see getRetryCount).
+  const id = await scheduleJob({
+    kind: AGENT_RUN_KIND,
+    bucketKey: CLAUDE_BUCKET,
+    priority,
+    // High cap: rate-limit retries deliberately re-enter the queue; genuine
+    // errors are non-throwing and won't consume attempts.
+    maxAttempts: 50,
+    payload: {
+      projectId: params.projectId,
+      taskId: params.taskId,
+      role: params.role,
+      resumeSessionId: params.resumeSessionId,
+    },
+  });
 
-  // Trigger processing (async, don't await)
-  processQueue(params.config).catch((e) => logBackgroundError("queue:process", e));
-
-  return rows[0].id;
+  return id;
 }
 
-// ─── Process Queue ───
+/**
+ * Retry count for (taskId, role) — replaces the old task_queue.retry_count
+ * read. Pulls `attempts` from the most recent matching agent-run row in
+ * graphile-worker's private table.
+ */
+export async function getRetryCount(taskId: string, role: AgentRole): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT j.attempts
+     FROM graphile_worker._private_jobs j
+     JOIN graphile_worker._private_tasks t ON t.id = j.task_id
+     WHERE t.identifier = $1
+       AND j.payload->>'taskId' = $2
+       AND j.payload->>'role' = $3
+     ORDER BY j.created_at DESC
+     LIMIT 1`,
+    [AGENT_RUN_KIND, taskId, role],
+  );
+  return (rows[0]?.attempts as number) ?? 0;
+}
 
-export async function processQueue(config: Config): Promise<void> {
-  if (processing || rateLimited) return;
-  processing = true;
+// ─── Handler ───
+
+class RateLimitError extends Error {
+  constructor(message: string, public retryAfterMs: number) {
+    super(message);
+  }
+}
+
+// Config is captured at registration time. Set once during boot.
+let runtimeConfig: Config | null = null;
+
+export function bindAgentRunner(config: Config): void {
+  runtimeConfig = config;
+}
+
+registerHandler(AGENT_RUN_KIND, AgentRunPayload, async (p, ctx) => {
+  if (!runtimeConfig) throw new Error("agent-runner not bound — call bindAgentRunner(config) at startup");
 
   try {
-    const pool = getPool();
+    await ctx.extendLease();
+    await spawnAgent({
+      projectId: p.projectId,
+      taskId: p.taskId,
+      role: p.role,
+      config: runtimeConfig,
+      resumeSessionId: p.resumeSessionId,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
 
-    // Get next queued item by priority (highest first)
-    const { rows } = await pool.query(
-      `SELECT * FROM task_queue
-       WHERE status = 'queued'
-       ORDER BY priority DESC, created_at ASC
-       LIMIT 1`,
-    );
-
-    if (!rows.length) {
-      processing = false;
-      return;
+    if (isRateLimitError(errorMsg)) {
+      const delayMs = parseRateLimitDelay(errorMsg);
+      // Drain bucket so other queued agent-runs defer for the cooldown window.
+      await drainBucket(CLAUDE_BUCKET, delayMs);
+      ctx.log(`rate limited — bucket drained for ~${Math.round(delayMs / 1000)}s`);
+      throw new RateLimitError(errorMsg, delayMs);
     }
 
-    const item = rows[0];
-
-    // Mark as running
-    await pool.query(
-      "UPDATE task_queue SET status = 'running', started_at = now() WHERE id = $1",
-      [item.id],
-    );
-
-    try {
-      await spawnAgent({
-        projectId: item.project_id,
-        taskId: item.task_id,
-        role: item.role as AgentRole,
-        config,
-        resumeSessionId: item.resume_session_id ?? undefined,
-      });
-
-      // Mark as completed
-      await pool.query(
-        "UPDATE task_queue SET status = 'completed', finished_at = now() WHERE id = $1",
-        [item.id],
-      );
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-
-      // Check for rate limit
-      if (isRateLimitError(errorMsg)) {
-        handleRateLimit(errorMsg, config);
-        // Return item to queue
-        await pool.query(
-          "UPDATE task_queue SET status = 'queued' WHERE id = $1",
-          [item.id],
-        );
-      } else {
-        // Mark as failed
-        await pool.query(
-          "UPDATE task_queue SET status = 'failed', finished_at = now() WHERE id = $1",
-          [item.id],
-        );
-        console.error(`Queue item ${item.id} failed:`, errorMsg);
-      }
-    }
-  } finally {
-    processing = false;
+    // Non-rate-limit error — terminal. Don't throw (would trigger scheduler retry).
+    log.error({ role: p.role, projectId: p.projectId, taskId: p.taskId, err }, "agent-run failed");
+    logBackgroundError("agent-run", err, p.projectId);
   }
+});
 
-  // Continue processing if more items
-  const pool = getPool();
-  const { rows: remaining } = await pool.query(
-    "SELECT COUNT(*) as count FROM task_queue WHERE status = 'queued'",
-  );
-  if (Number(remaining[0].count) > 0 && !rateLimited) {
-    processQueue(config).catch(console.error);
-  }
-}
-
-// ─── Rate Limit Detection ───
+// ─── Rate limit detection ───
 
 function isRateLimitError(message: string): boolean {
-  const patterns = [
-    "rate limit",
-    "rate_limit",
-    "too many requests",
-    "429",
-    "exceeded your",
-    "try again",
-  ];
+  const patterns = ["rate limit", "rate_limit", "too many requests", "429", "exceeded your", "try again"];
   const lower = message.toLowerCase();
   return patterns.some((p) => lower.includes(p));
 }
 
-function handleRateLimit(errorMsg: string, config: Config): void {
-  rateLimited = true;
+function parseRateLimitDelay(errorMsg: string): number {
+  const m = errorMsg.match(/(\d+)\s*(seconds?|minutes?|hours?)/i);
+  if (!m) return 5 * 60_000;
+  const value = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  if (unit.startsWith("second")) return value * 1_000;
+  if (unit.startsWith("minute")) return value * 60_000;
+  return value * 3_600_000;
+}
 
-  // Try to parse reset time from error message
-  const resetMatch = errorMsg.match(/(\d+)\s*(seconds?|minutes?|hours?)/i);
-  let delayMs = 5 * 60_000; // default 5 minutes
-
-  if (resetMatch) {
-    const value = Number(resetMatch[1]);
-    const unit = resetMatch[2].toLowerCase();
-    if (unit.startsWith("second")) delayMs = value * 1000;
-    else if (unit.startsWith("minute")) delayMs = value * 60_000;
-    else if (unit.startsWith("hour")) delayMs = value * 3600_000;
-  }
-
-  rateLimitResetTime = new Date(Date.now() + delayMs);
-  console.log(`Rate limited. Queue paused until ${rateLimitResetTime.toISOString()}`);
-
-  // Schedule resume
-  if (resetTimeoutId) clearTimeout(resetTimeoutId);
-  resetTimeoutId = setTimeout(() => {
-    rateLimited = false;
-    rateLimitResetTime = null;
-    console.log("Rate limit reset. Resuming queue.");
-    processQueue(config).catch(console.error);
-  }, delayMs);
+/**
+ * Set bucket tokens to 0 so subsequent claims defer until refill restores them.
+ * This is a soft pause — claims push run_at forward by the scheduler's backoff
+ * window each time they fail to acquire a token.
+ */
+async function drainBucket(key: string, _delayMs: number): Promise<void> {
+  await getDb().execute(sql`
+    UPDATE rate_buckets
+    SET tokens = 0, updated_at = now()
+    WHERE key = ${key}
+  `);
 }
 
 // ─── Status ───
@@ -183,34 +177,49 @@ export interface QueueStatus {
 
 export async function getQueueStatus(): Promise<QueueStatus> {
   const pool = getPool();
-  const { rows } = await pool.query(
-    `SELECT status, COUNT(*)::int as count FROM task_queue GROUP BY status`,
-  );
 
-  const counts: Record<string, number> = {};
-  for (const row of rows) {
-    counts[row.status as string] = row.count as number;
-  }
+  // graphile-worker is the source of truth for queue state.
+  // Completed jobs are deleted on success, so `completed` is always 0 from
+  // the queue's perspective — agent_logs is the audit channel for history.
+  const { rows: jobRows } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE locked_at IS NULL AND attempts = 0)::int AS queued,
+       COUNT(*) FILTER (WHERE locked_at IS NOT NULL)::int AS running,
+       COUNT(*) FILTER (WHERE attempts >= max_attempts AND last_error IS NOT NULL)::int AS failed
+     FROM graphile_worker.jobs
+     WHERE task_identifier = $1`,
+    [AGENT_RUN_KIND],
+  ).catch(() => ({ rows: [{ queued: 0, running: 0, failed: 0 }] }));
+
+  const { rows: bucketRows } = await pool.query(
+    `SELECT
+       LEAST(capacity, tokens + refill_rate * EXTRACT(EPOCH FROM (now() - updated_at))) as eff_tokens,
+       refill_rate
+     FROM rate_buckets WHERE key = $1`,
+    [CLAUDE_BUCKET],
+  );
+  const b = bucketRows[0];
+  const rateLimited = b ? Number(b.eff_tokens) < 1 : false;
+  const rateLimitResetTime = (b && rateLimited && Number(b.refill_rate) > 0)
+    ? new Date(Date.now() + ((1 - Number(b.eff_tokens)) / Number(b.refill_rate)) * 1000).toISOString()
+    : null;
 
   return {
     rateLimited,
-    rateLimitResetTime: rateLimitResetTime?.toISOString() ?? null,
-    queued: counts.queued ?? 0,
-    running: counts.running ?? 0,
-    completed: counts.completed ?? 0,
-    failed: counts.failed ?? 0,
+    rateLimitResetTime,
+    queued: jobRows[0]?.queued ?? 0,
+    running: jobRows[0]?.running ?? 0,
+    completed: 0, // graphile-worker deletes completed jobs
+    failed: jobRows[0]?.failed ?? 0,
   };
 }
 
 // ─── Reconciliation (on startup) ───
+//
+// graphile-worker's lease expiry handles crashed workers natively — a job's
+// `locked_at` times out and it's re-claimed. No app-level reconcile needed.
+// Kept as a no-op for back-compat with the existing startup sequence.
 
 export async function reconcileQueue(): Promise<void> {
-  const pool = getPool();
-  // Any items stuck in 'running' state after restart → back to queued
-  const { rowCount } = await pool.query(
-    "UPDATE task_queue SET status = 'queued' WHERE status = 'running'",
-  );
-  if (rowCount && rowCount > 0) {
-    console.log(`Reconciled ${rowCount} stuck queue items back to queued`);
-  }
+  // Intentionally empty. graphile-worker owns lock lifecycle.
 }

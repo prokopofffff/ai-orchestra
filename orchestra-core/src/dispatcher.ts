@@ -3,44 +3,9 @@ import { getActiveSessionForRole } from "./session-manager";
 import { enqueue } from "./rate-limiter";
 import { getPool } from "./db";
 import { checkUnblocked } from "./dependency-engine";
-import { notify } from "./notification-hub";
-import { appendLog } from "./logger";
 import { logBackgroundError } from "./error-handler";
-
-/**
- * Dispatch map: signal action → target role.
- * null = requires special handling (see dispatchSignal).
- */
-const dispatchMap: Record<string, AgentRole | null> = {
-  // Tech Lead → agents
-  create_design_system: "designer",
-  create_design: "designer",
-  assign_dev: null,         // role from task.assignee_role
-  setup_cicd: "devops",
-  deploy: "devops",
-
-  // Require Tech Lead decision
-  pr_created: "tech-lead",   // PR review — must go through TL
-  question: "tech-lead",     // Questions need TL answer
-  tests_failed: "tech-lead", // Failed tests need TL decision
-
-  // Auto-dispatch (bypass Tech Lead, notify only)
-  design_system_ready: null, // auto-handle: update state + unblock
-  design_ready: null,        // auto-handle: update state + unblock
-  tests_passed: null,        // auto-handle: update state + unblock
-  task_blocked: null,        // informational
-  task_unblocked: null,      // auto-handle: dispatch unblocked agent
-
-  // User-facing (no agent dispatch)
-  escalate: null,
-  notify: null,
-
-  // Tech Lead → agents (responses)
-  answer: null,
-  pr_approved: null,
-  pr_changes_requested: null,
-  task_done: null,
-};
+import { getEdge, type Edge, type Target } from "./flow";
+import { log } from "./obs";
 
 export interface DispatchResult {
   dispatched: boolean;
@@ -49,132 +14,149 @@ export interface DispatchResult {
   reason?: string;
 }
 
-export async function dispatchSignal(
-  signal: { from: string; to: string; action: string; projectId: string; taskId?: string },
-  config: Config,
-): Promise<DispatchResult> {
-  const { action, projectId, taskId } = signal;
+type Signal = {
+  from: string;
+  to: string;
+  action: string;
+  projectId: string;
+  taskId?: string;
+};
 
-  // ─── Auto-dispatch signals (bypass Tech Lead) ───
+const AGENT_ROLES: readonly AgentRole[] = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"];
 
-  // design_ready / design_system_ready → notify TL, trigger unblock
-  if ((action === "design_ready" || action === "design_system_ready") && taskId) {
-    await notifyTechLead(projectId, `Design completed for task ${taskId}`);
-    await checkUnblocked(taskId, projectId).catch((e) => logBackgroundError("dispatch:unblock", e, projectId));
-    return { dispatched: true, reason: "Auto-handled: design ready, checked unblock" };
+function isAgentRole(s: string): s is AgentRole {
+  return (AGENT_ROLES as readonly string[]).includes(s);
+}
+
+/**
+ * Drive a signal through its flow.ts edge:
+ *   - look up the edge
+ *   - resolve the canonical target (role / task-assignee / user)
+ *   - apply the effect (spawn / auto-unblock / notify-user / store-only)
+ *
+ * The signal is already validated + stored by signal-api before this runs.
+ */
+export async function dispatchSignal(signal: Signal, config: Config): Promise<DispatchResult> {
+  const edge = getEdge(signal.action);
+  if (!edge) {
+    return { dispatched: false, reason: `No edge for action: ${signal.action}` };
   }
 
-  // tests_passed → notify TL, trigger unblock
-  if (action === "tests_passed" && taskId) {
-    await notifyTechLead(projectId, `Tests passed for task ${taskId}`);
-    await checkUnblocked(taskId, projectId).catch((e) => logBackgroundError("dispatch:unblock", e, projectId));
-    return { dispatched: true, reason: "Auto-handled: tests passed, checked unblock" };
+  switch (edge.effect.kind) {
+    case "auto-unblock":
+      return await applyAutoUnblock(edge, signal);
+
+    case "notify-user":
+      // signal-api already calls notify() for user-facing actions.
+      return { dispatched: false, reason: `Auto-handled: ${signal.action} → user` };
+
+    case "store-only":
+      return { dispatched: false, reason: `Stored: ${signal.action}` };
+
+    case "spawn":
+      return await applySpawn(edge, signal, config);
   }
+}
 
-  // task_unblocked → auto-dispatch the unblocked agent
-  if (action === "task_unblocked" && taskId) {
-    const { rows } = await getPool().query(
-      "SELECT assignee_role FROM tasks WHERE id = $1",
-      [taskId],
-    );
-    const role = rows[0]?.assignee_role as AgentRole | undefined;
-    if (role) {
-      console.log(`Dispatch: task_unblocked → auto-dispatching ${role} (task=${taskId?.slice(0, 8)})`);
-      return await enqueueAgent(projectId, taskId, role, config);
-    }
-    // No assignee — notify Tech Lead to assign
-    await notifyTechLead(projectId, `Task ${taskId} unblocked but has no assignee`);
-    return { dispatched: false, reason: "Unblocked task has no assignee" };
+async function applyAutoUnblock(edge: Edge, signal: Signal): Promise<DispatchResult> {
+  if (!signal.taskId) {
+    return { dispatched: true, reason: `Auto-handled: ${signal.action} (no task)` };
   }
+  await notifyTechLead(signal.projectId, `${edge.description} (task ${signal.taskId})`);
+  await checkUnblocked(signal.taskId, signal.projectId).catch((e) =>
+    logBackgroundError("dispatch:unblock", e, signal.projectId),
+  );
+  return { dispatched: true, reason: `Auto-handled: ${signal.action}` };
+}
 
-  // ─── Standard dispatch ───
-
-  let targetRole = dispatchMap[action] ?? null;
-
-  // assign_dev → role from task.assignee_role
-  if (action === "assign_dev" && taskId) {
-    const { rows } = await getPool().query("SELECT assignee_role FROM tasks WHERE id = $1", [taskId]);
-    if (rows[0]?.assignee_role) {
-      targetRole = rows[0].assignee_role as AgentRole;
-    } else {
-      return { dispatched: false, reason: "Task has no assignee_role" };
-    }
-  }
-
-  // answer → resume the agent who asked
-  if (action === "answer") {
-    if (taskId) {
-      const { rows } = await getPool().query("SELECT assignee_role FROM tasks WHERE id = $1", [taskId]);
-      if (rows[0]?.assignee_role) targetRole = rows[0].assignee_role as AgentRole;
-    } else {
-      const toRole = signal.to;
-      if (["designer", "frontend", "backend", "qa", "devops"].includes(toRole)) {
-        targetRole = toRole as AgentRole;
-        const { rows } = await getPool().query(
-          `SELECT id FROM tasks WHERE project_id = $1 AND assignee_role = $2
-           AND state NOT IN ('merged', 'closed') ORDER BY updated_at DESC LIMIT 1`,
-          [projectId, toRole],
-        );
-        if (rows[0]) (signal as { taskId?: string }).taskId = rows[0].id;
-      }
-    }
-  }
-
-  // pr_changes_requested → resume the dev
-  if (action === "pr_changes_requested") {
-    if (taskId) {
-      const { rows } = await getPool().query("SELECT assignee_role FROM tasks WHERE id = $1", [taskId]);
-      if (rows[0]?.assignee_role) targetRole = rows[0].assignee_role as AgentRole;
-    } else {
-      const toRole = signal.to;
-      const { rows } = await getPool().query(
-        `SELECT id, assignee_role FROM tasks
-         WHERE project_id = $1 AND assignee_role = $2
-         AND state IN ('pr_created', 'in_development', 'in_review')
-         ORDER BY updated_at DESC LIMIT 1`,
-        [projectId, toRole],
-      );
-      if (rows[0]) {
-        targetRole = rows[0].assignee_role as AgentRole;
-        (signal as { taskId?: string }).taskId = rows[0].id;
-      }
-    }
-  }
-
+async function applySpawn(edge: Edge, signal: Signal, config: Config): Promise<DispatchResult> {
+  const targetRole = await resolveTarget(edge.target, signal);
   if (!targetRole) {
-    console.log(`Dispatch: no target for ${action} (from=${signal.from} to=${signal.to})`);
-    return { dispatched: false, reason: `No dispatch target for action: ${action}` };
+    if (edge.target.kind === "task-assignee") {
+      // Strict: surface to TL so unassigned tasks don't silently stall.
+      if (signal.taskId) {
+        await notifyTechLead(signal.projectId, `Task ${signal.taskId} needs assignment for ${signal.action}`);
+      }
+      return { dispatched: false, reason: `Task has no assignee_role for ${signal.action}` };
+    }
+    return { dispatched: false, reason: `No target resolved for ${signal.action}` };
   }
 
-  console.log(`Dispatch: ${action} → ${targetRole} (project=${projectId.slice(0, 8)} task=${taskId?.slice(0, 8) ?? "none"})`);
+  log.info({
+    action: signal.action,
+    targetRole,
+    projectId: signal.projectId,
+    taskId: signal.taskId,
+  }, "dispatching signal");
 
-  // Check if agent already running
-  const existing = await getActiveSessionForRole(projectId, targetRole);
+  const existing = await getActiveSessionForRole(signal.projectId, targetRole);
   if (existing) {
     return { dispatched: true, role: targetRole, reason: "Agent already running, signal queued" };
   }
 
-  const finalTaskId = signal.taskId ?? taskId;
-  if (!finalTaskId) {
-    return { dispatched: false, reason: "No task ID for spawning" };
+  const taskId = signal.taskId ?? (await findOpenTaskFor(signal.projectId, targetRole));
+  if (!taskId) {
+    return { dispatched: false, reason: `No task to dispatch ${targetRole} on` };
   }
 
-  return await enqueueAgent(projectId, finalTaskId, targetRole, config);
+  await enqueue({ projectId: signal.projectId, taskId, role: targetRole, config });
+  return { dispatched: true, role: targetRole, queued: true };
 }
 
-async function enqueueAgent(
-  projectId: string,
-  taskId: string,
-  role: AgentRole,
-  config: Config,
-): Promise<DispatchResult> {
-  await enqueue({ projectId, taskId, role, config });
-  return { dispatched: true, role, queued: true };
+/**
+ * Resolve an edge's target into a concrete agent role at dispatch time.
+ *   - { role: X }    → X (unless X === "user", which can't be spawned)
+ *   - { user }       → null (signal-api handles user notification separately)
+ *   - { task-assignee } → task.assignee_role; falls back to signal.to if it
+ *                          names a known agent role (so "answer"/"changes_requested"
+ *                          without a taskId still resume the addressed agent).
+ */
+async function resolveTarget(target: Target, signal: Signal): Promise<AgentRole | null> {
+  switch (target.kind) {
+    case "user":
+      return null;
+
+    case "role":
+      return target.role === "user" ? null : target.role;
+
+    case "task-assignee": {
+      // Strict: must come from task.assignee_role.
+      if (!signal.taskId) return null;
+      const { rows } = await getPool().query(
+        "SELECT assignee_role FROM tasks WHERE id = $1",
+        [signal.taskId],
+      );
+      const role = rows[0]?.assignee_role as string | undefined;
+      return role && isAgentRole(role) ? role : null;
+    }
+
+    case "addressed-role": {
+      // Prefer task assignee if a task is given; else fall back to who was addressed.
+      if (signal.taskId) {
+        const { rows } = await getPool().query(
+          "SELECT assignee_role FROM tasks WHERE id = $1",
+          [signal.taskId],
+        );
+        const role = rows[0]?.assignee_role as string | undefined;
+        if (role && isAgentRole(role)) return role;
+      }
+      return isAgentRole(signal.to) ? signal.to : null;
+    }
+  }
+}
+
+async function findOpenTaskFor(projectId: string, role: AgentRole): Promise<string | null> {
+  const { rows } = await getPool().query(
+    `SELECT id FROM tasks
+     WHERE project_id = $1 AND assignee_role = $2 AND state NOT IN ('merged', 'closed')
+     ORDER BY updated_at DESC LIMIT 1`,
+    [projectId, role],
+  );
+  return rows[0]?.id ?? null;
 }
 
 /**
  * Send a non-blocking notification to Tech Lead (signal stored, no dispatch).
- * Tech Lead picks it up on next session. Does NOT block the pipeline.
  */
 async function notifyTechLead(projectId: string, message: string): Promise<void> {
   await getPool().query(
@@ -204,7 +186,7 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
 
   if (!orphaned.length) return;
 
-  console.log(`Reconciling ${orphaned.length} orphaned task(s):`);
+  log.info({ count: orphaned.length }, "reconciling orphaned tasks");
   for (const task of orphaned) {
     // pr_created: only respawn if pending pr_changes_requested
     if (task.state === "pr_created") {
@@ -220,13 +202,13 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
     let role: AgentRole;
     if (task.state === "in_testing") {
       role = "qa";
-    } else if (task.assignee_role) {
-      role = task.assignee_role as AgentRole;
+    } else if (task.assignee_role && isAgentRole(task.assignee_role)) {
+      role = task.assignee_role;
     } else {
       continue;
     }
 
-    console.log(`  [${task.state}] ${role} → task ${task.id}`);
+    log.info({ state: task.state, role, taskId: task.id }, "reconcile → enqueue");
     await enqueue({ projectId: task.project_id, taskId: task.id, role, config });
   }
 }

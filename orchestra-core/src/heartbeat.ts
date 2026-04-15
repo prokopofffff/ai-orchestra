@@ -1,36 +1,65 @@
+import { z } from "zod";
 import { getPool } from "./db";
 import {
   getActiveSessions,
   updateSession,
   type Session,
 } from "./session-manager";
-import { enqueue } from "./rate-limiter";
+import { enqueue, getRetryCount } from "./rate-limiter";
 import { loadConfig } from "./config";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { logBackgroundError } from "./error-handler";
+import { registerHandler, registerCron, enqueue as enqueueJob } from "./scheduler";
+import { log } from "./obs";
 
-const CHECK_INTERVAL_MS = 30_000;
 const STALE_THRESHOLD_MS = 10 * 60_000; // 10 minutes no heartbeat
 const TECH_LEAD_MAX_AGE_MS = 8 * 60 * 60_000; // 8 hours session timeout
 
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 30_000; // 30s, 60s, 120s
 
-let intervalId: ReturnType<typeof setInterval> | null = null;
+const HEARTBEAT_KIND = "heartbeat:check-sessions";
+const AGENT_RETRY_KIND = "heartbeat:agent-retry";
 
-export function startHeartbeat(): void {
-  if (intervalId) return;
-  intervalId = setInterval(() => checkSessions().catch((e) => logBackgroundError("heartbeat", e)), CHECK_INTERVAL_MS);
-  console.log("Heartbeat monitor started (every 30s)");
+const AgentRetryPayload = z.object({
+  projectId: z.string(),
+  taskId: z.string(),
+  role: z.enum(["tech-lead", "designer", "frontend", "backend", "qa", "devops"]),
+  resumeSessionId: z.string().optional(),
+  retryCount: z.number().int().min(1),
+  totalRetries: z.number().int().min(1),
+});
+
+registerHandler(HEARTBEAT_KIND, z.object({}), async () => {
+  await checkSessions().catch((e) => logBackgroundError("heartbeat", e));
+});
+
+registerHandler(AGENT_RETRY_KIND, AgentRetryPayload, async (p) => {
+  const config = loadConfig();
+  await enqueue({
+    projectId: p.projectId,
+    taskId: p.taskId,
+    role: p.role,
+    config,
+    resumeSessionId: p.resumeSessionId,
+    retryCount: p.retryCount,
+  });
+  appendLog(p.projectId, null, p.role, "system",
+    `Retry ${p.retryCount}/${p.totalRetries} enqueued for task ${p.taskId}`);
+});
+
+export async function startHeartbeat(): Promise<void> {
+  await registerCron({
+    key: "heartbeat",
+    kind: HEARTBEAT_KIND,
+    intervalSeconds: 30,
+  });
+  log.info("heartbeat monitor scheduled (every 30s)");
 }
 
-export function stopHeartbeat(): void {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
-}
+// Kept for compatibility with shutdown sequence — scheduler stop handles teardown.
+export function stopHeartbeat(): void {}
 
 export interface SessionHealth {
   sessionId: string;
@@ -55,17 +84,13 @@ export async function checkSessions(): Promise<SessionHealth[]> {
   return results;
 }
 
-function checkSessionHealth(session: Session): SessionHealth {
+export function checkSessionHealth(session: Session): SessionHealth {
   const base = { sessionId: session.id, role: session.role };
 
-  // Check if process is alive
-  if (session.pid) {
-    try {
-      process.kill(session.pid, 0);
-    } catch {
-      return { ...base, status: "crashed", reason: "Process not found" };
-    }
-  }
+  // Agents run in-process via the Agent SDK. A crashed orchestrator can't run
+  // this check anyway — its scheduler job lease expires and graphile-worker
+  // re-claims. Here we only detect stuck sessions via heartbeat staleness +
+  // age.
 
   // Check for stale session
   if (session.lastHeartbeat) {
@@ -90,12 +115,10 @@ async function handleUnhealthy(session: Session, health: SessionHealth): Promise
   const pool = getPool();
   const projectId = session.projectId;
 
-  // Get retry count from queue history
-  const { rows } = await pool.query(
-    "SELECT retry_count FROM task_queue WHERE task_id = $1 AND role = $2 ORDER BY created_at DESC LIMIT 1",
-    [session.taskId, session.role],
-  );
-  const retryCount = rows[0]?.retry_count ?? 0;
+  // Retry count = attempts on the most recent agent-run job for (taskId, role)
+  const retryCount = session.taskId
+    ? await getRetryCount(session.taskId, session.role)
+    : 0;
 
   appendLog(projectId, session.id, session.role, "error",
     `Agent ${health.status}: ${health.reason} (retry ${retryCount}/${MAX_RETRIES})`);
@@ -123,7 +146,7 @@ async function handleUnhealthy(session: Session, health: SessionHealth): Promise
     await updateSession(session.id, { status: "crashed", finishedAt: new Date() });
 
     const message = `Agent ${session.role} failed permanently after ${retryCount} retries: ${health.reason}`;
-    console.error(`[heartbeat] ${message}`);
+    log.error({ role: session.role, retries: retryCount, reason: health.reason, projectId, taskId: session.taskId }, "agent permanently failed");
     appendLog(projectId, session.id, session.role, "error", message);
 
     // Escalate to user
@@ -165,23 +188,19 @@ async function handleUnhealthy(session: Session, health: SessionHealth): Promise
     }).catch((e) => logBackgroundError("heartbeat:notify", e, projectId));
   }
 
-  // Schedule retry after backoff delay
-  setTimeout(async () => {
-    if (!session.taskId) return;
-    try {
-      const config = loadConfig();
-      await enqueue({
+  // Schedule retry as a deferred scheduler job (survives process restart).
+  if (session.taskId) {
+    await enqueueJob({
+      kind: AGENT_RETRY_KIND,
+      runAt: new Date(Date.now() + backoffMs),
+      payload: {
         projectId,
         taskId: session.taskId,
         role: session.role,
-        config,
         resumeSessionId: session.claudeSessionId ?? undefined,
         retryCount: nextRetry,
-      });
-      appendLog(projectId, null, session.role, "system",
-        `Retry ${nextRetry}/${MAX_RETRIES} enqueued for task ${session.taskId}`);
-    } catch (e) {
-      logBackgroundError("heartbeat:retry-enqueue", e, projectId);
-    }
-  }, backoffMs);
+        totalRetries: MAX_RETRIES,
+      },
+    }).catch((e) => logBackgroundError("heartbeat:retry-enqueue", e, projectId));
+  }
 }

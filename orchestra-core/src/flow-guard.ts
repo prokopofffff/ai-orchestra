@@ -1,99 +1,20 @@
-import type { AgentRole } from "./config";
 import { getPool } from "./db";
+import {
+  isRouteAllowed,
+  isActionAllowedFrom,
+  getEdge,
+  getTargetState as flowTargetState,
+  knownState,
+  routePermissions,
+  type SenderRole,
+  type RecipientRole,
+  type TaskState,
+} from "./flow";
 
-// ─── Allowed Routes ───
+// Re-exports kept for backward-compat with existing imports.
+export { getTargetState, getValidTransitions } from "./flow";
 
-const allowedRoutes: Record<string, string[]> = {
-  "tech-lead": ["designer", "frontend", "backend", "qa", "devops", "user"],
-  designer: ["tech-lead", "user"],
-  frontend: ["tech-lead", "qa", "user"],
-  backend: ["tech-lead", "qa", "user"],
-  qa: ["tech-lead", "user"],
-  devops: ["tech-lead", "user"],
-  system: ["tech-lead", "user"],
-};
-
-// ─── Allowed Actions per Role ───
-
-const allowedActions: Record<string, string[]> = {
-  "tech-lead": [
-    "create_design_system", "create_design", "assign_dev",
-    "answer", "question", "pr_approved", "pr_changes_requested",
-    "task_done", "deploy", "setup_cicd", "notify", "escalate",
-  ],
-  designer: [
-    "design_system_ready", "design_ready", "question", "escalate", "notify",
-  ],
-  frontend: [
-    "pr_created", "question", "escalate", "notify",
-  ],
-  backend: [
-    "pr_created", "question", "escalate", "notify",
-  ],
-  qa: [
-    "tests_passed", "tests_failed", "question", "escalate", "notify",
-  ],
-  devops: [
-    "deploy_done", "cicd_ready", "question", "escalate", "notify",
-  ],
-  system: [
-    "task_blocked", "task_unblocked",
-  ],
-};
-
-// ─── Task State Machine ───
-
-/*
- * State machine with full lifecycle including revisions, failure, and cancellation.
- *
- * Happy path:
- *   new → described → designing → design_ready → in_development → pr_created
- *   → in_testing → tested → in_review → approved → merged → closed
- *
- * Revisions loop:
- *   pr_created → revisions (TL requests changes) → pr_created (dev re-submits)
- *
- * Failure/cancellation (from any active state):
- *   * → failed     (unrecoverable error)
- *   * → cancelled  (user/TL cancels task)
- *
- * Recovery from failure:
- *   failed → in_development  (retry)
- *   cancelled → new          (reopen)
- */
-const validTransitions: Record<string, string[]> = {
-  new:            ["described", "cancelled"],
-  described:      ["designing", "in_development", "cancelled"],
-  designing:      ["design_ready", "failed", "cancelled"],
-  design_ready:   ["in_development", "cancelled"],
-  in_development: ["pr_created", "failed", "cancelled"],
-  pr_created:     ["in_testing", "revisions", "approved", "cancelled"],
-  revisions:      ["pr_created", "in_development", "failed", "cancelled"],
-  in_testing:     ["tested", "in_development", "failed", "cancelled"],
-  tested:         ["in_review", "merged"],
-  in_review:      ["approved", "revisions", "in_development", "cancelled"],
-  approved:       ["merged", "in_testing"],
-  merged:         ["closed"],
-  closed:         [],
-  failed:         ["in_development", "new", "cancelled"],
-  cancelled:      ["new"],
-};
-
-// Action → state transition mapping
-const actionToTransition: Record<string, string> = {
-  create_design: "designing",
-  create_design_system: "designing",
-  design_ready: "design_ready",
-  design_system_ready: "design_ready",
-  assign_dev: "in_development",
-  pr_created: "pr_created",
-  tests_passed: "tested",
-  tests_failed: "failed",
-  pr_approved: "approved",
-  pr_changes_requested: "revisions",
-};
-
-// ─── Validation ───
+// ─── Types ───
 
 export interface SignalPayload {
   from: string;
@@ -110,24 +31,21 @@ export interface ValidationResult {
   reason?: string;
 }
 
+// ─── Validation ───
+
 export function validateSignal(signal: SignalPayload): ValidationResult {
   const { from, to, action } = signal;
 
-  // Check route
-  const routes = allowedRoutes[from];
-  if (!routes) {
+  if (!(from in routePermissions)) {
     return { allowed: false, reason: `Unknown sender role: ${from}` };
   }
-  if (!routes.includes(to)) {
+  const fromRole = from as SenderRole;
+
+  if (!isRouteAllowed(fromRole, to as RecipientRole)) {
     return { allowed: false, reason: `Route not allowed: ${from} → ${to}` };
   }
 
-  // Check action
-  const actions = allowedActions[from];
-  if (!actions) {
-    return { allowed: false, reason: `No actions defined for role: ${from}` };
-  }
-  if (!actions.includes(action)) {
+  if (!isActionAllowedFrom(fromRole, action)) {
     return { allowed: false, reason: `Action not allowed for ${from}: ${action}` };
   }
 
@@ -135,35 +53,33 @@ export function validateSignal(signal: SignalPayload): ValidationResult {
 }
 
 export function validateStateTransition(currentState: string, action: string): ValidationResult {
-  const targetState = actionToTransition[action];
+  const targetState = flowTargetState(action);
   if (!targetState) {
-    // Action doesn't trigger a state transition (e.g., question, notify)
+    // Action doesn't trigger a state transition (e.g., question, notify).
     return { allowed: true };
   }
 
-  // Idempotent: if already in target state, allow (no-op)
+  // Idempotent: same state → same state is a no-op.
   if (currentState === targetState) {
     return { allowed: true };
   }
 
-  const allowed = validTransitions[currentState];
-  if (!allowed) {
+  if (!knownState(currentState)) {
     return { allowed: false, reason: `Unknown state: ${currentState}` };
   }
 
-  if (!allowed.includes(targetState)) {
-    return { allowed: false, reason: `Invalid transition: ${currentState} → ${targetState} (via ${action})` };
+  // Per-edge gating: the action's source-state allowlist is the source of truth
+  // for whether THIS action can fire from THIS state.
+  const edge = getEdge(action);
+  const allowedSources = edge?.transition?.from ?? [];
+  if (!allowedSources.includes(currentState as TaskState)) {
+    return {
+      allowed: false,
+      reason: `Invalid transition: ${currentState} → ${targetState} (via ${action})`,
+    };
   }
 
   return { allowed: true };
-}
-
-export function getTargetState(action: string): string | null {
-  return actionToTransition[action] ?? null;
-}
-
-export function getValidTransitions(state: string): string[] {
-  return validTransitions[state] ?? [];
 }
 
 // ─── Audit Logging ───

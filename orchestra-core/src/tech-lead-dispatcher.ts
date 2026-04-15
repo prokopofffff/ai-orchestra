@@ -14,6 +14,8 @@ import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir } from "./repo-manager";
 import { extractText } from "./agents/sdk-runner";
 import { loadSystemPrompt, assemblePrompt } from "./agents/prompt";
+import { providerFor } from "./providers";
+import type { ProjectSettings } from "@ai-orchestra/shared";
 
 // Track in-flight Tech Lead conversations (per-project) so we can interrupt.
 const techLeadQueries = new Map<string, Query>();
@@ -45,7 +47,14 @@ export async function dispatchTechLead(
     const { slug, repo_url: repoUrl, settings } = projRows[0];
     const model = getModelForRole(config, "tech-lead", settings as Record<string, unknown>);
 
-    const workDir = repoUrl ? await ensureRepo(repoUrl, slug) : ensureTempDir(slug);
+    let workDir: string;
+    if (repoUrl) {
+      // Tokenize the clone URL for the project's provider.
+      const provider = providerFor(repoUrl, settings as ProjectSettings | null);
+      workDir = await ensureRepo(provider.tokenizeCloneUrl(), slug);
+    } else {
+      workDir = ensureTempDir(slug);
+    }
 
     const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, "tech-lead"));
     const conversationHistory = await getConversationHistory(projectId);

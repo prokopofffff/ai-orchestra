@@ -23,8 +23,12 @@ export function git(cwd: string): SimpleGit {
 /**
  * Ensure a git repo is cloned and up-to-date. Returns the repo directory.
  * If repo already exists, fetches and pulls main. If not, clones.
+ *
+ * `cloneUrl` must already have auth credentials baked in (see
+ * `GitProvider.tokenizeCloneUrl()`). repo-manager stays provider-agnostic —
+ * it doesn't know about GitHub vs GitLab token schemes.
  */
-export async function ensureRepo(repoUrl: string, projectSlug: string): Promise<string> {
+export async function ensureRepo(cloneUrl: string, projectSlug: string): Promise<string> {
   const repoDir = path.join(workspacePath(projectSlug), "repo");
 
   if (fs.existsSync(path.join(repoDir, ".git"))) {
@@ -41,7 +45,6 @@ export async function ensureRepo(repoUrl: string, projectSlug: string): Promise<
   }
 
   fs.mkdirSync(path.dirname(repoDir), { recursive: true });
-  const cloneUrl = injectToken(repoUrl);
   await simpleGit().clone(cloneUrl, repoDir);
   return repoDir;
 }
@@ -96,12 +99,12 @@ export async function cleanupWorktree(repoDir: string, worktreeDir: string): Pro
     .catch(() => { /* already removed */ });
 }
 
-/** Configure remote origin with GitHub token for push access. */
-export async function configureRemoteAuth(worktreeDir: string, repoUrl: string): Promise<void> {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token || !repoUrl.includes("github.com")) return;
-
-  const authUrl = injectToken(repoUrl);
+/**
+ * Set the worktree's origin remote to a URL with auth credentials baked in.
+ * Caller is responsible for generating `authUrl` via the right provider
+ * (see `GitProvider.tokenizeCloneUrl()`).
+ */
+export async function configureRemoteAuth(worktreeDir: string, authUrl: string): Promise<void> {
   const g = simpleGit(worktreeDir);
   try {
     await g.remote(["set-url", "origin", authUrl]);
@@ -123,12 +126,3 @@ export function branchName(role: string, taskId: string): string {
   return `${prefixes[role] ?? "work"}/${taskId}`;
 }
 
-// ─── Internal helpers ───
-
-function injectToken(repoUrl: string): string {
-  const token = process.env.GITHUB_TOKEN;
-  if (token && repoUrl.startsWith("https://github.com/")) {
-    return repoUrl.replace("https://github.com/", `https://${token}@github.com/`);
-  }
-  return repoUrl;
-}

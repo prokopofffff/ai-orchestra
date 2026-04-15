@@ -16,6 +16,8 @@ import {
 import { installScopeHook } from "./scope-enforcer";
 import { runAgentSdk } from "./agents/sdk-runner";
 import { loadSystemPrompt, buildScopeRules, assemblePrompt } from "./agents/prompt";
+import { providerFor } from "./providers";
+import type { ProjectSettings } from "@ai-orchestra/shared";
 
 // ─── Spawn Agent ───
 
@@ -68,10 +70,12 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const model = getModelForRole(config, role, settings as Record<string, unknown>);
 
   // ── 2. Worktree + scope hook ────────────────────────────────────────
-  const repoDir = await ensureRepo(repoUrl, slug);
+  const provider = providerFor(repoUrl, settings as ProjectSettings | null);
+  const authUrl = provider.tokenizeCloneUrl();
+  const repoDir = await ensureRepo(authUrl, slug);
   const branch = branchName(role, taskId);
   const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);
-  await configureRemoteAuth(worktreeDir, repoUrl);
+  await configureRemoteAuth(worktreeDir, authUrl);
   installScopeHook(worktreeDir, role);
 
   // ── 3. Prompt ──────────────────────────────────────────────────────

@@ -48,9 +48,26 @@ export const AgentCheckSchema = z.object({
 });
 export type AgentCheck = z.infer<typeof AgentCheckSchema>;
 
+export const GitProviderKindSchema = z.enum(["github", "gitlab"]);
+export type GitProviderKind = z.infer<typeof GitProviderKindSchema>;
+
+/**
+ * Per-project git provider configuration. If `type` is absent the provider
+ * is auto-detected from the repo URL hostname; if `token` is absent the
+ * matching global env token is used (GITHUB_TOKEN / GITLAB_TOKEN).
+ * `baseUrl` is for self-hosted instances (e.g. `https://gitlab.internal`).
+ */
+export const ProjectProviderConfigSchema = z.object({
+  type: GitProviderKindSchema.optional(),
+  token: z.string().optional(),
+  baseUrl: z.string().optional(),
+});
+export type ProjectProviderConfig = z.infer<typeof ProjectProviderConfigSchema>;
+
 export const ProjectSettingsSchema = z.object({
   models: z.record(AgentRoleSchema, z.string()).optional(),
   checks: z.record(AgentRoleSchema, z.array(AgentCheckSchema)).optional(),
+  provider: ProjectProviderConfigSchema.optional(),
 }).catchall(z.unknown());
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

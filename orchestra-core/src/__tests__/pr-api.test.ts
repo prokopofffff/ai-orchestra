@@ -105,18 +105,20 @@ describe("pr-api — POST /api/pr/create validation", () => {
     expect(body.error).toMatch(/GITHUB_TOKEN not configured/);
   });
 
-  it("400 when the repo URL can't be parsed as owner/repo", async () => {
+  it("400 when the repo URL's provider can't be detected", async () => {
     const { rows } = await getPool().query(
       "INSERT INTO projects (name, slug, repo_url) VALUES ('Weird', 'pra-weird', $1) RETURNING id",
-      ["gitlab.com/x/y"],
+      ["https://example.com/not-a-git-host/x"],
     );
-    process.env.GITHUB_TOKEN = "t";
+    // No tokens + unknown hostname → resolver throws a detectable error.
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GITLAB_TOKEN;
     const { status, body } = await api("/api/pr/create", {
       method: "POST",
       body: JSON.stringify({ projectId: rows[0].id, title: "t", body: "b", head: "h" }),
     });
     expect(status).toBe(400);
-    expect(body.error).toMatch(/Cannot parse GitHub owner\/repo/);
+    expect(body.error).toMatch(/Cannot detect git provider/);
   });
 
   it("defaults `base` to 'main' when omitted", async () => {

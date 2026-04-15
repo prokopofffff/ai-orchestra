@@ -68,11 +68,10 @@ sessionRouter.post("/sessions/:id/terminate", async (req, res, next) => {
     const session = await getSession(req.params.id);
     if (!session) return res.status(404).json({ error: "Session not found" });
 
-    // Kill the process if running
-    if (session.pid) {
-      try { process.kill(session.pid); } catch { /* already dead */ }
-    }
-
+    // Mid-flight SDK runs can't be killed via PID (they're in-process).
+    // Marking the session terminated stops it being treated as active; the
+    // worker handler completes in the background and the scheduler lease
+    // expires naturally. Future: track active queries and call .interrupt().
     await terminateSession(session.id);
     res.json({ terminated: true });
   } catch (e) { next(e); }

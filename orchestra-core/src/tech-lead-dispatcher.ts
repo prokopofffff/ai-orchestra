@@ -1,6 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
+import { query, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type Config, getModelForRole } from "./config";
 import {
   createSession,
@@ -8,14 +6,17 @@ import {
   getActiveSessionForRole,
 } from "./session-manager";
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context";
+import { log } from "./obs";
 import { generateMcpConfig } from "./mcp-config-generator";
 import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
-import { ensureRepo, ensureTempDir, getWorkspacesRoot } from "./repo-manager";
+import { ensureRepo, ensureTempDir } from "./repo-manager";
+import { extractText } from "./agents/sdk-runner";
+import { loadSystemPrompt, assemblePrompt } from "./agents/prompt";
 
-// Track running Tech Lead processes
-const techLeadProcesses = new Map<string, ChildProcess>();
+// Track in-flight Tech Lead conversations (per-project) so we can interrupt.
+const techLeadQueries = new Map<string, Query>();
 
 export async function dispatchTechLead(
   projectId: string,
@@ -23,7 +24,7 @@ export async function dispatchTechLead(
   config: Config,
 ): Promise<{ action: "already_running" | "spawned" | "error"; sessionId?: string; error?: string }> {
   try {
-    // Check if Tech Lead already running
+    // Already running → enqueue the message as a signal and return.
     const existing = await getActiveSessionForRole(projectId, "tech-lead");
     if (existing) {
       await getPool().query(
@@ -34,7 +35,6 @@ export async function dispatchTechLead(
       return { action: "already_running", sessionId: existing.id };
     }
 
-    // Spawn new Tech Lead
     const pool = getPool();
     const { rows: projRows } = await pool.query(
       "SELECT slug, repo_url, settings FROM projects WHERE id = $1",
@@ -45,41 +45,22 @@ export async function dispatchTechLead(
     const { slug, repo_url: repoUrl, settings } = projRows[0];
     const model = getModelForRole(config, "tech-lead", settings as Record<string, unknown>);
 
-    // Prepare working directory (shared repo-manager)
-    const workDir = repoUrl
-      ? await ensureRepo(repoUrl, slug)
-      : ensureTempDir(slug);
+    const workDir = repoUrl ? await ensureRepo(repoUrl, slug) : ensureTempDir(slug);
 
-    // Build context
-    const ctx = await buildBootstrapContext(projectId, "tech-lead");
-    const bootstrapPrompt = formatBootstrapPrompt(ctx);
+    const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, "tech-lead"));
     const conversationHistory = await getConversationHistory(projectId);
 
-    // MCP config (outside workDir)
-    const mcpConfigDir = path.join(getWorkspacesRoot(), slug, ".mcp-configs");
-    fs.mkdirSync(mcpConfigDir, { recursive: true });
-    const mcpConfigPath = path.join(mcpConfigDir, "tech-lead.json");
-    const mcpConfig = generateMcpConfig("tech-lead", config, projectId);
-    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+    const fullPrompt = assemblePrompt({
+      systemPrompt: loadSystemPrompt("tech-lead"),
+      bootstrap,
+      tail: [
+        conversationHistory,
+        "\n## Latest User Message\n",
+        userMessage,
+        "\n\nRespond to the user's latest message above. You have the full conversation history — do NOT ask the user to repeat themselves. Continue where the conversation left off.",
+      ].join("\n"),
+    });
 
-    // System prompt
-    const promptPath = path.join(process.cwd(), "prompts", "tech-lead.md");
-    let systemPrompt = "";
-    if (fs.existsSync(promptPath)) {
-      systemPrompt = fs.readFileSync(promptPath, "utf-8");
-    }
-
-    const fullPrompt = [
-      systemPrompt,
-      "\n---\n",
-      bootstrapPrompt,
-      conversationHistory,
-      "\n## Latest User Message\n",
-      userMessage,
-      "\n\nRespond to the user's latest message above. You have the full conversation history — do NOT ask the user to repeat themselves. Continue where the conversation left off.",
-    ].join("\n");
-
-    // Create session
     const session = await createSession({
       projectId,
       role: "tech-lead",
@@ -87,56 +68,88 @@ export async function dispatchTechLead(
       worktreePath: workDir,
     });
 
-    // Spawn Claude
-    const args = [
-      "--dangerously-skip-permissions",
-      "--model", model,
-      "--mcp-config", mcpConfigPath,
-      "-p", fullPrompt,
-    ];
+    const { mcpServers } = generateMcpConfig("tech-lead", config, projectId);
 
-    const proc = spawn("claude", args, {
-      cwd: workDir,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
-    });
-
-    techLeadProcesses.set(projectId, proc);
-    await updateSession(session.id, { pid: proc.pid ?? null });
-
-    // Capture output
-    let output = "";
-    proc.stdout?.on("data", (d) => {
-      const chunk = d.toString();
-      output += chunk;
-      appendLog(projectId, session.id, "tech-lead", "stdout", chunk);
-    });
-    proc.stderr?.on("data", (d) => {
-      appendLog(projectId, session.id, "tech-lead", "stderr", d.toString());
-    });
-
-    proc.on("exit", async (code) => {
-      techLeadProcesses.delete(projectId);
-      const status = code === 0 ? "terminated" : "crashed";
-      await updateSession(session.id, { status, finishedAt: new Date() });
-      appendLog(projectId, session.id, "tech-lead", "system", `Process exited with code ${code}`);
-
-      const trimmed = output.trim();
-      if (trimmed) {
-        try {
-          await notify({ projectId, text: trimmed, priority: "high", fromRole: "tech-lead" });
-        } catch (e) {
-          console.error("Failed to store/notify tech-lead response:", e);
-        }
-      }
+    // Run the conversation in the background — the HTTP request that triggered
+    // this returns immediately; the tech-lead's reply arrives via notify().
+    void runTechLead({
+      projectId, sessionId: session.id, model, workDir, fullPrompt, mcpServers,
     });
 
     return { action: "spawned", sessionId: session.id };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("Failed to dispatch tech-lead:", msg);
-    return { action: "error", error: msg };
+    log.error({ err: e, projectId }, "tech-lead dispatch failed");
+    return { action: "error", error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+async function runTechLead(p: {
+  projectId: string;
+  sessionId: string;
+  model: string;
+  workDir: string;
+  fullPrompt: string;
+  mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+}): Promise<void> {
+  appendLog(p.projectId, p.sessionId, "tech-lead", "system", `tech-lead run: model=${p.model}`);
+
+  const stream = query({
+    prompt: p.fullPrompt,
+    options: {
+      model: p.model,
+      cwd: p.workDir,
+      permissionMode: "bypassPermissions",
+      mcpServers: Object.fromEntries(
+        Object.entries(p.mcpServers).map(([name, s]) => [
+          name,
+          { type: "stdio" as const, command: s.command, args: s.args, env: s.env },
+        ]),
+      ),
+    },
+  });
+
+  techLeadQueries.set(p.projectId, stream);
+  let reply = "";
+
+  try {
+    for await (const message of stream) {
+      const text = textFromMessage(message);
+      if (text) {
+        reply += (reply ? "\n" : "") + text;
+        appendLog(p.projectId, p.sessionId, "tech-lead", "stdout", text);
+      }
+    }
+    await updateSession(p.sessionId, { status: "terminated", finishedAt: new Date() });
+  } catch (err) {
+    await updateSession(p.sessionId, { status: "crashed", finishedAt: new Date() });
+    log.error({ err, projectId: p.projectId, sessionId: p.sessionId }, "tech-lead run failed");
+  } finally {
+    techLeadQueries.delete(p.projectId);
+  }
+
+  const trimmed = reply.trim();
+  if (trimmed) {
+    await notify({
+      projectId: p.projectId,
+      text: trimmed,
+      priority: "high",
+      fromRole: "tech-lead",
+    }).catch((err) => log.error({ err, projectId: p.projectId }, "tech-lead notify failed"));
+  }
+}
+
+function textFromMessage(m: SDKMessage): string {
+  if (m.type === "assistant") return extractText(m.message.content);
+  return "";
+}
+
+/** Cancel an in-flight tech-lead conversation if one exists. */
+export async function interruptTechLead(projectId: string): Promise<boolean> {
+  const q = techLeadQueries.get(projectId);
+  if (!q) return false;
+  await q.interrupt();
+  techLeadQueries.delete(projectId);
+  return true;
 }
 
 async function getConversationHistory(projectId: string): Promise<string> {

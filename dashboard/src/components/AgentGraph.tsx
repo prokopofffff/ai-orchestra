@@ -1,4 +1,4 @@
-import { ROLE_COLORS } from "../types";
+import { ROLE_COLORS, ROLE_FALLBACK } from "../types";
 
 const roles = [
   { id: "tech-lead", label: "Tech Lead", x: 300, y: 50 },
@@ -40,9 +40,9 @@ export function AgentGraph() {
               key={i}
               x1={f.x} y1={f.y}
               x2={t.x} y2={t.y}
-              stroke="#333"
+              stroke="var(--border)"
               strokeWidth={1}
-              opacity={0.3}
+              opacity={0.6}
             />
           );
         })}
@@ -50,7 +50,7 @@ export function AgentGraph() {
           <g key={role.id}>
             <circle
               cx={role.x} cy={role.y} r={30}
-              fill={ROLE_COLORS[role.id] ?? "#999"}
+              fill={ROLE_COLORS[role.id] ?? ROLE_FALLBACK}
               opacity={0.85}
             />
             <text

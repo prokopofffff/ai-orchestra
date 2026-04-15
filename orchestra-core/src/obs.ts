@@ -1,0 +1,107 @@
+/**
+ * Observability primitives — structured logging + ambient context.
+ *
+ * - `log` is a pino root logger. JSON in production, pretty in dev.
+ * - Ambient context (reqId, projectId, jobId, role, …) propagates through
+ *   AsyncLocalStorage. Any code path that runs inside `withContext()` (or
+ *   one of the express/job wrappers below) gets that context attached to
+ *   every log line automatically — no manual plumbing required.
+ *
+ * NOT to be confused with `./logger.ts`, which writes to the `agent_logs`
+ * DB table for per-agent-run audit. This module is for runtime diagnostics.
+ */
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
+import pino, { type Logger } from "pino";
+import pinoHttp from "pino-http";
+import type { RequestHandler } from "express";
+
+// ─── Context ───
+
+export type LogContext = {
+  reqId?: string;
+  projectId?: string;
+  taskId?: string;
+  sessionId?: string;
+  jobId?: string;
+  jobKind?: string;
+  attempt?: number;
+  role?: string;
+  [k: string]: unknown;
+};
+
+const als = new AsyncLocalStorage<LogContext>();
+
+export function getContext(): LogContext {
+  return als.getStore() ?? {};
+}
+
+/**
+ * Run `fn` with the given context merged into the active context.
+ * Nested calls inherit the parent's context.
+ */
+export function withContext<T>(ctx: LogContext, fn: () => Promise<T>): Promise<T> {
+  const merged = { ...getContext(), ...ctx };
+  return als.run(merged, fn);
+}
+
+// ─── Root logger ───
+
+const isProd = process.env.NODE_ENV === "production";
+
+export const log: Logger = pino({
+  level: process.env.LOG_LEVEL ?? (isProd ? "info" : "debug"),
+  // Inject ambient context into every log line.
+  mixin: () => ({ ctx: getContext() }),
+  ...(isProd ? {} : {
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true, singleLine: false, translateTime: "HH:MM:ss.l" },
+    },
+  }),
+});
+
+// ─── Express middleware ───
+//
+// Generates a reqId, runs the rest of the request inside withContext so any
+// log call from downstream handlers carries reqId automatically. Also wires
+// pino-http for one access-log line per request.
+
+export function requestMiddleware(): RequestHandler[] {
+  const httpLogger = pinoHttp({
+    logger: log,
+    customLogLevel: (_req, res, err) => {
+      if (err) return "error";
+      if (res.statusCode >= 500) return "error";
+      if (res.statusCode >= 400) return "warn";
+      return "info";
+    },
+    customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
+    serializers: {
+      req: (req) => ({ method: req.method, url: req.url }),
+      res: (res) => ({ statusCode: res.statusCode }),
+    },
+  });
+
+  const ctxScope: RequestHandler = (req, _res, next) => {
+    const reqId = (req.headers["x-request-id"] as string | undefined) ?? randomUUID();
+    als.run({ reqId }, () => next());
+  };
+
+  return [ctxScope, httpLogger];
+}
+
+// ─── Process-level traps ───
+//
+// Without these, uncaught errors print to stderr unstructured. Capture them
+// through pino so they land in whatever sink we're using.
+
+export function installProcessTraps(): void {
+  process.on("uncaughtException", (err) => {
+    log.fatal({ err }, "uncaughtException");
+  });
+  process.on("unhandledRejection", (reason) => {
+    log.error({ err: reason }, "unhandledRejection");
+  });
+}

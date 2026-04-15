@@ -1,6 +1,7 @@
 import { addSystemMessage, addTechLeadMessage } from "./conversation-api";
 import { sendTelegramMessage } from "./notify";
 import { getPool } from "./db";
+import { log } from "./obs";
 
 export type NotificationPriority = "high" | "normal" | "low";
 
@@ -30,9 +31,9 @@ export async function notify(notification: Notification): Promise<void> {
   const telegramChatId = await getTelegramChatId(projectId);
   if (telegramChatId) {
     const sent = await sendTelegramMessage(telegramChatId, text);
-    console.log(`Telegram notify: chatId=${telegramChatId} sent=${sent} text=${text.substring(0, 50)}...`);
+    log.debug({ telegramChatId, sent, projectId }, "telegram notify");
   } else {
-    console.log("Telegram notify: no chatId found, skipping");
+    log.debug({ projectId }, "telegram notify skipped: no chatId");
   }
 }
 

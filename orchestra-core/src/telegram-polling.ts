@@ -1,5 +1,5 @@
-import { sendTelegramMessage } from "./notify";
 import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler";
+import { log } from "./obs";
 
 let polling = false;
 let offset = 0;
@@ -9,7 +9,7 @@ export function startTelegramPolling(): void {
   if (!token) return;
 
   polling = true;
-  console.log("Telegram polling started");
+  log.info("telegram polling started");
   poll(token);
 }
 
@@ -34,7 +34,7 @@ async function poll(token: string): Promise<void> {
       }
     } catch (err) {
       if (polling) {
-        console.error("Telegram poll error:", (err as Error).message);
+        log.error({ err }, "telegram poll error");
         await sleep(5000);
       }
     }

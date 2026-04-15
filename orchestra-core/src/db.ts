@@ -2,6 +2,8 @@ import pg from "pg";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { log } from "./obs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,15 +11,22 @@ const __dirname = path.dirname(__filename);
 const { Pool } = pg;
 
 let pool: pg.Pool;
+let db: NodePgDatabase;
 
 export function initPool(databaseUrl: string): pg.Pool {
   pool = new Pool({ connectionString: databaseUrl });
+  db = drizzle(pool);
   return pool;
 }
 
 export function getPool(): pg.Pool {
   if (!pool) throw new Error("Database pool not initialized. Call initPool() first.");
   return pool;
+}
+
+export function getDb(): NodePgDatabase {
+  if (!db) throw new Error("Database not initialized. Call initPool() first.");
+  return db;
 }
 
 export async function runMigrations(databaseUrl: string): Promise<void> {
@@ -37,7 +46,7 @@ export async function runMigrations(databaseUrl: string): Promise<void> {
   }
 
   if (!dir) {
-    console.error("Migrations directory not found, checked:", dirs);
+    log.error({ dirs }, "migrations directory not found");
     return;
   }
 
@@ -45,11 +54,11 @@ export async function runMigrations(databaseUrl: string): Promise<void> {
 
   for (const file of files) {
     const sql = fs.readFileSync(path.join(dir, file), "utf-8");
-    console.log(`Running migration: ${file}`);
+    log.info({ file }, "running migration");
     await p.query(sql);
   }
 
-  console.log(`Ran ${files.length} migrations successfully.`);
+  log.info({ count: files.length }, "migrations applied");
 }
 
 export async function waitForDatabase(databaseUrl: string, retries = 5): Promise<void> {
@@ -61,7 +70,7 @@ export async function waitForDatabase(databaseUrl: string, retries = 5): Promise
       await tempPool.end();
       return;
     } catch {
-      console.log(`Waiting for database... (${i + 1}/${retries})`);
+      log.info({ attempt: i + 1, retries }, "waiting for database");
       await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
     }
   }

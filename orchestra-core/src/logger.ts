@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getPool } from "./db";
 import { parseRows } from "./db-utils";
+import { log } from "./obs";
 
 export type LogLevel = "stdout" | "stderr" | "system" | "error";
 
@@ -30,7 +31,7 @@ export function appendLog(
     `INSERT INTO agent_logs (project_id, session_id, role, level, message)
      VALUES ($1, $2, $3, $4, $5)`,
     [projectId, sessionId, role, level, message],
-  ).catch((e) => { console.error(`[logger] Failed to write log: ${e instanceof Error ? e.message : e}`); });
+  ).catch((err) => log.error({ err }, "agent_logs insert failed"));
 }
 
 /**

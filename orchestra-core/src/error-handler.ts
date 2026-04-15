@@ -1,8 +1,9 @@
 import { appendLog } from "./logger";
+import { log } from "./obs";
 
 /**
  * Log an error from a background operation that can't throw.
- * Logs to console + agent_logs table. Never throws.
+ * Logs through the structured logger + agent_logs DB table. Never throws.
  */
 export function logBackgroundError(
   context: string,
@@ -10,7 +11,7 @@ export function logBackgroundError(
   projectId?: string,
 ): void {
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`[${context}] ${message}`);
+  log.error({ err, bgContext: context, projectId }, `background: ${context}`);
   if (projectId) {
     appendLog(projectId, null, "system", "error", `[${context}] ${message}`);
   }

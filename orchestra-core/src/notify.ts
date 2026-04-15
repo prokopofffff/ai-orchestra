@@ -1,3 +1,5 @@
+import { log } from "./obs";
+
 const TG_MAX_LENGTH = 4096;
 
 function getToken(): string | undefined {
@@ -43,14 +45,14 @@ async function sendChunk(chatId: string, text: string): Promise<boolean> {
     }
 
     if (!res.ok) {
-      const err = await res.json();
-      console.error("Telegram send failed:", err);
+      const body = await res.json();
+      log.error({ status: res.status, body }, "telegram send failed");
       return false;
     }
 
     return true;
   } catch (err) {
-    console.error("Telegram send error:", err);
+    log.error({ err }, "telegram send error");
     return false;
   }
 }

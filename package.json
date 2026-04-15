@@ -2,13 +2,22 @@
   "name": "ai-orchestra",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "AI agent orchestrator for automated development teams",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --filter orchestra-core dev",
-    "setup": "pnpm --filter orchestra-core setup"
+    "setup": "pnpm --filter orchestra-core setup",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@pencil.dev/cli": "^0.2.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.2.0",
+    "globals": "^17.5.0",
+    "typescript-eslint": "^8.58.2"
   }
 }

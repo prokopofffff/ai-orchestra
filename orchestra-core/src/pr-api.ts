@@ -3,7 +3,8 @@ import { z } from "zod";
 import { getPool } from "./db";
 import { checkFilesScope, formatViolations } from "./scope-check";
 import type { AgentRole } from "./config";
-import { exec } from "./repo-manager";
+import { git } from "./repo-manager";
+import { log } from "./obs";
 
 export const prRouter: Router = Router();
 
@@ -53,8 +54,8 @@ prRouter.post("/pr/create", async (req, res, next) => {
       const agentRole = (body.agentRole ?? req.headers["x-agent-role"]) as string | undefined;
       if (agentRole && agentRole !== "tech-lead") {
         try {
-          const { stdout: changedFiles } = await exec("git diff --name-only origin/main...HEAD", cwd);
-          const files = changedFiles.split("\n").filter(Boolean);
+          const diff = await git(cwd).diff(["--name-only", "origin/main...HEAD"]);
+          const files = diff.split("\n").filter(Boolean);
           const violations = checkFilesScope(agentRole as AgentRole, files);
           if (violations.length > 0) {
             return res.status(403).json({
@@ -68,13 +69,13 @@ prRouter.post("/pr/create", async (req, res, next) => {
       }
 
       try {
-        const { execSync } = await import("node:child_process");
         const authUrl = `https://${token}@github.com/${owner}/${repo}.git`;
-        execSync(`git remote set-url origin "${authUrl}" 2>/dev/null || git remote add origin "${authUrl}"`, { cwd, stdio: "pipe" });
-        execSync(`git push -u origin "${body.head}" --force`, { cwd, stdio: "pipe" });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("Git push failed:", msg);
+        const g = git(cwd);
+        try { await g.remote(["set-url", "origin", authUrl]); }
+        catch { await g.remote(["add", "origin", authUrl]); }
+        await g.push(["-u", "origin", body.head, "--force"]);
+      } catch (err) {
+        log.error({ err, owner, repo, head: body.head }, "git push failed");
       }
     }
 

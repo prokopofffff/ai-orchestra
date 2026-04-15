@@ -1,24 +1,10 @@
-import { z } from "zod";
 import { getPool } from "./db";
 import { type AgentRole } from "./config";
 import { parseRow, parseRows } from "./db-utils";
+import { AgentSessionSchema, type AgentSession } from "@ai-orchestra/shared";
 
-const sessionSchema = z.object({
-  id: z.string().uuid(),
-  projectId: z.string().uuid(),
-  role: z.enum(["tech-lead", "designer", "frontend", "backend", "qa", "devops"]),
-  taskId: z.string().uuid().nullable(),
-  claudeSessionId: z.string().nullable(),
-  pid: z.number().nullable(),
-  status: z.enum(["running", "sleeping", "terminated", "crashed"]),
-  model: z.string(),
-  worktreePath: z.string().nullable(),
-  lastHeartbeat: z.coerce.date().nullable(),
-  startedAt: z.coerce.date(),
-  finishedAt: z.coerce.date().nullable(),
-});
-
-export type Session = z.infer<typeof sessionSchema>;
+const sessionSchema = AgentSessionSchema;
+export type Session = AgentSession;
 
 export interface CreateSessionParams {
   projectId: string;
@@ -41,14 +27,13 @@ export async function createSession(params: CreateSessionParams): Promise<Sessio
 
 export async function updateSession(
   id: string,
-  updates: Partial<Pick<Session, "claudeSessionId" | "pid" | "status" | "worktreePath" | "finishedAt">>,
+  updates: Partial<Pick<Session, "claudeSessionId" | "status" | "worktreePath" | "finishedAt">>,
 ): Promise<Session | null> {
   const sets: string[] = [];
   const vals: unknown[] = [];
   let i = 1;
 
   if (updates.claudeSessionId !== undefined) { sets.push(`claude_session_id = $${i++}`); vals.push(updates.claudeSessionId); }
-  if (updates.pid !== undefined) { sets.push(`pid = $${i++}`); vals.push(updates.pid); }
   if (updates.status !== undefined) { sets.push(`status = $${i++}`); vals.push(updates.status); }
   if (updates.worktreePath !== undefined) { sets.push(`worktree_path = $${i++}`); vals.push(updates.worktreePath); }
   if (updates.finishedAt !== undefined) { sets.push(`finished_at = $${i++}`); vals.push(updates.finishedAt); }

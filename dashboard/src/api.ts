@@ -1,14 +1,25 @@
-import type { Project, Task, TaskComment, AgentSession, AuditEntry, Message, QueueStatus } from "./types";
+import { z } from "zod";
+import {
+  ProjectSchema, TaskSchema, TaskCommentSchema, AgentSessionSchema,
+  AuditEntrySchema, MessageSchema, QueueStatusSchema,
+  type Project, type Task, type TaskComment, type AgentSession,
+  type AuditEntry, type Message, type QueueStatus,
+} from "@ai-orchestra/shared";
 
 const BASE = "/api";
 
-async function get<T>(path: string): Promise<T> {
+/**
+ * Fetch helpers parse responses through the shared Zod schemas — runtime
+ * validation, not just type assertion. Catches backend/frontend drift early
+ * (returns a clear validation error instead of a silent undefined later).
+ */
+async function getValidated<T extends z.ZodTypeAny>(path: string, schema: T): Promise<z.infer<T>> {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
-  return res.json();
+  return schema.parse(await res.json());
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function postValidated<T extends z.ZodTypeAny>(path: string, body: unknown, schema: T): Promise<z.infer<T>> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -18,17 +29,17 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
   }
-  return res.json();
+  return schema.parse(await res.json());
 }
 
-async function patch<T>(path: string, body: unknown): Promise<T> {
+async function patchValidated<T extends z.ZodTypeAny>(path: string, body: unknown, schema: T): Promise<z.infer<T>> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`PATCH ${path}: ${res.status}`);
-  return res.json();
+  return schema.parse(await res.json());
 }
 
 async function del(path: string): Promise<void> {
@@ -37,50 +48,66 @@ async function del(path: string): Promise<void> {
 }
 
 // Projects
-export const fetchProjects = () => get<Project[]>("/projects");
-export const createProject = (data: { name: string; repoUrl?: string; description?: string }) =>
-  post<Project>("/projects", data);
-export const updateProject = (id: string, data: Partial<Project>) =>
-  patch<Project>(`/projects/${id}`, data);
+export const fetchProjects = (): Promise<Project[]> =>
+  getValidated("/projects", z.array(ProjectSchema));
+export const createProject = (data: { name: string; repoUrl?: string; description?: string }): Promise<Project> =>
+  postValidated("/projects", data, ProjectSchema);
+export const updateProject = (id: string, data: Partial<Project>): Promise<Project> =>
+  patchValidated(`/projects/${id}`, data, ProjectSchema);
 
 // Tasks
-export const fetchTasks = (projectId: string) => get<Task[]>(`/tasks?projectId=${projectId}`);
-export const fetchTask = (id: string) => get<Task>(`/tasks/${id}`);
-export const createTask = (data: Partial<Task> & { projectId: string; title: string }) =>
-  post<Task>("/tasks", data);
-export const updateTask = (id: string, data: Partial<Task>) => patch<Task>(`/tasks/${id}`, data);
+export const fetchTasks = (projectId: string): Promise<Task[]> =>
+  getValidated(`/tasks?projectId=${projectId}`, z.array(TaskSchema));
+export const fetchTask = (id: string): Promise<Task> =>
+  getValidated(`/tasks/${id}`, TaskSchema);
+export const createTask = (data: Partial<Task> & { projectId: string; title: string }): Promise<Task> =>
+  postValidated("/tasks", data, TaskSchema);
+export const updateTask = (id: string, data: Partial<Task>): Promise<Task> =>
+  patchValidated(`/tasks/${id}`, data, TaskSchema);
 export const deleteTask = (id: string) => del(`/tasks/${id}`);
 
 // Comments
-export const fetchComments = (taskId: string) => get<TaskComment[]>(`/tasks/${taskId}/comments`);
-export const addComment = (taskId: string, author: string, body: string) =>
-  post<TaskComment>(`/tasks/${taskId}/comments`, { author, body });
+export const fetchComments = (taskId: string): Promise<TaskComment[]> =>
+  getValidated(`/tasks/${taskId}/comments`, z.array(TaskCommentSchema));
+export const addComment = (taskId: string, author: string, body: string): Promise<TaskComment> =>
+  postValidated(`/tasks/${taskId}/comments`, { author, body }, TaskCommentSchema);
 
 // Sessions
-export const fetchSessions = (projectId?: string) =>
-  get<AgentSession[]>(projectId ? `/sessions?projectId=${projectId}` : "/sessions");
+export const fetchSessions = (projectId?: string): Promise<AgentSession[]> =>
+  getValidated(
+    projectId ? `/sessions?projectId=${projectId}` : "/sessions",
+    z.array(AgentSessionSchema),
+  );
 
 // Signals / Audit
-export const fetchAudit = (projectId: string, limit = 50) =>
-  get<AuditEntry[]>(`/flow/audit?projectId=${projectId}&limit=${limit}`);
+export const fetchAudit = (projectId: string, limit = 50): Promise<AuditEntry[]> =>
+  getValidated(`/flow/audit?projectId=${projectId}&limit=${limit}`, z.array(AuditEntrySchema));
 
 // Messages
-export const fetchMessages = (projectId: string, limit = 50) =>
-  get<Message[]>(`/conversations/${projectId}/messages?limit=${limit}`);
-export const sendMessage = (projectId: string, text: string) =>
-  post<Message>(`/conversations/${projectId}/messages`, { text });
+export const fetchMessages = (projectId: string, limit = 50): Promise<Message[]> =>
+  getValidated(`/conversations/${projectId}/messages?limit=${limit}`, z.array(MessageSchema));
+export const sendMessage = (projectId: string, text: string): Promise<Message> =>
+  postValidated(`/conversations/${projectId}/messages`, { text }, MessageSchema);
 
 // Queue
-export const fetchQueueStatus = () => get<QueueStatus>("/queue/status");
+export const fetchQueueStatus = (): Promise<QueueStatus> =>
+  getValidated("/queue/status", QueueStatusSchema);
 
-// Usage
-export interface UsageInfo {
-  sessions: { total: number; running: number; completed: number; crashed: number };
-  byRole: Record<string, { sessions: number; running: number }>;
-  byModel: Record<string, number>;
-  lastChecked: string;
-}
-export const fetchUsage = () => get<UsageInfo>("/usage");
+// Usage — local to dashboard (not in shared yet)
+const UsageSchema = z.object({
+  sessions: z.object({
+    total: z.number(),
+    running: z.number(),
+    completed: z.number(),
+    crashed: z.number(),
+  }),
+  byRole: z.record(z.object({ sessions: z.number(), running: z.number() })),
+  byModel: z.record(z.number()),
+  lastChecked: z.string(),
+});
+export type UsageInfo = z.infer<typeof UsageSchema>;
+export const fetchUsage = (): Promise<UsageInfo> => getValidated("/usage", UsageSchema);
 
 // Health
-export const fetchHealth = () => get<{ status: string; timestamp: string }>("/health");
+const HealthSchema = z.object({ status: z.string(), timestamp: z.string() });
+export const fetchHealth = () => getValidated("/health", HealthSchema);

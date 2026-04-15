@@ -1,0 +1,156 @@
+/**
+ * Shared schemas — single source of truth for cross-cutting types.
+ *
+ * Backend uses these for request/response validation; dashboard derives
+ * its TS types via `z.infer` so the two can't drift.
+ */
+
+import { z } from "zod";
+
+// ─── Enums ─────────────────────────────────────────────────────────────────
+
+export const AgentRoleSchema = z.enum([
+  "tech-lead", "designer", "frontend", "backend", "qa", "devops",
+]);
+export type AgentRole = z.infer<typeof AgentRoleSchema>;
+
+export const TaskStateSchema = z.enum([
+  "new", "described", "designing", "design_ready",
+  "in_development", "pr_created", "revisions",
+  "in_testing", "tested",
+  "in_review", "approved", "merged", "closed",
+  "failed", "cancelled",
+]);
+export type TaskState = z.infer<typeof TaskStateSchema>;
+
+export const TaskTypeSchema = z.enum(["epic", "task", "subtask", "bug", "feature"]);
+export type TaskType = z.infer<typeof TaskTypeSchema>;
+
+export const TaskPrioritySchema = z.enum(["low", "normal", "high", "immediate"]);
+export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
+
+export const SessionStatusSchema = z.enum(["running", "sleeping", "terminated", "crashed"]);
+export type SessionStatus = z.infer<typeof SessionStatusSchema>;
+
+export const MessageRoleSchema = z.enum(["user", "tech-lead", "system"]);
+export type MessageRole = z.infer<typeof MessageRoleSchema>;
+
+export const MessageSourceSchema = z.enum(["telegram", "dashboard"]);
+export type MessageSource = z.infer<typeof MessageSourceSchema>;
+
+// ─── Domain shapes ─────────────────────────────────────────────────────────
+
+export const AgentCheckSchema = z.object({
+  name: z.string(),
+  pattern: z.string(),
+  command: z.string(),
+  onFail: z.enum(["warn", "alert"]),
+});
+export type AgentCheck = z.infer<typeof AgentCheckSchema>;
+
+export const ProjectSettingsSchema = z.object({
+  models: z.record(AgentRoleSchema, z.string()).optional(),
+  checks: z.record(AgentRoleSchema, z.array(AgentCheckSchema)).optional(),
+}).catchall(z.unknown());
+export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
+
+export const ProjectSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  slug: z.string(),
+  repoUrl: z.string().nullable(),
+  description: z.string().nullable(),
+  settings: z.record(z.unknown()), // looser at the boundary; ProjectSettings parses it strictly
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+export const TaskSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  parentId: z.string().uuid().nullable(),
+  title: z.string(),
+  description: z.string().nullable(),
+  type: TaskTypeSchema,
+  state: TaskStateSchema,
+  priority: TaskPrioritySchema,
+  assigneeRole: z.string().nullable(),
+  blockedBy: z.array(z.string().uuid()),
+  branchName: z.string().nullable(),
+  prUrl: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type Task = z.infer<typeof TaskSchema>;
+
+export const TaskCommentSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  author: z.string(),
+  body: z.string(),
+  createdAt: z.coerce.date(),
+});
+export type TaskComment = z.infer<typeof TaskCommentSchema>;
+
+export const AgentSessionSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  role: AgentRoleSchema,
+  taskId: z.string().uuid().nullable(),
+  claudeSessionId: z.string().nullable(),
+  status: SessionStatusSchema,
+  model: z.string(),
+  worktreePath: z.string().nullable(),
+  lastHeartbeat: z.coerce.date().nullable(),
+  startedAt: z.coerce.date(),
+  finishedAt: z.coerce.date().nullable(),
+});
+export type AgentSession = z.infer<typeof AgentSessionSchema>;
+
+export const AuditEntrySchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  fromRole: z.string(),
+  toRole: z.string(),
+  action: z.string(),
+  taskId: z.string().uuid().nullable(),
+  status: z.enum(["allowed", "rejected"]),
+  reason: z.string().nullable(),
+  payload: z.record(z.unknown()),
+  createdAt: z.coerce.date(),
+});
+export type AuditEntry = z.infer<typeof AuditEntrySchema>;
+
+export const MessageSchema = z.object({
+  id: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  fromRole: MessageRoleSchema,
+  source: MessageSourceSchema,
+  text: z.string(),
+  metadata: z.record(z.unknown()),
+  createdAt: z.coerce.date(),
+});
+export type Message = z.infer<typeof MessageSchema>;
+
+export const QueueStatusSchema = z.object({
+  rateLimited: z.boolean(),
+  rateLimitResetTime: z.string().nullable(),
+  queued: z.number().int(),
+  running: z.number().int(),
+  completed: z.number().int(),
+  failed: z.number().int(),
+});
+export type QueueStatus = z.infer<typeof QueueStatusSchema>;
+
+// ─── Useful constants (kept here so dashboard can render UI without backend) ──
+
+export const AGENT_ROLES = AgentRoleSchema.options;
+export const TASK_STATES = TaskStateSchema.options;
+export const TASK_TYPES = TaskTypeSchema.options;
+export const TASK_PRIORITIES = TaskPrioritySchema.options;
+
+// ─── Domain flow (single source of truth for routing/validation/viz) ───────
+
+export * from "./flow";
+export * from "./flow-mermaid";

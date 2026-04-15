@@ -15,6 +15,7 @@ import { loadConfig } from "./config";
 import { notify } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
+import { AuditEntrySchema } from "@ai-orchestra/shared";
 
 export const signalRouter: Router = Router();
 
@@ -28,18 +29,7 @@ const signalBodySchema = z.object({
   payload: z.record(z.unknown()).optional(),
 });
 
-const auditSchema = z.object({
-  id: z.string().uuid(),
-  projectId: z.string().uuid(),
-  fromRole: z.string(),
-  toRole: z.string(),
-  action: z.string(),
-  taskId: z.string().uuid().nullable(),
-  status: z.string(),
-  reason: z.string().nullable(),
-  payload: z.record(z.unknown()),
-  createdAt: z.coerce.date(),
-});
+const auditSchema = AuditEntrySchema;
 
 // ─── Send Signal ───
 

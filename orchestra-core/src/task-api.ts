@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { ProjectSchema, TaskSchema, TaskCommentSchema } from "@ai-orchestra/shared";
 import { getPool } from "./db";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked } from "./dependency-engine";
@@ -8,47 +9,10 @@ import type { AgentRole } from "./config";
 
 export const taskRouter: Router = Router();
 
-// ─── Schemas ───
-
-const projectSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string(),
-  slug: z.string(),
-  repoUrl: z.string().nullable(),
-  description: z.string().nullable(),
-  settings: z.record(z.unknown()),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
-});
-
-const taskSchema = z.object({
-  id: z.string().uuid(),
-  projectId: z.string().uuid(),
-  parentId: z.string().uuid().nullable(),
-  title: z.string(),
-  description: z.string().nullable(),
-  type: z.enum(["epic", "task", "subtask", "bug", "feature"]),
-  state: z.enum([
-    "new", "described", "designing", "design_ready",
-    "in_development", "pr_created", "in_testing", "tested",
-    "in_review", "approved", "merged", "closed",
-  ]),
-  priority: z.enum(["low", "normal", "high", "immediate"]),
-  assigneeRole: z.string().nullable(),
-  blockedBy: z.array(z.string().uuid()),
-  branchName: z.string().nullable(),
-  prUrl: z.string().nullable(),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
-});
-
-const commentSchema = z.object({
-  id: z.string().uuid(),
-  taskId: z.string().uuid(),
-  author: z.string(),
-  body: z.string(),
-  createdAt: z.coerce.date(),
-});
+// Aliases to keep existing call-site naming.
+const projectSchema = ProjectSchema;
+const taskSchema = TaskSchema;
+const commentSchema = TaskCommentSchema;
 
 // ─── Projects ───
 

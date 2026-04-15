@@ -1,108 +1,38 @@
-export interface Project {
-  id: string;
-  name: string;
-  slug: string;
-  repoUrl: string | null;
-  description: string | null;
-  settings: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
+/**
+ * Dashboard-side types are derived from `@ai-orchestra/shared` schemas so they
+ * cannot drift from the backend. UI-only constants (KANBAN_PHASES, role color
+ * tokens) live here.
+ */
 
-export interface Task {
-  id: string;
-  projectId: string;
-  parentId: string | null;
-  title: string;
-  description: string | null;
-  type: "epic" | "task" | "subtask" | "bug" | "feature";
-  state: TaskState;
-  priority: "low" | "normal" | "high" | "immediate";
-  assigneeRole: string | null;
-  blockedBy: string[];
-  branchName: string | null;
-  prUrl: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type TaskState =
-  | "new" | "described" | "designing" | "design_ready"
-  | "in_development" | "pr_created" | "revisions"
-  | "in_testing" | "tested"
-  | "in_review" | "approved" | "merged" | "closed"
-  | "failed" | "cancelled";
-
-export interface TaskComment {
-  id: string;
-  taskId: string;
-  author: string;
-  body: string;
-  createdAt: string;
-}
-
-export interface AgentSession {
-  id: string;
-  projectId: string;
-  role: string;
-  taskId: string | null;
-  claudeSessionId: string | null;
-  pid: number | null;
-  status: "running" | "sleeping" | "terminated" | "crashed";
-  model: string;
-  worktreePath: string | null;
-  lastHeartbeat: string | null;
-  startedAt: string;
-  finishedAt: string | null;
-}
-
-export interface AuditEntry {
-  id: string;
-  projectId: string;
-  fromRole: string;
-  toRole: string;
-  action: string;
-  taskId: string | null;
-  status: "allowed" | "rejected";
-  reason: string | null;
-  payload: Record<string, unknown>;
-  createdAt: string;
-}
-
-export interface Message {
-  id: string;
-  conversationId: string;
-  fromRole: "user" | "tech-lead" | "system";
-  source: "telegram" | "dashboard";
-  text: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-}
-
-export interface QueueStatus {
-  rateLimited: boolean;
-  rateLimitResetTime: string | null;
-  queued: number;
-  running: number;
-  completed: number;
-  failed: number;
-}
+export type {
+  AgentRole, TaskState, TaskType, TaskPriority,
+  Project, ProjectSettings, Task, TaskComment,
+  AgentSession, AuditEntry, Message, QueueStatus, AgentCheck,
+} from "@ai-orchestra/shared";
+export { AGENT_ROLES, TASK_STATES } from "@ai-orchestra/shared";
 
 export const KANBAN_PHASES = {
-  Backlog: ["new", "described"],
-  Design: ["designing", "design_ready"],
+  Backlog:     ["new", "described"],
+  Design:      ["designing", "design_ready"],
   Development: ["in_development", "pr_created", "revisions"],
-  Testing: ["in_testing", "tested"],
-  Review: ["in_review", "approved"],
-  Done: ["merged", "closed"],
-  Blocked: ["failed", "cancelled"],
+  Testing:     ["in_testing", "tested"],
+  Review:      ["in_review", "approved"],
+  Done:        ["merged", "closed"],
+  Blocked:     ["failed", "cancelled"],
 } as const;
 
+/**
+ * Role color tokens. Values are CSS var references so the palette lives in
+ * styles.css (`:root --role-*`). Components pass these as-is to inline styles
+ * or SVG `fill` attributes, both of which resolve `var(...)` at paint time.
+ */
 export const ROLE_COLORS: Record<string, string> = {
-  "tech-lead": "#e74c3c",
-  designer: "#9b59b6",
-  frontend: "#3498db",
-  backend: "#2ecc71",
-  qa: "#f39c12",
-  devops: "#1abc9c",
+  "tech-lead": "var(--role-tech-lead)",
+  designer:    "var(--role-designer)",
+  frontend:    "var(--role-frontend)",
+  backend:     "var(--role-backend)",
+  qa:          "var(--role-qa)",
+  devops:      "var(--role-devops)",
 };
+
+export const ROLE_FALLBACK = "var(--text-muted)";

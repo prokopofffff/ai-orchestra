@@ -5,20 +5,12 @@ import { parseRow, parseRows } from "./db-utils";
 import { dispatchTechLead } from "./tech-lead-dispatcher";
 import { loadConfig } from "./config";
 import { background } from "./error-handler";
+import { MessageSchema, type Message as SharedMessage } from "@ai-orchestra/shared";
 
 export const conversationRouter: Router = Router();
 
-const messageSchema = z.object({
-  id: z.string().uuid(),
-  conversationId: z.string().uuid(),
-  fromRole: z.string(),
-  source: z.string(),
-  text: z.string(),
-  metadata: z.record(z.unknown()),
-  createdAt: z.coerce.date(),
-});
-
-export type Message = z.infer<typeof messageSchema>;
+const messageSchema = MessageSchema;
+export type Message = SharedMessage;
 
 // ─── Get messages for a project ───
 

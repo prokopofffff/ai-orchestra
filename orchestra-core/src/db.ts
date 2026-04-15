@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { log } from "./obs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,35 +31,52 @@ export function getDb(): NodePgDatabase {
 }
 
 export async function runMigrations(databaseUrl: string): Promise<void> {
-  const p = initPool(databaseUrl);
+  initPool(databaseUrl);
 
-  // Check both compiled (dist/) and source (src/) locations
+  // Two stages:
+  //   1. Legacy raw-SQL files in src/migrations/ — the historical baseline.
+  //      All idempotent (IF NOT EXISTS / IF EXISTS), safe to re-run.
+  //   2. Drizzle-kit generated migrations in drizzle/ — schema.ts is the
+  //      source of truth going forward; `pnpm db:generate` emits SQL here.
+
+  await applyLegacySqlMigrations();
+  await applyDrizzleMigrations();
+}
+
+async function applyLegacySqlMigrations(): Promise<void> {
+  // Check both compiled (dist/) and source (src/) locations.
   const dirs = [
     path.join(__dirname, "migrations"),
     path.join(__dirname, "..", "src", "migrations"),
   ];
-  let dir = "";
-  for (const d of dirs) {
-    if (fs.existsSync(d)) {
-      dir = d;
-      break;
-    }
-  }
-
+  const dir = dirs.find((d) => fs.existsSync(d));
   if (!dir) {
-    log.error({ dirs }, "migrations directory not found");
+    log.warn({ dirs }, "legacy migrations directory not found");
     return;
   }
 
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
-
   for (const file of files) {
     const sql = fs.readFileSync(path.join(dir, file), "utf-8");
-    log.info({ file }, "running migration");
-    await p.query(sql);
+    log.info({ file }, "running legacy migration");
+    await getPool().query(sql);
   }
+  log.info({ count: files.length }, "legacy migrations applied");
+}
 
-  log.info({ count: files.length }, "migrations applied");
+async function applyDrizzleMigrations(): Promise<void> {
+  // drizzle-kit outputs migrations to ./drizzle next to this package.
+  const candidates = [
+    path.join(__dirname, "..", "drizzle"),
+    path.join(__dirname, "..", "..", "drizzle"),
+  ];
+  const migrationsFolder = candidates.find((d) => fs.existsSync(path.join(d, "meta", "_journal.json")));
+  if (!migrationsFolder) {
+    log.debug("no drizzle migrations yet — skipping");
+    return;
+  }
+  await migrate(getDb(), { migrationsFolder });
+  log.info({ migrationsFolder }, "drizzle migrations applied");
 }
 
 export async function waitForDatabase(databaseUrl: string, retries = 5): Promise<void> {

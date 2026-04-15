@@ -10,7 +10,12 @@
     "dev": "tsx watch src/index.ts",
     "setup": "tsx src/setup-wizard.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:introspect": "drizzle-kit introspect"
   },
   "dependencies": {
     "@ai-orchestra/shared": "workspace:*",

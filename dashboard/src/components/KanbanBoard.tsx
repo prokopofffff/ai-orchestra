@@ -1,8 +1,7 @@
-import { useCallback } from "react";
-import { usePolling } from "../hooks/usePolling";
+import { useQuery } from "@tanstack/react-query";
 import * as api from "../api";
 import type { Task } from "../types";
-import { KANBAN_PHASES, ROLE_COLORS } from "../types";
+import { KANBAN_PHASES, ROLE_COLORS, ROLE_FALLBACK } from "../types";
 
 interface Props {
   projectId: string;
@@ -10,8 +9,11 @@ interface Props {
 }
 
 export function KanbanBoard({ projectId, onTaskClick }: Props) {
-  const fetcher = useCallback(() => api.fetchTasks(projectId), [projectId]);
-  const { data: tasks } = usePolling(fetcher, 5000);
+  const { data: tasks } = useQuery({
+    queryKey: ["tasks", projectId],
+    queryFn: () => api.fetchTasks(projectId),
+    refetchInterval: 5_000,
+  });
 
   if (!tasks) return <div className="loading">Loading tasks...</div>;
 
@@ -56,7 +58,7 @@ function TaskCard({ task, tasks, onClick }: { task: Task; tasks: Task[]; onClick
         {task.assigneeRole && (
           <span
             className="card-role"
-            style={{ backgroundColor: ROLE_COLORS[task.assigneeRole] ?? "#999" }}
+            style={{ backgroundColor: ROLE_COLORS[task.assigneeRole] ?? ROLE_FALLBACK }}
           >
             {task.assigneeRole}
           </span>

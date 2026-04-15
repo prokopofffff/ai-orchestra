@@ -1,11 +1,13 @@
-import { useCallback } from "react";
-import { usePolling } from "../hooks/usePolling";
+import { useQuery } from "@tanstack/react-query";
 import * as api from "../api";
-import { ROLE_COLORS } from "../types";
+import { ROLE_COLORS, ROLE_FALLBACK } from "../types";
 
 export function UsageWidget() {
-  const fetcher = useCallback(() => api.fetchUsage(), []);
-  const { data: usage } = usePolling(fetcher, 10000);
+  const { data: usage } = useQuery({
+    queryKey: ["usage"],
+    queryFn: api.fetchUsage,
+    refetchInterval: 10_000,
+  });
 
   if (!usage) return null;
 
@@ -44,7 +46,7 @@ export function UsageWidget() {
               .sort((a, b) => b[1].sessions - a[1].sessions)
               .map(([role, data]) => (
                 <div key={role} className="usage-bar-row">
-                  <span className="usage-bar-label" style={{ color: ROLE_COLORS[role] ?? "#8b949e" }}>
+                  <span className="usage-bar-label" style={{ color: ROLE_COLORS[role] ?? ROLE_FALLBACK }}>
                     {role}
                   </span>
                   <div className="usage-bar-track">
@@ -52,7 +54,7 @@ export function UsageWidget() {
                       className="usage-bar-fill"
                       style={{
                         width: `${Math.max(8, (data.sessions / sessions.total) * 100)}%`,
-                        backgroundColor: ROLE_COLORS[role] ?? "#8b949e",
+                        backgroundColor: ROLE_COLORS[role] ?? ROLE_FALLBACK,
                       }}
                     />
                   </div>

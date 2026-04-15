@@ -1,16 +1,18 @@
-import { useCallback } from "react";
-import { usePolling } from "../hooks/usePolling";
+import { useQuery } from "@tanstack/react-query";
 import * as api from "../api";
 import type { AuditEntry } from "../types";
-import { ROLE_COLORS } from "../types";
+import { ROLE_COLORS, ROLE_FALLBACK } from "../types";
 
 interface Props {
   projectId: string;
 }
 
 export function SignalFeed({ projectId }: Props) {
-  const fetcher = useCallback(() => api.fetchAudit(projectId, 100), [projectId]);
-  const { data: entries } = usePolling(fetcher, 5000);
+  const { data: entries } = useQuery({
+    queryKey: ["audit", projectId],
+    queryFn: () => api.fetchAudit(projectId, 100),
+    refetchInterval: 5_000,
+  });
 
   if (!entries) return <div className="loading">Loading signals...</div>;
 
@@ -37,11 +39,11 @@ function SignalEntry({ entry }: { entry: AuditEntry }) {
         <span className={`signal-status ${entry.status}`}>{entry.status}</span>
       </div>
       <div className="signal-route">
-        <span className="signal-role" style={{ color: ROLE_COLORS[entry.fromRole] ?? "#666" }}>
+        <span className="signal-role" style={{ color: ROLE_COLORS[entry.fromRole] ?? ROLE_FALLBACK }}>
           {entry.fromRole}
         </span>
         <span className="signal-arrow">{" → "}</span>
-        <span className="signal-role" style={{ color: ROLE_COLORS[entry.toRole] ?? "#666" }}>
+        <span className="signal-role" style={{ color: ROLE_COLORS[entry.toRole] ?? ROLE_FALLBACK }}>
           {entry.toRole}
         </span>
         <span className="signal-action">{entry.action}</span>

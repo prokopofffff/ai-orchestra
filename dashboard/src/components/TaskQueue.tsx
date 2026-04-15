@@ -1,10 +1,12 @@
-import { useCallback } from "react";
-import { usePolling } from "../hooks/usePolling";
+import { useQuery } from "@tanstack/react-query";
 import * as api from "../api";
 
 export function TaskQueue() {
-  const fetcher = useCallback(() => api.fetchQueueStatus(), []);
-  const { data: status } = usePolling(fetcher, 5000);
+  const { data: status } = useQuery({
+    queryKey: ["queue-status"],
+    queryFn: api.fetchQueueStatus,
+    refetchInterval: 5_000,
+  });
 
   if (!status) return null;
 

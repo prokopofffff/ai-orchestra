@@ -1,8 +1,8 @@
-import { useState, useCallback } from "react";
-import { usePolling } from "../hooks/usePolling";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
-import type { Task, TaskComment, TaskState } from "../types";
-import { ROLE_COLORS } from "../types";
+import type { Task, TaskState } from "../types";
+import { ROLE_COLORS, ROLE_FALLBACK } from "../types";
 
 const ALL_STATES: TaskState[] = [
   "new", "described", "designing", "design_ready",
@@ -20,11 +20,20 @@ interface Props {
 }
 
 export function TaskDetail({ taskId, onClose }: Props) {
-  const taskFetcher = useCallback(() => api.fetchTask(taskId), [taskId]);
-  const commentsFetcher = useCallback(() => api.fetchComments(taskId), [taskId]);
+  const queryClient = useQueryClient();
+  const taskKey = ["task", taskId];
+  const commentsKey = ["comments", taskId];
 
-  const { data: task, refresh: refreshTask } = usePolling(taskFetcher, 5000);
-  const { data: comments, refresh: refreshComments } = usePolling(commentsFetcher, 5000);
+  const { data: task } = useQuery({
+    queryKey: taskKey,
+    queryFn: () => api.fetchTask(taskId),
+    refetchInterval: 5_000,
+  });
+  const { data: comments } = useQuery({
+    queryKey: commentsKey,
+    queryFn: () => api.fetchComments(taskId),
+    refetchInterval: 5_000,
+  });
 
   const [newComment, setNewComment] = useState("");
 
@@ -32,14 +41,14 @@ export function TaskDetail({ taskId, onClose }: Props) {
 
   const handleUpdate = async (updates: Partial<Task>) => {
     await api.updateTask(taskId, updates);
-    refreshTask();
+    await queryClient.invalidateQueries({ queryKey: taskKey });
   };
 
   const handleAddComment = async () => {
     if (!newComment.trim()) return;
     await api.addComment(taskId, "user", newComment);
     setNewComment("");
-    refreshComments();
+    await queryClient.invalidateQueries({ queryKey: commentsKey });
   };
 
   const handleDelete = async () => {
@@ -120,7 +129,7 @@ export function TaskDetail({ taskId, onClose }: Props) {
             <h3>Comments ({comments?.length ?? 0})</h3>
             {comments?.map((c) => (
               <div key={c.id} className="comment">
-                <strong style={{ color: ROLE_COLORS[c.author] ?? "#666" }}>{c.author}</strong>
+                <strong style={{ color: ROLE_COLORS[c.author] ?? ROLE_FALLBACK }}>{c.author}</strong>
                 <span className="comment-time">{new Date(c.createdAt).toLocaleString()}</span>
                 <p>{c.body}</p>
               </div>

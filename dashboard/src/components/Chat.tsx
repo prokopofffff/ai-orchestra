@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { usePolling } from "../hooks/usePolling";
+import { useState, useRef, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
 import type { Message } from "../types";
 
@@ -10,9 +10,14 @@ interface Props {
 export function Chat({ projectId }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
 
-  const fetcher = useCallback(() => api.fetchMessages(projectId, 100), [projectId]);
-  const { data: messages, refresh } = usePolling(fetcher, 3000);
+  const messagesKey = ["messages", projectId];
+  const { data: messages } = useQuery({
+    queryKey: messagesKey,
+    queryFn: () => api.fetchMessages(projectId, 100),
+    refetchInterval: 3_000,
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -22,7 +27,7 @@ export function Chat({ projectId }: Props) {
     if (!input.trim()) return;
     await api.sendMessage(projectId, input);
     setInput("");
-    refresh();
+    await queryClient.invalidateQueries({ queryKey: messagesKey });
   };
 
   return (

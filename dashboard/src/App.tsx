@@ -1,7 +1,6 @@
-import { useState, useCallback } from "react";
-import { usePolling } from "./hooks/usePolling";
+import { useState, lazy, Suspense } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "./api";
-import type { Project } from "./types";
 import { KanbanBoard } from "./components/KanbanBoard";
 import { TaskDetail } from "./components/TaskDetail";
 import { CreateForms } from "./components/CreateForms";
@@ -12,14 +11,24 @@ import { AgentCards } from "./components/AgentCards";
 import { TaskQueue } from "./components/TaskQueue";
 import { AgentLogs } from "./components/AgentLogs";
 import { UsageWidget } from "./components/UsageWidget";
+import { ProjectChecks } from "./components/ProjectChecks";
+// Lazy: pulls in mermaid + cytoscape + katex (~600kB), not needed on first paint.
+const FlowDiagram = lazy(() =>
+  import("./components/FlowDiagram").then((m) => ({ default: m.FlowDiagram })),
+);
 
 export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"kanban" | "chat" | "signals" | "agents" | "logs">("kanban");
+  const [tab, setTab] = useState<"kanban" | "chat" | "signals" | "agents" | "flow" | "logs" | "settings">("kanban");
 
-  const projectsFetcher = useCallback(() => api.fetchProjects(), []);
-  const { data: projects, refresh: refreshProjects } = usePolling(projectsFetcher, 10000);
+  const queryClient = useQueryClient();
+  const { data: projects } = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.fetchProjects,
+    refetchInterval: 10_000,
+  });
+  const refreshProjects = () => queryClient.invalidateQueries({ queryKey: ["projects"] });
 
   const project = projects?.find((p) => p.id === selectedProjectId) ?? projects?.[0] ?? null;
   const projectId = project?.id ?? null;
@@ -48,7 +57,9 @@ export function App() {
           <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>Chat</button>
           <button className={tab === "signals" ? "active" : ""} onClick={() => setTab("signals")}>Signals</button>
           <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>Agents</button>
+          <button className={tab === "flow" ? "active" : ""} onClick={() => setTab("flow")}>Flow</button>
           <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>Logs</button>
+          <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>Settings</button>
         </nav>
       </header>
 
@@ -79,8 +90,18 @@ export function App() {
           </div>
         )}
 
+        {tab === "flow" && (
+          <Suspense fallback={<div className="loading">Loading diagram…</div>}>
+            <FlowDiagram />
+          </Suspense>
+        )}
+
         {tab === "logs" && projectId && (
           <AgentLogs projectId={projectId} />
+        )}
+
+        {tab === "settings" && projectId && (
+          <ProjectChecks projectId={projectId} />
         )}
 
         {!projectId && (

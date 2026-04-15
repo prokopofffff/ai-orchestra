@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { usePolling } from "../hooks/usePolling";
-import { ROLE_COLORS } from "../types";
+import { useState, useRef, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ROLE_COLORS, ROLE_FALLBACK } from "../types";
 
 interface LogEntry {
   id: string;
@@ -17,10 +17,10 @@ interface Props {
 }
 
 const LEVEL_COLORS: Record<string, string> = {
-  stdout: "#e6edf3",
-  stderr: "#f85149",
-  system: "#8b949e",
-  error: "#f85149",
+  stdout: "var(--text)",
+  stderr: "var(--danger)",
+  system: "var(--text-muted)",
+  error: "var(--danger)",
 };
 
 export function AgentLogs({ projectId }: Props) {
@@ -29,16 +29,18 @@ export function AgentLogs({ projectId }: Props) {
   const [autoScroll, setAutoScroll] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const fetcher = useCallback(async () => {
-    const params = new URLSearchParams({ projectId, limit: "300" });
-    if (roleFilter) params.set("role", roleFilter);
-    if (levelFilter) params.set("level", levelFilter);
-    const res = await fetch(`/api/logs?${params}`);
-    if (!res.ok) throw new Error(`${res.status}`);
-    return res.json() as Promise<LogEntry[]>;
-  }, [projectId, roleFilter, levelFilter]);
-
-  const { data: logs } = usePolling(fetcher, 3000);
+  const { data: logs } = useQuery({
+    queryKey: ["logs", projectId, roleFilter, levelFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams({ projectId, limit: "300" });
+      if (roleFilter) params.set("role", roleFilter);
+      if (levelFilter) params.set("level", levelFilter);
+      const res = await fetch(`/api/logs?${params}`);
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json() as Promise<LogEntry[]>;
+    },
+    refetchInterval: 3_000,
+  });
 
   useEffect(() => {
     if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,7 +75,7 @@ export function AgentLogs({ projectId }: Props) {
         {displayLogs.map((log) => (
           <div key={log.id} className={`log-entry level-${log.level}`}>
             <span className="log-time">{new Date(log.createdAt).toLocaleTimeString()}</span>
-            <span className="log-role" style={{ color: ROLE_COLORS[log.role] ?? "#8b949e" }}>{log.role}</span>
+            <span className="log-role" style={{ color: ROLE_COLORS[log.role] ?? ROLE_FALLBACK }}>{log.role}</span>
             <span className="log-level" style={{ color: LEVEL_COLORS[log.level] }}>[{log.level}]</span>
             <span className="log-message">{log.message}</span>
           </div>

@@ -1,41 +1,9 @@
-import { Router } from "express";
+import type { FastifyPluginAsync } from "fastify";
 import { getPool } from "./db";
 import { addSystemMessage } from "./conversation-api";
 import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler";
 import { parseGitHubWebhook, parseGitLabWebhook, type WebhookEvent } from "./providers";
 import { log } from "./obs";
-
-export const webhookRouter: Router = Router();
-
-// ─── Telegram Webhook ───
-
-webhookRouter.post("/telegram/webhook", async (req, res, next) => {
-  try {
-    const update = req.body;
-    const message = update.message;
-    if (!message?.text) return res.json({ ok: true });
-
-    const chatId = String(message.chat.id);
-    const text = message.text as string;
-
-    if (text.startsWith("/")) {
-      await handleTelegramCommand(chatId, text);
-    } else {
-      await handleTelegramMessage(chatId, text, message.message_id);
-    }
-
-    res.json({ ok: true });
-  } catch (e) { next(e); }
-});
-
-// ─── Git provider webhooks ───
-//
-// `/api/git/webhook`           — auto-detects provider from request headers
-// `/api/git/webhook/github`    — explicit GitHub intake
-// `/api/git/webhook/gitlab`    — explicit GitLab intake
-//
-// Explicit routes make it easier to configure per-project if you host both.
-// The generic one stays for back-compat with existing GitHub setups.
 
 type Parser = (
   headers: Record<string, string | string[] | undefined>,
@@ -74,31 +42,48 @@ async function handleWebhook(event: WebhookEvent): Promise<void> {
   }
 }
 
-webhookRouter.post("/git/webhook", async (req, res, next) => {
-  try {
-    const parser = detectProvider(req.headers);
-    if (!parser) {
-      log.warn({ headers: Object.keys(req.headers) }, "webhook: unknown provider headers");
-      return res.json({ ok: true, kind: "unknown" });
+export const webhookPlugin: FastifyPluginAsync = async (app) => {
+  // ─── Telegram Webhook ───
+
+  app.post("/telegram/webhook", async (request) => {
+    const update = request.body as Record<string, unknown>;
+    const message = update.message as Record<string, unknown> | undefined;
+    if (!message?.text) return { ok: true };
+
+    const chatId = String((message.chat as Record<string, unknown>).id);
+    const text = message.text as string;
+
+    if (text.startsWith("/")) {
+      await handleTelegramCommand(chatId, text);
+    } else {
+      await handleTelegramMessage(chatId, text, message.message_id as number);
     }
-    const event = parser(req.headers, req.body);
-    await handleWebhook(event);
-    res.json({ ok: true, kind: event.kind });
-  } catch (e) { next(e); }
-});
 
-webhookRouter.post("/git/webhook/github", async (req, res, next) => {
-  try {
-    const event = parseGitHubWebhook(req.headers, req.body);
-    await handleWebhook(event);
-    res.json({ ok: true, kind: event.kind });
-  } catch (e) { next(e); }
-});
+    return { ok: true };
+  });
 
-webhookRouter.post("/git/webhook/gitlab", async (req, res, next) => {
-  try {
-    const event = parseGitLabWebhook(req.headers, req.body);
+  // ─── Git provider webhooks ───
+
+  app.post("/git/webhook", async (request) => {
+    const parser = detectProvider(request.headers);
+    if (!parser) {
+      log.warn({ headers: Object.keys(request.headers) }, "webhook: unknown provider headers");
+      return { ok: true, kind: "unknown" };
+    }
+    const event = parser(request.headers, request.body);
     await handleWebhook(event);
-    res.json({ ok: true, kind: event.kind });
-  } catch (e) { next(e); }
-});
+    return { ok: true, kind: event.kind };
+  });
+
+  app.post("/git/webhook/github", async (request) => {
+    const event = parseGitHubWebhook(request.headers, request.body);
+    await handleWebhook(event);
+    return { ok: true, kind: event.kind };
+  });
+
+  app.post("/git/webhook/gitlab", async (request) => {
+    const event = parseGitLabWebhook(request.headers, request.body);
+    await handleWebhook(event);
+    return { ok: true, kind: event.kind };
+  });
+};

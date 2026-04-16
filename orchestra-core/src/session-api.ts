@@ -1,4 +1,4 @@
-import { Router } from "express";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import {
   getSession,
@@ -9,79 +9,71 @@ import {
 import { spawnAgent } from "./agent-spawner";
 import { loadConfig } from "./config";
 
-export const sessionRouter: Router = Router();
+export const sessionPlugin: FastifyPluginAsync = async (app) => {
+  // ─── List active sessions ───
 
-// ─── List active sessions ───
-
-sessionRouter.get("/sessions", async (req, res, next) => {
-  try {
-    const projectId = req.query.projectId as string | undefined;
+  app.get("/sessions", async (request) => {
+    const projectId = (request.query as Record<string, string>).projectId;
     const sessions = await getActiveSessions(projectId);
-    res.json(sessions);
-  } catch (e) { next(e); }
-});
+    return sessions;
+  });
 
-// ─── Get session by ID ───
+  // ─── Get session by ID ───
 
-sessionRouter.get("/sessions/:id", async (req, res, next) => {
-  try {
-    const session = await getSession(req.params.id);
-    if (!session) return res.status(404).json({ error: "Session not found" });
-    res.json(session);
-  } catch (e) { next(e); }
-});
+  app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
+    const session = await getSession(request.params.id);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    return session;
+  });
 
-// ─── Spawn agent ───
+  // ─── Spawn agent ───
 
-sessionRouter.post("/sessions/spawn", async (req, res, next) => {
-  try {
+  app.post("/sessions/spawn", async (request, reply) => {
     const body = z.object({
       projectId: z.string().uuid(),
       taskId: z.string().uuid(),
       role: z.enum(["tech-lead", "designer", "frontend", "backend", "qa", "devops"]),
       resumeSessionId: z.string().optional(),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const config = loadConfig();
 
-    const { session } = await spawnAgent({
-      projectId: body.projectId,
-      taskId: body.taskId,
-      role: body.role,
-      config,
-      resumeSessionId: body.resumeSessionId,
-    });
+    try {
+      const { session } = await spawnAgent({
+        projectId: body.projectId,
+        taskId: body.taskId,
+        role: body.role,
+        config,
+        resumeSessionId: body.resumeSessionId,
+      });
 
-    res.status(201).json(session);
-  } catch (e) {
-    if (e instanceof Error && e.message.includes("blocked")) {
-      return res.status(409).json({ error: e.message });
+      return reply.code(201).send(session);
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("blocked")) {
+        return reply.code(409).send({ error: e.message });
+      }
+      throw e;
     }
-    next(e);
-  }
-});
+  });
 
-// ─── Terminate session ───
+  // ─── Terminate session ───
 
-sessionRouter.post("/sessions/:id/terminate", async (req, res, next) => {
-  try {
-    const session = await getSession(req.params.id);
-    if (!session) return res.status(404).json({ error: "Session not found" });
+  app.post<{ Params: { id: string } }>("/sessions/:id/terminate", async (request, reply) => {
+    const session = await getSession(request.params.id);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
 
     // Mid-flight SDK runs can't be killed via PID (they're in-process).
     // Marking the session terminated stops it being treated as active; the
     // worker handler completes in the background and the scheduler lease
     // expires naturally. Future: track active queries and call .interrupt().
     await terminateSession(session.id);
-    res.json({ terminated: true });
-  } catch (e) { next(e); }
-});
+    return { terminated: true };
+  });
 
-// ─── Heartbeat (called by agents or monitoring) ───
+  // ─── Heartbeat (called by agents or monitoring) ───
 
-sessionRouter.post("/sessions/:id/heartbeat", async (req, res, next) => {
-  try {
-    await updateHeartbeat(req.params.id);
-    res.json({ ok: true });
-  } catch (e) { next(e); }
-});
+  app.post<{ Params: { id: string } }>("/sessions/:id/heartbeat", async (request) => {
+    await updateHeartbeat(request.params.id);
+    return { ok: true };
+  });
+};

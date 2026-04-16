@@ -1,4 +1,4 @@
-import { Router } from "express";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { getPool } from "./db";
 import { parseRows } from "./db-utils";
@@ -17,8 +17,6 @@ import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
-export const signalRouter: Router = Router();
-
 const signalBodySchema = z.object({
   from: z.string(),
   to: z.string(),
@@ -31,20 +29,20 @@ const signalBodySchema = z.object({
 
 const auditSchema = AuditEntrySchema;
 
-// ─── Send Signal ───
+export const signalPlugin: FastifyPluginAsync = async (app) => {
+  // ─── Send Signal ───
 
-signalRouter.post("/signal", async (req, res, next) => {
-  try {
-    const body = signalBodySchema.parse(req.body);
+  app.post("/signal", async (request, reply) => {
+    const body = signalBodySchema.parse(request.body);
     const signal: SignalPayload = body;
 
     // 0. Validate sender identity (prevent role impersonation)
-    const agentRole = req.headers["x-agent-role"] as string | undefined;
+    const agentRole = request.headers["x-agent-role"] as string | undefined;
     if (agentRole) {
       const senderCheck = validateSignalSender(signal.from, agentRole);
       if (!senderCheck.allowed) {
         await logAudit(signal, "rejected", senderCheck.reason);
-        return res.status(403).json({ error: senderCheck.reason });
+        return reply.code(403).send({ error: senderCheck.reason });
       }
     }
 
@@ -52,7 +50,7 @@ signalRouter.post("/signal", async (req, res, next) => {
     const routeCheck = validateSignal(signal);
     if (!routeCheck.allowed) {
       await logAudit(signal, "rejected", routeCheck.reason);
-      return res.status(403).json({ error: routeCheck.reason });
+      return reply.code(403).send({ error: routeCheck.reason });
     }
 
     // 2. If task-related, validate state transition
@@ -77,7 +75,7 @@ signalRouter.post("/signal", async (req, res, next) => {
 
         if (!stateCheck.allowed) {
           await logAudit(signal, "rejected", stateCheck.reason);
-          return res.status(403).json({ error: stateCheck.reason });
+          return reply.code(403).send({ error: stateCheck.reason });
         }
 
         // 3. Apply state transition
@@ -126,16 +124,15 @@ signalRouter.post("/signal", async (req, res, next) => {
     const config = loadConfig();
     background(dispatchSignal(signal, config), "signal:dispatch", signal.projectId);
 
-    res.status(201).json({ id: rows[0].id, status: "accepted" });
-  } catch (e) { next(e); }
-});
+    return reply.code(201).send({ id: rows[0].id, status: "accepted" });
+  });
 
-// ─── Audit Log ───
+  // ─── Audit Log ───
 
-signalRouter.get("/flow/audit", async (req, res, next) => {
-  try {
-    const projectId = req.query.projectId as string | undefined;
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
+  app.get("/flow/audit", async (request) => {
+    const query_ = request.query as Record<string, string>;
+    const projectId = query_.projectId;
+    const limit = Math.min(Number(query_.limit) || 50, 200);
 
     let query = "SELECT * FROM flow_audit";
     const vals: unknown[] = [];
@@ -149,14 +146,13 @@ signalRouter.get("/flow/audit", async (req, res, next) => {
     vals.push(limit);
 
     const { rows } = await getPool().query(query, vals);
-    res.json(parseRows(auditSchema, rows));
-  } catch (e) { next(e); }
-});
+    return parseRows(auditSchema, rows);
+  });
 
-signalRouter.get("/flow/violations", async (req, res, next) => {
-  try {
-    const projectId = req.query.projectId as string | undefined;
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
+  app.get("/flow/violations", async (request) => {
+    const query_ = request.query as Record<string, string>;
+    const projectId = query_.projectId;
+    const limit = Math.min(Number(query_.limit) || 50, 200);
 
     let query = "SELECT * FROM flow_audit WHERE status = 'rejected'";
     const vals: unknown[] = [];
@@ -170,24 +166,23 @@ signalRouter.get("/flow/violations", async (req, res, next) => {
     vals.push(limit);
 
     const { rows } = await getPool().query(query, vals);
-    res.json(parseRows(auditSchema, rows));
-  } catch (e) { next(e); }
-});
+    return parseRows(auditSchema, rows);
+  });
 
-// ─── Pending Signals ───
+  // ─── Pending Signals ───
 
-signalRouter.get("/signals", async (req, res, next) => {
-  try {
-    const projectId = req.query.projectId as string | undefined;
-    const toRole = req.query.toRole as string | undefined;
-    const unreadOnly = req.query.unread === "true";
+  app.get("/signals", async (request) => {
+    const query_ = request.query as Record<string, string>;
+    const projectId = query_.projectId;
+    const toRole = query_.toRole;
+    const unreadOnly = query_.unread === "true";
 
     const wheres: string[] = [];
     const vals: unknown[] = [];
     let i = 1;
 
     if (projectId) { wheres.push(`project_id = $${i++}`); vals.push(projectId); }
-    if (toRole) { wheres.push(`to_role = $${i++}`); vals.push(toRole); }
+    if (toRole) { wheres.push(`to_role = $${i++}`); vals.push(toRole); } // eslint-disable-line no-useless-assignment
     if (unreadOnly) { wheres.push(`read = false`); }
 
     const where = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
@@ -195,6 +190,6 @@ signalRouter.get("/signals", async (req, res, next) => {
       `SELECT * FROM signals ${where} ORDER BY created_at DESC LIMIT 100`,
       vals,
     );
-    res.json(rows);
-  } catch (e) { next(e); }
-});
+    return rows;
+  });
+};

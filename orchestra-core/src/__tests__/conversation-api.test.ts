@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import express from "express";
-import { type Server } from "node:http";
+import Fastify, { type FastifyError, type FastifyRequest, type FastifyReply } from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
-import { conversationRouter, addSystemMessage, addTechLeadMessage } from "../conversation-api";
+import { conversationPlugin, addSystemMessage, addTechLeadMessage } from "../conversation-api";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
 
-let server: Server;
+let app: ReturnType<typeof Fastify>;
 let baseUrl: string;
 let projectId: string;
 
@@ -24,20 +23,14 @@ beforeAll(async () => {
   await waitForDatabase(DATABASE_URL);
   await runMigrations(DATABASE_URL);
 
-  const app = express();
-  app.use(express.json());
-  app.use("/api", conversationRouter);
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    res.status(500).json({ error: err.message });
+  app = Fastify();
+  await app.register(conversationPlugin, { prefix: "/api" });
+  app.setErrorHandler(async (err: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
+    return reply.code(500).send({ error: err.message });
   });
 
-  await new Promise<void>((resolve) => {
-    server = app.listen(0, () => {
-      const addr = server.address();
-      if (typeof addr === "object" && addr) baseUrl = `http://127.0.0.1:${addr.port}`;
-      resolve();
-    });
-  });
+  const address = await app.listen({ port: 0, host: "127.0.0.1" });
+  baseUrl = address;
 });
 
 beforeEach(async () => {
@@ -56,7 +49,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  server?.close();
+  await app?.close();
   await getPool().end();
 });
 

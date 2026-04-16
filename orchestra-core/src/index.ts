@@ -1,14 +1,15 @@
 import "dotenv/config";
-import express from "express";
+import Fastify from "fastify";
+import fastifyStatic from "@fastify/static";
 import { loadConfig } from "./config";
-import { log, requestMiddleware, installProcessTraps } from "./obs";
+import { log, requestHook, installProcessTraps } from "./obs";
 import { waitForDatabase, runMigrations, getPool } from "./db";
-import { taskRouter } from "./task-api";
-import { signalRouter } from "./signal-api";
-import { sessionRouter } from "./session-api";
-import { conversationRouter } from "./conversation-api";
-import { webhookRouter } from "./webhooks";
-import { prRouter } from "./pr-api";
+import { taskPlugin } from "./task-api";
+import { signalPlugin } from "./signal-api";
+import { sessionPlugin } from "./session-api";
+import { conversationPlugin } from "./conversation-api";
+import { webhookPlugin } from "./webhooks";
+import { prPlugin } from "./pr-api";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
 import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
@@ -22,72 +23,70 @@ import "./agents/check-handlers"; // side-effect: registers agent:observe-check 
 async function main() {
   installProcessTraps();
   const config = loadConfig();
-  const app = express();
+  const app = Fastify({ logger: log });
 
-  app.use(express.json());
-  app.use(requestMiddleware());
+  // Register the request context hook
+  requestHook(app);
 
   // ─── Health check ───
-  app.get("/api/health", async (_req, res) => {
+  app.get("/api/health", async (_request, reply) => {
     try {
       await getPool().query("SELECT 1");
-      res.json({ status: "ok", timestamp: new Date().toISOString() });
+      return { status: "ok", timestamp: new Date().toISOString() };
     } catch {
-      res.status(503).json({ status: "unhealthy" });
+      return reply.code(503).send({ status: "unhealthy" });
     }
   });
 
   // ─── Queue status ───
-  app.get("/api/queue/status", async (_req, res, next) => {
-    try {
-      const status = await getQueueStatus();
-      res.json(status);
-    } catch (e) { next(e); }
+  app.get("/api/queue/status", async () => {
+    const status = await getQueueStatus();
+    return status;
   });
 
   // ─── Usage ───
-  app.get("/api/usage", (_req, res) => {
-    res.json(getUsage());
+  app.get("/api/usage", async () => {
+    return getUsage();
   });
 
   // ─── Agent Logs ───
-  app.get("/api/logs", async (req, res, next) => {
-    try {
-      const projectId = req.query.projectId as string;
-      if (!projectId) return res.status(400).json({ error: "projectId required" });
-      const logs = await getLogs(projectId, {
-        sessionId: req.query.sessionId as string | undefined,
-        role: req.query.role as string | undefined,
-        level: req.query.level as "stdout" | "stderr" | "system" | "error" | undefined,
-        limit: Number(req.query.limit) || 200,
-      });
-      res.json(logs);
-    } catch (e) { next(e); }
+  app.get("/api/logs", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projectId = query.projectId;
+    if (!projectId) return reply.code(400).send({ error: "projectId required" });
+    const logs = await getLogs(projectId, {
+      sessionId: query.sessionId,
+      role: query.role,
+      level: query.level as "stdout" | "stderr" | "system" | "error" | undefined,
+      limit: Number(query.limit) || 200,
+    });
+    return logs;
   });
 
   // ─── API routes ───
-  app.use("/api", taskRouter);
-  app.use("/api", signalRouter);
-  app.use("/api", sessionRouter);
-  app.use("/api", conversationRouter);
-  app.use("/api", webhookRouter);
-  app.use("/api", prRouter);
+  await app.register(taskPlugin, { prefix: "/api" });
+  await app.register(signalPlugin, { prefix: "/api" });
+  await app.register(sessionPlugin, { prefix: "/api" });
+  await app.register(conversationPlugin, { prefix: "/api" });
+  await app.register(webhookPlugin, { prefix: "/api" });
+  await app.register(prPlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
-  app.use(express.static(config.dashboardPath));
+  await app.register(fastifyStatic, { root: config.dashboardPath });
+
   // SPA fallback — serve index.html for non-API routes
-  app.get("*", (_req, res, next) => {
-    if (_req.path.startsWith("/api")) return next();
-    res.sendFile("index.html", { root: config.dashboardPath });
+  app.setNotFoundHandler(async (request, reply) => {
+    if (request.url.startsWith("/api")) return reply.code(404).send({ error: "not found" });
+    return reply.sendFile("index.html");
   });
 
   // ─── Error handler ───
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    log.error({ err }, "unhandled express error");
+  app.setErrorHandler(async (err: Error, _request, reply) => {
+    log.error({ err }, "unhandled error");
     if (err.name === "ZodError") {
-      return res.status(400).json({ error: "Validation error", details: err });
+      return reply.code(400).send({ error: "Validation error", details: err });
     }
-    res.status(500).json({ error: "Internal server error" });
+    return reply.code(500).send({ error: "Internal server error" });
   });
 
   // ─── Startup ───
@@ -127,14 +126,13 @@ async function main() {
   // Start workers — dispatches all crons + ad-hoc jobs
   startScheduler({ concurrency: 4 });
 
-  const server = app.listen(config.port, () => {
-    log.info({
-      port: config.port,
-      telegram: !!config.telegramBotToken,
-      github: !!config.githubToken,
-      runtime: process.env.AGENT_RUNTIME ?? "cli",
-    }, "orchestra-core listening");
-  });
+  await app.listen({ port: config.port, host: "0.0.0.0" });
+  log.info({
+    port: config.port,
+    telegram: !!config.telegramBotToken,
+    github: !!config.githubToken,
+    runtime: process.env.AGENT_RUNTIME ?? "cli",
+  }, "orchestra-core listening");
 
   // ─── Graceful shutdown ───
   const shutdown = async (signal: string) => {
@@ -146,7 +144,7 @@ async function main() {
     stopPrWatcher();
     await stopScheduler();
 
-    server.close();
+    await app.close();
 
     // Mark all running sessions as sleeping (they can be resumed)
     try {

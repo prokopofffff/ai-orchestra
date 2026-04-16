@@ -1,21 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import express from "express";
-import { type Server } from "node:http";
-import { taskRouter } from "../task-api";
-import { signalRouter } from "../signal-api";
+import Fastify, { type FastifyError, type FastifyRequest, type FastifyReply } from "fastify";
+import { taskPlugin } from "../task-api";
+import { signalPlugin } from "../signal-api";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
 
-let server: Server;
+let app: ReturnType<typeof Fastify>;
 let baseUrl: string;
 
 async function api(path: string, options?: RequestInit) {
-  const res = await fetch(`${baseUrl}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const headers: Record<string, string> = {};
+  // Only set Content-Type for methods that carry a body — Fastify rejects
+  // Content-Type: application/json on bodyless DELETE requests.
+  if (options?.body) headers["Content-Type"] = "application/json";
+  const res = await fetch(`${baseUrl}${path}`, { headers, ...options });
   const body = await res.json();
   return { status: res.status, body };
 }
@@ -34,32 +34,24 @@ beforeAll(async () => {
   await pool.query("DELETE FROM conversations");
   await pool.query("DELETE FROM projects");
 
-  const app = express();
-  app.use(express.json());
-  app.use("/api", taskRouter);
-  app.use("/api", signalRouter);
+  app = Fastify();
+  await app.register(taskPlugin, { prefix: "/api" });
+  await app.register(signalPlugin, { prefix: "/api" });
 
   // Error handler (same as index.ts)
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.setErrorHandler(async (err: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
     if (err.name === "ZodError") {
-      return res.status(400).json({ error: "Validation error", details: err });
+      return reply.code(400).send({ error: "Validation error", details: err });
     }
-    res.status(500).json({ error: err.message });
+    return reply.code(500).send({ error: err.message });
   });
 
-  await new Promise<void>((resolve) => {
-    server = app.listen(0, () => {
-      const addr = server.address();
-      if (typeof addr === "object" && addr) {
-        baseUrl = `http://127.0.0.1:${addr.port}`;
-      }
-      resolve();
-    });
-  });
+  const address = await app.listen({ port: 0, host: "127.0.0.1" });
+  baseUrl = address;
 });
 
 afterAll(async () => {
-  server?.close();
+  await app?.close();
   await getPool().end();
 });
 

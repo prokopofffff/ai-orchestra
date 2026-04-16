@@ -1,4 +1,4 @@
-import { Router } from "express";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { getPool } from "./db";
 import { parseRow, parseRows } from "./db-utils";
@@ -7,25 +7,24 @@ import { loadConfig } from "./config";
 import { background } from "./error-handler";
 import { MessageSchema, type Message as SharedMessage } from "@ai-orchestra/shared";
 
-export const conversationRouter: Router = Router();
-
 const messageSchema = MessageSchema;
 export type Message = SharedMessage;
 
-// ─── Get messages for a project ───
+export const conversationPlugin: FastifyPluginAsync = async (app) => {
+  // ─── Get messages for a project ───
 
-conversationRouter.get("/conversations/:projectId/messages", async (req, res, next) => {
-  try {
-    const projectId = req.params.projectId;
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const before = req.query.before as string | undefined;
+  app.get<{ Params: { projectId: string } }>("/conversations/:projectId/messages", async (request, reply) => {
+    const projectId = request.params.projectId;
+    const query_ = request.query as Record<string, string>;
+    const limit = Math.min(Number(query_.limit) || 50, 200);
+    const before = query_.before;
 
     // Get conversation for project
     const { rows: convRows } = await getPool().query(
       "SELECT id FROM conversations WHERE project_id = $1",
       [projectId],
     );
-    if (!convRows.length) return res.status(404).json({ error: "No conversation for this project" });
+    if (!convRows.length) return reply.code(404).send({ error: "No conversation for this project" });
 
     const convId = convRows[0].id;
 
@@ -42,27 +41,25 @@ conversationRouter.get("/conversations/:projectId/messages", async (req, res, ne
 
     const { rows } = await getPool().query(query, vals);
     // Return in chronological order
-    res.json(parseRows(messageSchema, rows).reverse());
-  } catch (e) { next(e); }
-});
+    return parseRows(messageSchema, rows).reverse();
+  });
 
-// ─── Send message from Dashboard ───
+  // ─── Send message from Dashboard ───
 
-conversationRouter.post("/conversations/:projectId/messages", async (req, res, next) => {
-  try {
-    const projectId = req.params.projectId;
+  app.post<{ Params: { projectId: string } }>("/conversations/:projectId/messages", async (request, reply) => {
+    const projectId = request.params.projectId;
     const body = z.object({
       text: z.string().min(1),
       fromRole: z.enum(["user", "tech-lead", "system"]).default("user"),
       source: z.enum(["telegram", "dashboard"]).default("dashboard"),
       metadata: z.record(z.unknown()).optional(),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const { rows: convRows } = await getPool().query(
       "SELECT id FROM conversations WHERE project_id = $1",
       [projectId],
     );
-    if (!convRows.length) return res.status(404).json({ error: "No conversation for this project" });
+    if (!convRows.length) return reply.code(404).send({ error: "No conversation for this project" });
 
     const convId = convRows[0].id;
 
@@ -80,9 +77,9 @@ conversationRouter.post("/conversations/:projectId/messages", async (req, res, n
       background(dispatchTechLead(projectId, body.text, config), "conversation:dispatch", projectId);
     }
 
-    res.status(201).json(message);
-  } catch (e) { next(e); }
-});
+    return reply.code(201).send(message);
+  });
+};
 
 // ─── Helper: add system message (used internally) ───
 

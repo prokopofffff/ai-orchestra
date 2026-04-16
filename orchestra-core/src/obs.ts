@@ -4,7 +4,7 @@
  * - `log` is a pino root logger. JSON in production, pretty in dev.
  * - Ambient context (reqId, projectId, jobId, role, …) propagates through
  *   AsyncLocalStorage. Any code path that runs inside `withContext()` (or
- *   one of the express/job wrappers below) gets that context attached to
+ *   one of the Fastify/job wrappers below) gets that context attached to
  *   every log line automatically — no manual plumbing required.
  *
  * NOT to be confused with `./logger.ts`, which writes to the `agent_logs`
@@ -14,8 +14,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import pino, { type Logger } from "pino";
-import pinoHttp from "pino-http";
-import type { RequestHandler } from "express";
+import type { FastifyInstance } from "fastify";
 
 // ─── Context ───
 
@@ -62,34 +61,16 @@ export const log: Logger = pino({
   }),
 });
 
-// ─── Express middleware ───
+// ─── Fastify request hook ───
 //
 // Generates a reqId, runs the rest of the request inside withContext so any
-// log call from downstream handlers carries reqId automatically. Also wires
-// pino-http for one access-log line per request.
+// log call from downstream handlers carries reqId automatically.
 
-export function requestMiddleware(): RequestHandler[] {
-  const httpLogger = pinoHttp({
-    logger: log,
-    customLogLevel: (_req, res, err) => {
-      if (err) return "error";
-      if (res.statusCode >= 500) return "error";
-      if (res.statusCode >= 400) return "warn";
-      return "info";
-    },
-    customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
-    serializers: {
-      req: (req) => ({ method: req.method, url: req.url }),
-      res: (res) => ({ statusCode: res.statusCode }),
-    },
+export function requestHook(app: FastifyInstance): void {
+  app.addHook("onRequest", async (request) => {
+    const reqId = (request.headers["x-request-id"] as string | undefined) ?? randomUUID();
+    als.enterWith({ ...getContext(), reqId });
   });
-
-  const ctxScope: RequestHandler = (req, _res, next) => {
-    const reqId = (req.headers["x-request-id"] as string | undefined) ?? randomUUID();
-    als.run({ reqId }, () => next());
-  };
-
-  return [ctxScope, httpLogger];
 }
 
 // ─── Process-level traps ───

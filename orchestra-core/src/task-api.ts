@@ -1,4 +1,4 @@
-import { Router } from "express";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { ProjectSchema, TaskSchema, TaskCommentSchema } from "@ai-orchestra/shared";
 import { getPool } from "./db";
@@ -7,30 +7,25 @@ import { checkUnblocked } from "./dependency-engine";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import type { AgentRole } from "./config";
 
-export const taskRouter: Router = Router();
-
-// Aliases to keep existing call-site naming.
 const projectSchema = ProjectSchema;
 const taskSchema = TaskSchema;
 const commentSchema = TaskCommentSchema;
 
-// ─── Projects ───
+export const taskPlugin: FastifyPluginAsync = async (app) => {
+  // ─── Projects ───
 
-taskRouter.get("/projects", async (_req, res, next) => {
-  try {
+  app.get("/projects", async () => {
     const { rows } = await getPool().query("SELECT * FROM projects ORDER BY created_at DESC");
-    res.json(parseRows(projectSchema, rows));
-  } catch (e) { next(e); }
-});
+    return parseRows(projectSchema, rows);
+  });
 
-taskRouter.post("/projects", async (req, res, next) => {
-  try {
+  app.post("/projects", async (request, reply) => {
     const body = z.object({
       name: z.string().min(1),
       slug: z.string().min(1).optional(),
       repoUrl: z.string().optional(),
       description: z.string().optional(),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const slug = body.slug ?? body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const { rows } = await getPool().query(
@@ -39,32 +34,23 @@ taskRouter.post("/projects", async (req, res, next) => {
       [body.name, slug, body.repoUrl ?? null, body.description ?? null],
     );
 
-    // Create conversation for the project
-    await getPool().query(
-      "INSERT INTO conversations (project_id) VALUES ($1)",
-      [rows[0].id],
-    );
+    await getPool().query("INSERT INTO conversations (project_id) VALUES ($1)", [rows[0].id]);
+    return reply.code(201).send(parseRow(projectSchema, rows[0]));
+  });
 
-    res.status(201).json(parseRow(projectSchema, rows[0]));
-  } catch (e) { next(e); }
-});
+  app.get<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
+    const { rows } = await getPool().query("SELECT * FROM projects WHERE id = $1", [request.params.id]);
+    if (!rows.length) return reply.code(404).send({ error: "Project not found" });
+    return parseRow(projectSchema, rows[0]);
+  });
 
-taskRouter.get("/projects/:id", async (req, res, next) => {
-  try {
-    const { rows } = await getPool().query("SELECT * FROM projects WHERE id = $1", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: "Project not found" });
-    res.json(parseRow(projectSchema, rows[0]));
-  } catch (e) { next(e); }
-});
-
-taskRouter.patch("/projects/:id", async (req, res, next) => {
-  try {
+  app.patch<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
     const body = z.object({
       name: z.string().optional(),
       repoUrl: z.string().optional(),
       description: z.string().optional(),
       settings: z.record(z.unknown()).optional(),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const sets: string[] = [];
     const vals: unknown[] = [];
@@ -75,30 +61,29 @@ taskRouter.patch("/projects/:id", async (req, res, next) => {
     if (body.description !== undefined) { sets.push(`description = $${i++}`); vals.push(body.description); }
     if (body.settings !== undefined) { sets.push(`settings = settings || $${i++}::jsonb`); vals.push(JSON.stringify(body.settings)); }
 
-    if (!sets.length) return res.status(400).json({ error: "No fields to update" });
+    if (!sets.length) return reply.code(400).send({ error: "No fields to update" });
 
     sets.push(`updated_at = now()`);
-    vals.push(req.params.id);
+    vals.push(request.params.id);
 
     const { rows } = await getPool().query(
       `UPDATE projects SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
       vals,
     );
-    if (!rows.length) return res.status(404).json({ error: "Project not found" });
-    res.json(parseRow(projectSchema, rows[0]));
-  } catch (e) { next(e); }
-});
+    if (!rows.length) return reply.code(404).send({ error: "Project not found" });
+    return parseRow(projectSchema, rows[0]);
+  });
 
-// ─── Tasks ───
+  // ─── Tasks ───
 
-taskRouter.get("/tasks", async (req, res, next) => {
-  try {
+  app.get("/tasks", async (request) => {
+    const query = request.query as Record<string, string>;
     const filters = z.object({
       projectId: z.string().uuid().optional(),
       state: z.string().optional(),
       type: z.string().optional(),
       assigneeRole: z.string().optional(),
-    }).parse(req.query);
+    }).parse(query);
 
     const wheres: string[] = [];
     const vals: unknown[] = [];
@@ -107,21 +92,18 @@ taskRouter.get("/tasks", async (req, res, next) => {
     if (filters.projectId) { wheres.push(`project_id = $${i++}`); vals.push(filters.projectId); }
     if (filters.state) { wheres.push(`state = $${i++}`); vals.push(filters.state); }
     if (filters.type) { wheres.push(`type = $${i++}`); vals.push(filters.type); }
-    if (filters.assigneeRole) { wheres.push(`assignee_role = $${i++}`); vals.push(filters.assigneeRole); }
+    if (filters.assigneeRole) { wheres.push(`assignee_role = $${i++}`); vals.push(filters.assigneeRole); } // eslint-disable-line no-useless-assignment
 
     const where = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
     const { rows } = await getPool().query(`SELECT * FROM tasks ${where} ORDER BY created_at DESC`, vals);
-    res.json(parseRows(taskSchema, rows));
-  } catch (e) { next(e); }
-});
+    return parseRows(taskSchema, rows);
+  });
 
-taskRouter.post("/tasks", async (req, res, next) => {
-  try {
-    // Validate agent permission to create tasks
-    const agentRole = req.headers["x-agent-role"] as string | undefined;
+  app.post("/tasks", async (request, reply) => {
+    const agentRole = request.headers["x-agent-role"] as string | undefined;
     if (agentRole) {
       const check = canCreateTask(agentRole as AgentRole);
-      if (!check.allowed) return res.status(403).json({ error: check.reason });
+      if (!check.allowed) return reply.code(403).send({ error: check.reason });
     }
 
     const body = z.object({
@@ -134,7 +116,7 @@ taskRouter.post("/tasks", async (req, res, next) => {
       priority: z.enum(["low", "normal", "high", "immediate"]).default("normal"),
       assigneeRole: z.string().optional(),
       blockedBy: z.array(z.string().uuid()).default([]),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const { rows } = await getPool().query(
       `INSERT INTO tasks (project_id, parent_id, title, description, type, state, priority, assignee_role, blocked_by)
@@ -144,33 +126,28 @@ taskRouter.post("/tasks", async (req, res, next) => {
         body.type, body.state, body.priority, body.assigneeRole ?? null, body.blockedBy,
       ],
     );
-    res.status(201).json(parseRow(taskSchema, rows[0]));
-  } catch (e) { next(e); }
-});
+    return reply.code(201).send(parseRow(taskSchema, rows[0]));
+  });
 
-taskRouter.get("/tasks/:id", async (req, res, next) => {
-  try {
-    const { rows } = await getPool().query("SELECT * FROM tasks WHERE id = $1", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: "Task not found" });
-    res.json(parseRow(taskSchema, rows[0]));
-  } catch (e) { next(e); }
-});
+  app.get<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
+    const { rows } = await getPool().query("SELECT * FROM tasks WHERE id = $1", [request.params.id]);
+    if (!rows.length) return reply.code(404).send({ error: "Task not found" });
+    return parseRow(taskSchema, rows[0]);
+  });
 
-taskRouter.patch("/tasks/:id", async (req, res, next) => {
-  try {
-    // Validate agent permission to update this task
-    const agentRole = req.headers["x-agent-role"] as string | undefined;
+  app.patch<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
+    const agentRole = request.headers["x-agent-role"] as string | undefined;
     if (agentRole) {
       const { rows: taskRows } = await getPool().query(
         "SELECT assignee_role FROM tasks WHERE id = $1",
-        [req.params.id],
+        [request.params.id],
       );
       const check = canUpdateTask(
         agentRole as AgentRole,
         (taskRows[0]?.assignee_role as string) ?? null,
-        req.body,
+        request.body as { state?: string },
       );
-      if (!check.allowed) return res.status(403).json({ error: check.reason });
+      if (!check.allowed) return reply.code(403).send({ error: check.reason });
     }
 
     const body = z.object({
@@ -183,7 +160,7 @@ taskRouter.patch("/tasks/:id", async (req, res, next) => {
       blockedBy: z.array(z.string().uuid()).optional(),
       branchName: z.string().nullable().optional(),
       prUrl: z.string().nullable().optional(),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const sets: string[] = [];
     const vals: unknown[] = [];
@@ -199,18 +176,17 @@ taskRouter.patch("/tasks/:id", async (req, res, next) => {
     if (body.branchName !== undefined) { sets.push(`branch_name = $${i++}`); vals.push(body.branchName); }
     if (body.prUrl !== undefined) { sets.push(`pr_url = $${i++}`); vals.push(body.prUrl); }
 
-    if (!sets.length) return res.status(400).json({ error: "No fields to update" });
+    if (!sets.length) return reply.code(400).send({ error: "No fields to update" });
 
     sets.push(`updated_at = now()`);
-    vals.push(req.params.id);
+    vals.push(request.params.id);
 
     const { rows } = await getPool().query(
       `UPDATE tasks SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
       vals,
     );
-    if (!rows.length) return res.status(404).json({ error: "Task not found" });
+    if (!rows.length) return reply.code(404).send({ error: "Task not found" });
 
-    // Check if this state change unblocks other tasks
     const parsed = parseRow(taskSchema, rows[0]);
     const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
     if (body.state && doneStates.includes(body.state)) {
@@ -220,47 +196,41 @@ taskRouter.patch("/tasks/:id", async (req, res, next) => {
       }
     }
 
-    res.json(parsed);
-  } catch (e) { next(e); }
-});
+    return parsed;
+  });
 
-taskRouter.delete("/tasks/:id", async (req, res, next) => {
-  try {
-    const agentRole = req.headers["x-agent-role"] as string | undefined;
+  app.delete<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
+    const agentRole = request.headers["x-agent-role"] as string | undefined;
     if (agentRole) {
       const check = canDeleteTask(agentRole as AgentRole);
-      if (!check.allowed) return res.status(403).json({ error: check.reason });
+      if (!check.allowed) return reply.code(403).send({ error: check.reason });
     }
 
-    const { rowCount } = await getPool().query("DELETE FROM tasks WHERE id = $1", [req.params.id]);
-    if (!rowCount) return res.status(404).json({ error: "Task not found" });
-    res.json({ deleted: true });
-  } catch (e) { next(e); }
-});
+    const { rowCount } = await getPool().query("DELETE FROM tasks WHERE id = $1", [request.params.id]);
+    if (!rowCount) return reply.code(404).send({ error: "Task not found" });
+    return { deleted: true };
+  });
 
-// ─── Task Comments ───
+  // ─── Task Comments ───
 
-taskRouter.get("/tasks/:id/comments", async (req, res, next) => {
-  try {
+  app.get<{ Params: { id: string } }>("/tasks/:id/comments", async (request) => {
     const { rows } = await getPool().query(
       "SELECT * FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC",
-      [req.params.id],
+      [request.params.id],
     );
-    res.json(parseRows(commentSchema, rows));
-  } catch (e) { next(e); }
-});
+    return parseRows(commentSchema, rows);
+  });
 
-taskRouter.post("/tasks/:id/comments", async (req, res, next) => {
-  try {
+  app.post<{ Params: { id: string } }>("/tasks/:id/comments", async (request, reply) => {
     const body = z.object({
       author: z.string().min(1),
       body: z.string().min(1),
-    }).parse(req.body);
+    }).parse(request.body);
 
     const { rows } = await getPool().query(
       "INSERT INTO task_comments (task_id, author, body) VALUES ($1, $2, $3) RETURNING *",
-      [req.params.id, body.author, body.body],
+      [request.params.id, body.author, body.body],
     );
-    res.status(201).json(parseRow(commentSchema, rows[0]));
-  } catch (e) { next(e); }
-});
+    return reply.code(201).send(parseRow(commentSchema, rows[0]));
+  });
+};

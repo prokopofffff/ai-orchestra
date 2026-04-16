@@ -7,14 +7,14 @@ Orchestrator for autonomous AI development teams. Manages a pool of Claude-power
 ```
 ┌─────────────┐     ┌──────────────┐     ┌────────────┐
 │  Dashboard   │────▶│ orchestra-core│────▶│  Postgres  │
-│  (React)     │     │  (Express)   │     │  (pglite/  │
-└─────────────┘     │              │     │   Docker)  │
+│  (React)     │     │  (Fastify)   │     │   Docker   │
+└─────────────┘     │              │     └────────────┘
+                    │  ┌──────────┐│          │
+                    │  │Scheduler ││     ┌────────────┐
+                    │  │(graphile)││     │ Claude SDK │
+                    │  └──────────┘│────▶│  (agents)  │
                     │  ┌──────────┐│     └────────────┘
-                    │  │Scheduler ││          │
-                    │  │(graphile)││     ┌────────────┐
-                    │  └──────────┘│────▶│ Claude SDK │
-                    │  ┌──────────┐│     │  (agents)  │
-                    │  │Providers ││     └────────────┘
+                    │  │Providers ││
                     │  │(GH + GL) ││
                     │  └──────────┘│
                     └──────────────┘
@@ -24,10 +24,24 @@ Orchestrator for autonomous AI development teams. Manages a pool of Claude-power
 
 | Package | Purpose |
 |---|---|
-| `orchestra-core` | Express API, scheduler, agent spawner, flow engine |
+| `orchestra-core` | Fastify API, scheduler, agent spawner, flow engine |
 | `dashboard` | React SPA — Kanban, chat, signals, flow diagram, logs, settings |
 | `shared` (`@ai-orchestra/shared`) | Zod schemas, flow definition, Mermaid renderers |
 | `mcp-tools/*` | MCP servers for agent ↔ orchestrator communication |
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| API server | Fastify (pino logging native) |
+| Database | PostgreSQL 16 + Drizzle ORM (schema-as-TS, drizzle-kit migrations) |
+| Job scheduler | graphile-worker (Postgres-backed, cron + one-shot + rate-limit buckets) |
+| Agent runtime | Claude Agent SDK (in-process, `query()` with hooks + `canUseTool` scope) |
+| Dashboard | React + TanStack Query + Mermaid (lazy-loaded) + Vite |
+| Shared types | `@ai-orchestra/shared` — Zod schemas + flow definition |
+| Git providers | GitHub + GitLab (per-project, self-hosted supported) |
+| Linting | ESLint flat config + typescript-eslint |
+| Testing | Vitest (backend 324 tests, dashboard 61 tests) |
 
 ## Prerequisites
 
@@ -100,7 +114,6 @@ GITHUB_DEFAULT_BRANCH=main
 
 # Observability
 # LOG_LEVEL=debug              # pino level: debug | info | warn | error
-# AGENT_RUNTIME=sdk            # deprecated — SDK is now the only runtime
 ```
 
 ## Per-project Git provider configuration
@@ -231,9 +244,9 @@ ai-orchestra/
 │       ├── index.ts           # Domain schemas + types
 │       ├── flow.ts            # Edge[] — declarative agent flow
 │       └── flow-mermaid.ts    # State diagram + role graph renderers
-├── orchestra-core/            # Express API + scheduler + agents
+├── orchestra-core/            # Fastify API + scheduler + agents
 │   ├── src/
-│   │   ├── index.ts           # Boot: migrations, scheduler, express
+│   │   ├── index.ts           # Boot: migrations, scheduler, Fastify
 │   │   ├── db/schema.ts       # Drizzle schema (source of truth for DDL)
 │   │   ├── scheduler.ts       # graphile-worker wrapper
 │   │   ├── obs.ts             # pino + AsyncLocalStorage observability

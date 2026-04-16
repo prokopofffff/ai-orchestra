@@ -1,4 +1,11 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Load .env from the workspace root (pnpm dev runs inside orchestra-core/).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+dotenv.config(); // also load local .env if present (override)
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { loadConfig } from "./config";
@@ -23,7 +30,7 @@ import "./agents/check-handlers"; // side-effect: registers agent:observe-check 
 async function main() {
   installProcessTraps();
   const config = loadConfig();
-  const app = Fastify({ logger: log });
+  const app = Fastify({ loggerInstance: log });
 
   // Register the request context hook
   requestHook(app);
@@ -72,7 +79,8 @@ async function main() {
   await app.register(prPlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
-  await app.register(fastifyStatic, { root: config.dashboardPath });
+  const dashboardRoot = path.resolve(config.dashboardPath);
+  await app.register(fastifyStatic, { root: dashboardRoot });
 
   // SPA fallback — serve index.html for non-API routes
   app.setNotFoundHandler(async (request, reply) => {

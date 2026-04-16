@@ -27,7 +27,7 @@ export const configSchema = z.object({
   pencilEnabled: z.coerce.boolean().default(false),
   pencilModel: z.string().default("claude-sonnet-4-6"),
 
-  dashboardPath: z.string().default("./dashboard/dist"),
+  dashboardPath: z.string().default("../dashboard/dist"),
 });
 
 export type Config = z.infer<typeof configSchema>;

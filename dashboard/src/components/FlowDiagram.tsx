@@ -20,9 +20,6 @@ export function FlowDiagram() {
   const [view, setView] = useState<View>("state");
   const [error, setError] = useState<string | null>(null);
 
-  // Source of truth lives in @ai-orchestra/shared — same package the backend's
-  // flow-guard + dispatcher use. No API call needed; what's rendered here is
-  // exactly what the backend executes.
   const src = view === "state" ? renderStateMachineMermaid() : renderRoleGraphMermaid();
 
   useEffect(() => {
@@ -42,50 +39,104 @@ export function FlowDiagram() {
   const json = flowAsJson();
 
   return (
-    <div className="flow-diagram">
-      <div className="flow-header">
-        <h2>Flow</h2>
-        <div className="flow-view-toggle">
-          <button
-            className={view === "state" ? "active" : ""}
-            onClick={() => setView("state")}
-          >
+    <div className="flow-diagram flex flex-col gap-8 px-16 py-12 h-full min-h-0">
+      <header className="flow-header flex items-end justify-between gap-8">
+        <h2 className="text-5xl font-semibold tracking-tight text-text-primary" style={{ letterSpacing: "-2px" }}>
+          Flow
+        </h2>
+        <div className="flow-view-toggle flex h-9 border border-border">
+          <ToggleButton active={view === "state"} onClick={() => setView("state")}>
             State Machine
-          </button>
-          <button
-            className={view === "roles" ? "active" : ""}
-            onClick={() => setView("roles")}
-          >
+          </ToggleButton>
+          <ToggleButton active={view === "roles"} onClick={() => setView("roles")}>
             Role Graph
-          </button>
+          </ToggleButton>
         </div>
-      </div>
-      {error && <div className="flow-error">Failed to render: {error}</div>}
-      <div className="flow-canvas" ref={ref} />
+      </header>
+
+      {error && (
+        <div className="flow-error text-sm text-accent-red bg-accent-red/10 px-3 py-2">
+          Failed to render: {error}
+        </div>
+      )}
+
+      <div
+        className="flow-canvas flex-1 min-h-[400px] bg-bg-surface border border-border p-4 overflow-auto grid place-items-center"
+        ref={ref}
+      />
+
       <details className="flow-source">
-        <summary>Edges ({json.edges.length})</summary>
-        <table className="flow-edges-table">
-          <thead>
-            <tr><th>action</th><th>from</th><th>→ to</th><th>state</th><th>effect</th><th>description</th></tr>
-          </thead>
-          <tbody>
-            {json.edges.map((e) => (
-              <tr key={e.action}>
-                <td><code>{e.action}</code></td>
-                <td>{e.from.join(", ")}</td>
-                <td>{e.to}</td>
-                <td>{e.fromStates ? `${e.fromStates.join("|")} → ${e.toState}` : ""}</td>
-                <td>{e.effect}</td>
-                <td>{e.description}</td>
+        <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary font-mono py-1">
+          Edges ({json.edges.length})
+        </summary>
+        <div className="overflow-x-auto">
+          <table className="flow-edges-table w-full mt-2 text-xs border-collapse">
+            <thead>
+              <tr className="text-text-tertiary font-mono text-[11px] uppercase tracking-wider">
+                <th className="text-left py-1.5 px-2 border-b border-border">action</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">from</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">→ to</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">state</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">effect</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">description</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {json.edges.map((e) => (
+                <tr key={e.action} className="align-top">
+                  <td className="py-1.5 px-2 border-b border-border-subtle">
+                    <code className="font-mono text-[11px] text-accent-blue bg-bg-input px-1.5 py-0.5">{e.action}</code>
+                  </td>
+                  <td className="py-1.5 px-2 border-b border-border-subtle text-text-secondary">
+                    {e.from.join(", ")}
+                  </td>
+                  <td className="py-1.5 px-2 border-b border-border-subtle text-text-secondary">{e.to}</td>
+                  <td className="py-1.5 px-2 border-b border-border-subtle font-mono text-[11px] text-text-tertiary">
+                    {e.fromStates ? `${e.fromStates.join("|")} → ${e.toState}` : ""}
+                  </td>
+                  <td className="py-1.5 px-2 border-b border-border-subtle text-text-secondary">{e.effect}</td>
+                  <td className="py-1.5 px-2 border-b border-border-subtle text-text-secondary">{e.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </details>
+
       <details className="flow-source">
-        <summary>Mermaid source</summary>
-        <pre>{src}</pre>
+        <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary font-mono py-1">
+          Mermaid source
+        </summary>
+        <pre className="mt-2 bg-bg-sidebar border border-border-subtle p-3 text-[11px] text-text-tertiary font-mono overflow-x-auto">
+          {src}
+        </pre>
       </details>
     </div>
+  );
+}
+
+function ToggleButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        active ? "active" : "",
+        "h-full px-4 text-xs font-medium transition-colors",
+        active
+          ? "bg-accent-blue text-white"
+          : "bg-transparent text-text-secondary hover:text-text-primary",
+      ].join(" ")}
+    >
+      {children}
+    </button>
   );
 }

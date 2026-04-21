@@ -94,18 +94,6 @@ body {
 .log-level { flex-shrink: 0; min-width: 60px; }
 .log-message { color: var(--text); }
 
-/* Flow diagram */
-.flow-diagram { padding: 16px; display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.flow-header { display: flex; justify-content: space-between; align-items: center; }
-.flow-view-toggle { display: flex; gap: 4px; }
-.flow-view-toggle button { padding: 4px 10px; border: 1px solid var(--border); background: var(--bg-elev); color: var(--text); border-radius: 4px; cursor: pointer; font-size: 12px; }
-.flow-view-toggle button.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.flow-canvas { flex: 1; min-height: 400px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow: auto; display: flex; justify-content: center; }
-.flow-canvas svg { max-width: 100%; height: auto; }
-.flow-error { color: var(--danger); padding: 8px; background: color-mix(in srgb, var(--danger) 8%, transparent); border-radius: 4px; }
-.flow-source summary { color: var(--text-muted); cursor: pointer; padding: 4px 0; font-size: 12px; }
-.flow-source pre { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-size: 11px; overflow-x: auto; color: var(--text-muted); }
-
 /* Project checks */
 .project-checks { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .checks-header { display: flex; justify-content: space-between; align-items: center; }
@@ -125,11 +113,6 @@ body {
 button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
 button.ghost:hover { color: var(--text); }
 button.ghost.danger:hover { color: var(--danger); border-color: var(--danger); }
-
-.flow-edges-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
-.flow-edges-table th, .flow-edges-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
-.flow-edges-table th { color: var(--text-muted); font-weight: 500; }
-.flow-edges-table code { background: var(--bg-inset); padding: 1px 4px; border-radius: 3px; font-size: 11px; color: var(--accent); }
 
 /* Utils */
 .loading { color: var(--text-muted); padding: 20px; text-align: center; }

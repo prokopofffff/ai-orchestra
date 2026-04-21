@@ -78,22 +78,6 @@ body {
   --msg-agent: #2d333b;
 }
 
-/* Agent Logs */
-.agent-logs { display: flex; flex-direction: column; height: calc(100vh - 120px); }
-.logs-header { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }
-.logs-header h2 { margin: 0; }
-.logs-filters { display: flex; gap: 8px; align-items: center; }
-.logs-filters select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-.auto-scroll { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
-.logs-container { flex: 1; overflow-y: auto; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }
-.log-entry { display: flex; gap: 8px; padding: 1px 0; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
-.log-entry.level-stderr { background: color-mix(in srgb, var(--danger) 8%, transparent); }
-.log-entry.level-error { background: color-mix(in srgb, var(--danger) 8%, transparent); }
-.log-time { color: var(--text-muted); flex-shrink: 0; }
-.log-role { font-weight: 600; flex-shrink: 0; min-width: 70px; }
-.log-level { flex-shrink: 0; min-width: 60px; }
-.log-message { color: var(--text); }
-
 /* Project checks */
 .project-checks { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .checks-header { display: flex; justify-content: space-between; align-items: center; }

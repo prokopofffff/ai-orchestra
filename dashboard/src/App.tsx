@@ -34,9 +34,9 @@ export function App() {
 function AppShell() {
   return (
     <ProjectProvider>
-      <div className="flex flex-col min-h-dvh">
+      <div className="flex h-dvh flex-col">
         <TopBar />
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 min-h-0 overflow-auto">
           <Outlet />
         </main>
       </div>

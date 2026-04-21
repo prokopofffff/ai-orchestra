@@ -1,30 +1,52 @@
 import { useState } from "react";
 import * as api from "../api";
+import { Button } from "./ui/Button";
+import { PlusIcon } from "./ui/Icon";
 
 interface Props {
   projectId: string;
   onCreated: () => void;
 }
 
+/** Action-bar row above the Kanban board. The inline form drops in below
+ *  the button row when either toggle is open. */
 export function CreateForms({ projectId, onCreated }: Props) {
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
 
   return (
-    <div className="create-forms">
-      <div className="form-buttons">
+    <div className="create-forms flex flex-col">
+      <div className="form-buttons flex h-12 items-center gap-3 px-6 bg-bg-surface border-b border-border-subtle">
         {projectId && (
-          <button onClick={() => setShowTaskForm(!showTaskForm)}>+ Task</button>
+          <Button
+            variant="primary-red"
+            aria-label="+ Task"
+            onClick={() => setShowTaskForm((v) => !v)}
+            leadingIcon={<PlusIcon size={14} />}
+          >
+            Task
+          </Button>
         )}
-        <button onClick={() => setShowProjectForm(!showProjectForm)}>+ Project</button>
+        <Button
+          variant="secondary"
+          aria-label="+ Project"
+          onClick={() => setShowProjectForm((v) => !v)}
+          leadingIcon={<PlusIcon size={14} />}
+        >
+          Project
+        </Button>
       </div>
 
       {showProjectForm && (
-        <ProjectForm onCreated={() => { setShowProjectForm(false); onCreated(); }} />
+        <div className="px-6 py-3 bg-bg-surface border-b border-border-subtle">
+          <ProjectForm onCreated={() => { setShowProjectForm(false); onCreated(); }} />
+        </div>
       )}
 
       {showTaskForm && projectId && (
-        <TaskForm projectId={projectId} onCreated={() => { setShowTaskForm(false); onCreated(); }} />
+        <div className="px-6 py-3 bg-bg-surface border-b border-border-subtle">
+          <TaskForm projectId={projectId} onCreated={() => { setShowTaskForm(false); onCreated(); }} />
+        </div>
       )}
     </div>
   );
@@ -44,10 +66,10 @@ function ProjectForm({ onCreated }: { onCreated: () => void }) {
   };
 
   return (
-    <form className="inline-form" onSubmit={handleSubmit}>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" required />
-      <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="Repo URL (optional)" />
-      <button type="submit">Create Project</button>
+    <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" required className={INPUT_CLS} />
+      <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="Repo URL (optional)" className={INPUT_CLS} />
+      <Button variant="primary-blue" type="submit">Create Project</Button>
     </form>
   );
 }
@@ -73,19 +95,22 @@ function TaskForm({ projectId, onCreated }: { projectId: string; onCreated: () =
   };
 
   return (
-    <form className="inline-form" onSubmit={handleSubmit}>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title" required />
-      <select value={type} onChange={(e) => setType(e.target.value)}>
+    <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title" required className={INPUT_CLS} />
+      <select value={type} onChange={(e) => setType(e.target.value)} className={INPUT_CLS}>
         {["epic", "task", "subtask", "bug", "feature"].map((t) => <option key={t}>{t}</option>)}
       </select>
-      <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+      <select value={priority} onChange={(e) => setPriority(e.target.value)} className={INPUT_CLS}>
         {["low", "normal", "high", "immediate"].map((p) => <option key={p}>{p}</option>)}
       </select>
-      <select value={assigneeRole} onChange={(e) => setAssigneeRole(e.target.value)}>
+      <select value={assigneeRole} onChange={(e) => setAssigneeRole(e.target.value)} className={INPUT_CLS}>
         <option value="">Unassigned</option>
         {["tech-lead", "designer", "frontend", "backend", "qa", "devops"].map((r) => <option key={r}>{r}</option>)}
       </select>
-      <button type="submit">Create Task</button>
+      <Button variant="primary-blue" type="submit">Create Task</Button>
     </form>
   );
 }
+
+const INPUT_CLS =
+  "h-8 px-3 bg-bg-input border border-border text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue";

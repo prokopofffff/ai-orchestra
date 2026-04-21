@@ -78,56 +78,6 @@ body {
   --msg-agent: #2d333b;
 }
 
-/* Agent Graph */
-.agent-graph { margin-bottom: 20px; }
-.agent-graph h2 { margin-bottom: 10px; }
-.agent-graph svg { background: var(--surface); border-radius: 8px; border: 1px solid var(--border); }
-
-/* Agent Cards */
-.agent-cards h2 { margin-bottom: 10px; }
-.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-.agent-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; border-left: 4px solid; }
-.agent-card .card-role { font-weight: 600; font-size: 14px; }
-.agent-card .card-details { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-.agent-card.status-running .card-status { color: var(--success); }
-.agent-card.status-crashed .card-status { color: var(--danger); }
-.agent-card .card-workdir { font-size: 11px; color: var(--accent); margin-top: 4px; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-card .card-started { font-size: 11px; color: var(--text-muted); }
-
-/* Task Queue */
-.task-queue h2 { margin-bottom: 10px; }
-.queue-stats { display: flex; gap: 16px; }
-.stat { display: flex; flex-direction: column; align-items: center; background: var(--surface); padding: 12px 20px; border-radius: 6px; border: 1px solid var(--border); }
-.stat-value { font-size: 24px; font-weight: 700; }
-.stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
-.queue-rate-limited { background: var(--danger); color: var(--on-accent); padding: 8px 12px; border-radius: 6px; margin-top: 10px; font-size: 13px; }
-
-/* Agents view */
-.agents-view { display: flex; flex-direction: column; gap: 20px; }
-.agents-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-
-/* Usage Widget */
-.usage-widget { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-.usage-widget h2 { margin-bottom: 12px; font-size: 15px; }
-.usage-widget h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin: 12px 0 6px; }
-.usage-sessions { display: flex; gap: 12px; flex-wrap: wrap; }
-.usage-stat { display: flex; flex-direction: column; align-items: center; background: var(--bg); padding: 8px 14px; border-radius: 6px; min-width: 60px; }
-.usage-stat.running .usage-value { color: var(--success); }
-.usage-stat.crashed .usage-value { color: var(--danger); }
-.usage-value { font-size: 20px; font-weight: 700; }
-.usage-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
-.usage-bars { display: flex; flex-direction: column; gap: 6px; }
-.usage-bar-row { display: flex; align-items: center; gap: 8px; }
-.usage-bar-label { font-size: 12px; font-weight: 600; min-width: 70px; }
-.usage-bar-track { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
-.usage-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
-.usage-bar-count { font-size: 11px; color: var(--text-muted); min-width: 80px; text-align: right; }
-.usage-model-list { display: flex; flex-direction: column; gap: 4px; }
-.usage-model-row { display: flex; justify-content: space-between; font-size: 12px; }
-.usage-model-name { font-weight: 500; }
-.usage-model-count { color: var(--text-muted); }
-.usage-updated { font-size: 10px; color: var(--text-muted); margin-top: 10px; text-align: right; }
-
 /* Agent Logs */
 .agent-logs { display: flex; flex-direction: column; height: calc(100vh - 120px); }
 .logs-header { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }

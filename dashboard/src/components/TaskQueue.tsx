@@ -11,33 +11,34 @@ export function TaskQueue() {
   if (!status) return null;
 
   return (
-    <div className="task-queue">
-      <h2>Queue Status</h2>
-      <div className="queue-stats">
-        <div className="stat">
-          <span className="stat-value">{status.queued}</span>
-          <span className="stat-label">Queued</span>
-        </div>
-        <div className="stat">
-          <span className="stat-value">{status.running}</span>
-          <span className="stat-label">Running</span>
-        </div>
-        <div className="stat">
-          <span className="stat-value">{status.completed}</span>
-          <span className="stat-label">Completed</span>
-        </div>
-        <div className="stat">
-          <span className="stat-value">{status.failed}</span>
-          <span className="stat-label">Failed</span>
-        </div>
+    <section className="task-queue flex flex-col gap-3">
+      <h3 className="text-sm font-semibold text-text-primary">Queue Status</h3>
+      <div className="queue-stats grid grid-cols-4 gap-3">
+        <StatCard label="Queued"    value={status.queued} />
+        <StatCard label="Running"   value={status.running}   accent="text-accent-green" />
+        <StatCard label="Completed" value={status.completed} />
+        <StatCard label="Failed"    value={status.failed}    accent="text-accent-red" />
       </div>
       {status.rateLimited && (
-        <div className="queue-rate-limited">
+        <div className="queue-rate-limited bg-accent-red text-white text-xs px-3 py-2">
           Rate limited until {status.rateLimitResetTime
             ? new Date(status.rateLimitResetTime).toLocaleTimeString()
             : "unknown"}
         </div>
       )}
+    </section>
+  );
+}
+
+function StatCard({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div className="stat flex flex-col items-center bg-bg-surface border border-border px-4 py-3">
+      <span className={["stat-value text-2xl font-semibold text-text-primary", accent].filter(Boolean).join(" ")}>
+        {value}
+      </span>
+      <span className="stat-label font-mono text-[10px] uppercase tracking-wider text-text-tertiary mt-1">
+        {label}
+      </span>
     </div>
   );
 }

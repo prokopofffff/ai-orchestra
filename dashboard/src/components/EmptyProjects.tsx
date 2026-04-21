@@ -5,13 +5,17 @@ import { CreateForms } from "./CreateForms";
 export function EmptyProjects() {
   const qc = useQueryClient();
   return (
-    <div className="empty-state">
-      <h2>No projects yet</h2>
-      <p>Create your first project to get started.</p>
-      <CreateForms
-        projectId=""
-        onCreated={() => qc.invalidateQueries({ queryKey: ["projects"] })}
-      />
+    <div className="flex flex-col items-center gap-4 p-16 text-center">
+      <h2 className="text-xl font-semibold text-text-primary">No projects yet</h2>
+      <p className="text-sm text-text-secondary">
+        Create your first project to get started.
+      </p>
+      <div className="mt-4 w-full max-w-2xl">
+        <CreateForms
+          projectId=""
+          onCreated={() => qc.invalidateQueries({ queryKey: ["projects"] })}
+        />
+      </div>
     </div>
   );
 }

@@ -5,9 +5,5 @@ import { EmptyProjects } from "../components/EmptyProjects";
 export default function Signals() {
   const { project } = useProjectContext();
   if (!project) return <EmptyProjects />;
-  return (
-    <div className="p-5">
-      <SignalFeed projectId={project.id} />
-    </div>
-  );
+  return <SignalFeed projectId={project.id} />;
 }

@@ -23,16 +23,16 @@ export const KANBAN_PHASES = {
 
 /**
  * Role color tokens. Values are CSS var references so the palette lives in
- * styles.css (`:root --role-*`). Components pass these as-is to inline styles
- * or SVG `fill` attributes, both of which resolve `var(...)` at paint time.
+ * styles.css `@theme` (--color-role-*). Components pass these as-is to inline
+ * styles or SVG `fill` attributes, both of which resolve `var(...)` at paint.
  */
 export const ROLE_COLORS: Record<string, string> = {
-  "tech-lead": "var(--role-tech-lead)",
-  designer:    "var(--role-designer)",
-  frontend:    "var(--role-frontend)",
-  backend:     "var(--role-backend)",
-  qa:          "var(--role-qa)",
-  devops:      "var(--role-devops)",
+  "tech-lead": "var(--color-role-tech-lead)",
+  designer:    "var(--color-role-designer)",
+  frontend:    "var(--color-role-frontend)",
+  backend:     "var(--color-role-backend)",
+  qa:          "var(--color-role-qa)",
+  devops:      "var(--color-role-devops)",
 };
 
-export const ROLE_FALLBACK = "var(--text-muted)";
+export const ROLE_FALLBACK = "var(--color-text-tertiary)";

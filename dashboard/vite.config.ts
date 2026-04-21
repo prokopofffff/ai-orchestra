@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       "/api": "http://localhost:3000",
@@ -23,6 +24,7 @@ export default defineConfig({
           if (!id.includes("node_modules")) return;
           if (id.includes("react-dom") || id.includes("/react/") || id.includes("scheduler/")) return "react";
           if (id.includes("@tanstack")) return "tanstack";
+          if (id.includes("react-router")) return "router";
           if (id.includes("/zod/")) return "zod";
           // No `vendor` catch-all: forces remaining sync deps into the entry
           // chunk and lazy deps into Rollup's auto-generated lazy chunks.

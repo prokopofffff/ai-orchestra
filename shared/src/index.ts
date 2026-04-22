@@ -76,6 +76,7 @@ export const ProjectSchema = z.object({
   name: z.string(),
   slug: z.string(),
   repoUrl: z.string().nullable(),
+  localPath: z.string().nullable(),
   description: z.string().nullable(),
   settings: z.record(z.unknown()), // looser at the boundary; ProjectSettings parses it strictly
   createdAt: z.coerce.date(),

@@ -14,7 +14,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import pino, { type Logger } from "pino";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, RawServerDefault } from "fastify";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 // ─── Context ───
 
@@ -66,7 +67,8 @@ export const log: Logger = pino({
 // Generates a reqId, runs the rest of the request inside withContext so any
 // log call from downstream handlers carries reqId automatically.
 
-export function requestHook(app: FastifyInstance): void {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function requestHook(app: FastifyInstance<RawServerDefault, IncomingMessage, ServerResponse, any>): void {
   app.addHook("onRequest", async (request) => {
     const reqId = (request.headers["x-request-id"] as string | undefined) ?? randomUUID();
     als.enterWith({ ...getContext(), reqId });

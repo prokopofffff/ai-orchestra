@@ -24,14 +24,15 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       name: z.string().min(1),
       slug: z.string().min(1).optional(),
       repoUrl: z.string().optional(),
+      localPath: z.string().optional(),
       description: z.string().optional(),
     }).parse(request.body);
 
     const slug = body.slug ?? body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const { rows } = await getPool().query(
-      `INSERT INTO projects (name, slug, repo_url, description)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [body.name, slug, body.repoUrl ?? null, body.description ?? null],
+      `INSERT INTO projects (name, slug, repo_url, local_path, description)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [body.name, slug, body.repoUrl ?? null, body.localPath ?? null, body.description ?? null],
     );
 
     await getPool().query("INSERT INTO conversations (project_id) VALUES ($1)", [rows[0].id]);
@@ -47,8 +48,9 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   app.patch<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
     const body = z.object({
       name: z.string().optional(),
-      repoUrl: z.string().optional(),
-      description: z.string().optional(),
+      repoUrl: z.string().nullable().optional(),
+      localPath: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
       settings: z.record(z.unknown()).optional(),
     }).parse(request.body);
 
@@ -58,6 +60,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
 
     if (body.name !== undefined) { sets.push(`name = $${i++}`); vals.push(body.name); }
     if (body.repoUrl !== undefined) { sets.push(`repo_url = $${i++}`); vals.push(body.repoUrl); }
+    if (body.localPath !== undefined) { sets.push(`local_path = $${i++}`); vals.push(body.localPath); }
     if (body.description !== undefined) { sets.push(`description = $${i++}`); vals.push(body.description); }
     if (body.settings !== undefined) { sets.push(`settings = settings || $${i++}::jsonb`); vals.push(JSON.stringify(body.settings)); }
 
@@ -232,5 +235,51 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       [request.params.id, body.author, body.body],
     );
     return reply.code(201).send(parseRow(commentSchema, rows[0]));
+  });
+
+  // ─── System Config ───
+
+  const ALLOWED_KEYS = ["claude_auth", "claude_api_key", "github_token", "github_default_org", "github_default_branch"] as const;
+  type ConfigKey = typeof ALLOWED_KEYS[number];
+  type SystemConfigMap = Partial<Record<ConfigKey, string>>;
+
+  app.get("/system-config", async () => {
+    const { rows } = await getPool().query("SELECT key, value FROM system_config");
+    const result: SystemConfigMap = {};
+    for (const row of rows as { key: string; value: string }[]) {
+      if (ALLOWED_KEYS.includes(row.key as ConfigKey)) {
+        result[row.key as ConfigKey] = row.value;
+      }
+    }
+    return result;
+  });
+
+  app.patch("/system-config", async (request, reply) => {
+    const body = z.object({
+      claude_auth: z.enum(["max", "api"]).optional(),
+      claude_api_key: z.string().optional(),
+      github_token: z.string().optional(),
+      github_default_org: z.string().optional(),
+      github_default_branch: z.string().optional(),
+    }).parse(request.body);
+
+    const pool = getPool();
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue;
+      await pool.query(
+        `INSERT INTO system_config (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [key, value],
+      );
+    }
+
+    const { rows } = await pool.query("SELECT key, value FROM system_config");
+    const result: SystemConfigMap = {};
+    for (const row of rows as { key: string; value: string }[]) {
+      if (ALLOWED_KEYS.includes(row.key as ConfigKey)) {
+        result[row.key as ConfigKey] = row.value;
+      }
+    }
+    return reply.code(200).send(result);
   });
 };

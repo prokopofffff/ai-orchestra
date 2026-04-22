@@ -48,12 +48,21 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
 
   // ── 1. Project + blocked_by + model ─────────────────────────────────
   const { rows: projRows } = await pool.query(
-    "SELECT slug, repo_url, settings FROM projects WHERE id = $1",
+    "SELECT slug, repo_url, local_path, settings FROM projects WHERE id = $1",
     [projectId],
   );
   if (!projRows.length) throw new Error(`Project not found: ${projectId}`);
-  const { slug, repo_url: repoUrl, settings } = projRows[0];
-  if (!repoUrl) throw new Error(`Project ${slug} has no repository URL`);
+  const { slug, repo_url: repoUrl, local_path: localPath, settings } = projRows[0];
+  if (!repoUrl && !localPath) throw new Error(`Project ${slug} has no repository URL or local path — configure it in Settings`);
+
+  // Apply any DB-stored auth overrides (set via UI) on top of env defaults.
+  const { rows: sysRows } = await pool.query(
+    "SELECT key, value FROM system_config WHERE key IN ('claude_auth', 'claude_api_key') LIMIT 2",
+  ).catch(() => ({ rows: [] }));
+  const sysConfig = Object.fromEntries((sysRows as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+  if (sysConfig.claude_api_key && (sysConfig.claude_auth ?? config.claudeAuth) === "api") {
+    process.env.ANTHROPIC_API_KEY = sysConfig.claude_api_key;
+  }
 
   const { rows: taskRows } = await pool.query("SELECT blocked_by FROM tasks WHERE id = $1", [taskId]);
   if (taskRows.length && (taskRows[0].blocked_by as string[]).length > 0) {
@@ -70,12 +79,18 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const model = getModelForRole(config, role, settings as Record<string, unknown>);
 
   // ── 2. Worktree + scope hook ────────────────────────────────────────
-  const provider = providerFor(repoUrl, settings as ProjectSettings | null);
-  const authUrl = provider.tokenizeCloneUrl();
-  const repoDir = await ensureRepo(authUrl, slug);
+  let repoDir: string;
+  let authUrl: string | null = null;
+  if (localPath) {
+    repoDir = localPath as string;
+  } else {
+    const provider = providerFor(repoUrl, settings as ProjectSettings | null);
+    authUrl = provider.tokenizeCloneUrl();
+    repoDir = await ensureRepo(authUrl, slug);
+  }
   const branch = branchName(role, taskId);
   const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);
-  await configureRemoteAuth(worktreeDir, authUrl);
+  if (authUrl) await configureRemoteAuth(worktreeDir, authUrl);
   installScopeHook(worktreeDir, role);
 
   // ── 3. Prompt ──────────────────────────────────────────────────────

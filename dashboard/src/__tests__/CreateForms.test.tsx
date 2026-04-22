@@ -10,7 +10,7 @@ vi.mock("../api");
 beforeEach(() => vi.resetAllMocks());
 
 const fakeProject: Project = {
-  id: "p1", name: "P", slug: "p", repoUrl: null, description: null,
+  id: "p1", name: "P", slug: "p", repoUrl: null, localPath: null, description: null,
   settings: {}, createdAt: new Date(), updatedAt: new Date(),
 };
 
@@ -54,17 +54,17 @@ describe("CreateForms", () => {
 
     await user.click(screen.getByRole("button", { name: "+ Project" }));
     await user.type(screen.getByPlaceholderText("Project name"), "My Project");
-    await user.type(screen.getByPlaceholderText(/Repo URL/), "https://github.com/o/r");
+    await user.type(screen.getByPlaceholderText(/Local path/), "/Users/you/myapp");
     await user.click(screen.getByRole("button", { name: "Create Project" }));
 
     await waitFor(() => expect(api.createProject).toHaveBeenCalledWith({
       name: "My Project",
-      repoUrl: "https://github.com/o/r",
+      localPath: "/Users/you/myapp",
     }));
     expect(onCreated).toHaveBeenCalled();
   });
 
-  it("omits repoUrl when left empty", async () => {
+  it("omits localPath when left empty", async () => {
     vi.mocked(api.createProject).mockResolvedValue(fakeProject);
     const user = userEvent.setup();
     render(<CreateForms projectId="" onCreated={() => {}} />);
@@ -75,7 +75,7 @@ describe("CreateForms", () => {
 
     await waitFor(() => expect(api.createProject).toHaveBeenCalledWith({
       name: "Bare",
-      repoUrl: undefined,
+      localPath: undefined,
     }));
   });
 

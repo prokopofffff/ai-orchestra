@@ -12,6 +12,7 @@ const baseProject: Project = {
   name: "Test Project",
   slug: "test-project",
   repoUrl: null,
+  localPath: null,
   description: null,
   settings: {},
   createdAt: new Date("2026-01-01T00:00:00Z"),

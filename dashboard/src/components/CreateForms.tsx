@@ -54,21 +54,21 @@ export function CreateForms({ projectId, onCreated }: Props) {
 
 function ProjectForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
+  const [localPath, setLocalPath] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    await api.createProject({ name, repoUrl: repoUrl || undefined });
+    await api.createProject({ name, localPath: localPath || undefined });
     setName("");
-    setRepoUrl("");
+    setLocalPath("");
     onCreated();
   };
 
   return (
     <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" required className={INPUT_CLS} />
-      <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="Repo URL (optional)" className={INPUT_CLS} />
+      <input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="Local path (e.g. /Users/you/myapp)" className={INPUT_CLS} style={{ minWidth: 260 }} />
       <Button variant="primary-blue" type="submit">Create Project</Button>
     </form>
   );

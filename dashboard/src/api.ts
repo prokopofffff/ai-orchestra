@@ -50,10 +50,24 @@ async function del(path: string): Promise<void> {
 // Projects
 export const fetchProjects = (): Promise<Project[]> =>
   getValidated("/projects", z.array(ProjectSchema));
-export const createProject = (data: { name: string; repoUrl?: string; description?: string }): Promise<Project> =>
+export const createProject = (data: { name: string; repoUrl?: string; localPath?: string; description?: string }): Promise<Project> =>
   postValidated("/projects", data, ProjectSchema);
-export const updateProject = (id: string, data: Partial<Project>): Promise<Project> =>
+export const updateProject = (id: string, data: Partial<Project> & { localPath?: string | null }): Promise<Project> =>
   patchValidated(`/projects/${id}`, data, ProjectSchema);
+
+// System Config
+const SystemConfigSchema = z.object({
+  claude_auth: z.enum(["max", "api"]).optional(),
+  claude_api_key: z.string().optional(),
+  github_token: z.string().optional(),
+  github_default_org: z.string().optional(),
+  github_default_branch: z.string().optional(),
+});
+export type SystemConfig = z.infer<typeof SystemConfigSchema>;
+export const fetchSystemConfig = (): Promise<SystemConfig> =>
+  getValidated("/system-config", SystemConfigSchema);
+export const updateSystemConfig = (data: SystemConfig): Promise<SystemConfig> =>
+  patchValidated("/system-config", data, SystemConfigSchema);
 
 // Tasks
 export const fetchTasks = (projectId: string): Promise<Task[]> =>

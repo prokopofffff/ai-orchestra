@@ -6,7 +6,7 @@
   "description": "AI agent orchestrator for automated development teams",
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter orchestra-core dev",
+    "dev": "docker compose up -d --wait postgres && pnpm --filter orchestra-core dev",
     "setup": "pnpm --filter orchestra-core setup",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"

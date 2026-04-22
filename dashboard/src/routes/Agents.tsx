@@ -10,7 +10,7 @@ export default function Agents() {
   if (!project) return <EmptyProjects />;
   return (
     <div className="agents-view flex flex-col gap-6 px-12 py-8">
-      <AgentGraph />
+      <AgentGraph projectId={project.id} />
       <AgentCards projectId={project.id} />
       <div className="agents-bottom-row grid grid-cols-2 gap-6">
         <TaskQueue />

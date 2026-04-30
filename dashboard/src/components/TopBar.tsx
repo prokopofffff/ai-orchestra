@@ -1,5 +1,7 @@
-import { NavLink } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useProjectContext } from "../contexts/ProjectContext";
+import { useAuth } from "../contexts/AuthContext";
 import { ChevronDownIcon } from "./ui/Icon";
 
 const TABS = [
@@ -49,7 +51,71 @@ export function TopBar() {
           </NavLink>
         ))}
       </nav>
+
+      <UserMenu />
     </header>
+  );
+}
+
+function UserMenu() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  if (!user) return null;
+  const initial = (user.username || user.email).slice(0, 1).toUpperCase();
+
+  async function handleSignOut() {
+    setOpen(false);
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="User menu"
+        className="inline-flex items-center gap-2 px-2 py-1.5 hover:bg-bg-hover transition-colors"
+      >
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-accent-blue text-xs font-semibold text-white">
+          {initial}
+        </span>
+        <span className="hidden sm:inline text-xs text-text-secondary font-medium">{user.username}</span>
+        <ChevronDownIcon size={12} className="text-text-tertiary" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-48 bg-bg-surface border border-border shadow-xl z-50">
+          <button
+            type="button"
+            onClick={() => { setOpen(false); navigate("/profile"); }}
+            className="block w-full text-left px-4 py-2.5 text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+          >
+            Profile
+          </button>
+          <div className="border-t border-border-subtle" />
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="block w-full text-left px-4 py-2.5 text-xs text-accent-red hover:bg-bg-hover transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

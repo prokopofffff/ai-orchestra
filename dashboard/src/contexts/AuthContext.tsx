@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
+import { AuthError } from "../api";
 import type { User } from "@ai-orchestra/shared";
 
 interface AuthContextValue {
@@ -15,6 +17,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let cancelled = false;
@@ -24,6 +27,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // Any query that hits a 401 throws AuthError; clearing the user makes
+  // <RequireAuth> redirect to /login on the next render. Also drop the
+  // cached query data so we don't briefly show stale data after re-login.
+  useEffect(() => {
+    const queryCache = queryClient.getQueryCache();
+    const mutationCache = queryClient.getMutationCache();
+
+    function handle(err: unknown) {
+      if (err instanceof AuthError) {
+        setUser(null);
+        queryClient.clear();
+      }
+    }
+
+    const unsubQ = queryCache.subscribe((event) => {
+      if (event.type === "updated" && event.action.type === "error") {
+        handle(event.action.error);
+      }
+    });
+    const unsubM = mutationCache.subscribe((event) => {
+      if (event.type === "updated" && event.action.type === "error") {
+        handle(event.action.error);
+      }
+    });
+
+    return () => { unsubQ(); unsubM(); };
+  }, [queryClient]);
 
   const login = useCallback(async (email: string, password: string) => {
     const u = await api.login({ email, password });

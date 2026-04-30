@@ -8,6 +8,8 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 dotenv.config(); // also load local .env if present (override)
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyCookie from "@fastify/cookie";
+import fastifyJwt from "@fastify/jwt";
 import { loadConfig } from "./config";
 import { log, requestHook, installProcessTraps } from "./obs";
 import { waitForDatabase, runMigrations, getPool } from "./db";
@@ -17,6 +19,8 @@ import { sessionPlugin } from "./session-api";
 import { conversationPlugin } from "./conversation-api";
 import { webhookPlugin } from "./webhooks";
 import { prPlugin } from "./pr-api";
+import { authPlugin } from "./auth-api";
+import { requireAuth, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
 import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
@@ -34,6 +38,21 @@ async function main() {
 
   // Register the request context hook
   requestHook(app);
+
+  // ─── Auth plumbing (cookies + JWT) ───
+  await app.register(fastifyCookie);
+  await app.register(fastifyJwt, {
+    secret: config.jwtSecret,
+    cookie: { cookieName: SESSION_COOKIE, signed: false },
+  });
+
+  // Gate every /api/* route behind auth except the public ones (auth itself,
+  // health, external webhooks). Static dashboard files stay public.
+  app.addHook("preHandler", async (request, reply) => {
+    if (!request.url.startsWith("/api")) return;
+    if (isPublicApiPath(request.url.split("?")[0])) return;
+    return requireAuth(request, reply);
+  });
 
   // ─── Health check ───
   app.get("/api/health", async (_request, reply) => {
@@ -71,6 +90,7 @@ async function main() {
   });
 
   // ─── API routes ───
+  await app.register(authPlugin, { prefix: "/api" });
   await app.register(taskPlugin, { prefix: "/api" });
   await app.register(signalPlugin, { prefix: "/api" });
   await app.register(sessionPlugin, { prefix: "/api" });

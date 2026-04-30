@@ -21,6 +21,8 @@
     "@ai-orchestra/shared": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "^0.2.107",
     "@clack/prompts": "^0.10.0",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/jwt": "^9.0.4",
     "@fastify/static": "^9.1.1",
     "cron-parser": "^5.5.0",
     "dotenv": "^17.3.1",

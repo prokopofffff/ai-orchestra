@@ -151,6 +151,28 @@ export const MessageSchema = z.object({
 });
 export type Message = z.infer<typeof MessageSchema>;
 
+export const UserSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  username: z.string(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type User = z.infer<typeof UserSchema>;
+
+export const SignupSchema = z.object({
+  email: z.string().email(),
+  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, "Letters, digits and underscores only"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+export type SignupRequest = z.infer<typeof SignupSchema>;
+
+export const LoginRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
 export const QueueStatusSchema = z.object({
   rateLimited: z.boolean(),
   rateLimitResetTime: z.string().nullable(),

@@ -6,6 +6,7 @@ export const configSchema = z.object({
   port: z.coerce.number().default(3000),
   nodeEnv: z.string().default("development"),
   databaseUrl: z.string().url(),
+  jwtSecret: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
 
   claudeAuth: z.enum(["max", "api"]).default("max"),
   claudeApiKey: z.string().optional(),
@@ -39,6 +40,7 @@ export function loadConfig(): Config {
     port: process.env.PORT,
     nodeEnv: process.env.NODE_ENV,
     databaseUrl: process.env.DATABASE_URL,
+    jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-me-please-it-must-be-long",
     claudeAuth: process.env.CLAUDE_AUTH,
     claudeApiKey: process.env.CLAUDE_API_KEY,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,

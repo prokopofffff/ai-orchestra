@@ -1,16 +1,15 @@
+import { useNavigate } from "react-router-dom";
 import { useProjectContext } from "../contexts/ProjectContext";
+import { useAuth } from "../contexts/AuthContext";
 import { Card } from "../components/ui/Card";
-
-const ME = {
-  name: "alice",
-  joined: "Jan 2025",
-  email: "alice@example.com",
-  role: "tech-lead",
-  timezone: "Europe/Amsterdam",
-} as const;
 
 export default function Profile() {
   const { projects } = useProjectContext();
+  const { user } = useAuth();
+
+  if (!user) return null; // RequireAuth has redirected — render nothing while it does
+
+  const joined = user.createdAt.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 
   return (
     <div className="profile flex gap-12 px-16 py-12">
@@ -20,9 +19,9 @@ export default function Profile() {
         <section className="flex flex-col gap-4">
           <h2 className="text-xl font-semibold text-text-primary">Profile Details</h2>
           <Card className="p-6 flex flex-col gap-4">
-            <DetailRow label="Email"    value={ME.email} />
-            <DetailRow label="Role"     value={ME.role}  mono />
-            <DetailRow label="Timezone" value={ME.timezone} mono />
+            <DetailRow label="Username" value={user.username} mono />
+            <DetailRow label="Email"    value={user.email} />
+            <DetailRow label="Joined"   value={joined} mono />
           </Card>
         </section>
 
@@ -61,39 +60,49 @@ export default function Profile() {
 }
 
 function ProfileSidebar() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  if (!user) return null;
+
+  const initial = (user.username || user.email).slice(0, 1).toUpperCase();
+
+  async function handleSignOut() {
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
   return (
     <aside className="w-[300px] shrink-0 flex flex-col items-center gap-8">
       <div className="h-[120px] w-[120px] rounded-full bg-accent-blue grid place-items-center text-white font-semibold text-5xl">
-        {ME.name.slice(0, 1).toUpperCase()}
+        {initial}
       </div>
       <div className="text-center flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{ME.name}</h1>
-        <p className="font-mono text-xs text-text-tertiary">
-          Member since {ME.joined}
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{user.username}</h1>
+        <p className="font-mono text-xs text-text-tertiary">{user.email}</p>
       </div>
 
       <nav className="w-full flex flex-col">
         <SidebarAction label="Account settings" divider />
         <SidebarAction label="Notifications" divider />
-        <SidebarAction label="Sign out" danger />
+        <SidebarAction label="Sign out" danger onClick={handleSignOut} />
       </nav>
     </aside>
   );
 }
 
 function SidebarAction({
-  label,
-  divider,
-  danger,
+  label, divider, danger, onClick,
 }: {
   label: string;
   divider?: boolean;
   danger?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
       type="button"
+      onClick={onClick}
       className={[
         "flex items-center px-4 py-3.5 text-sm transition-colors text-left",
         divider ? "border-b border-border" : "",

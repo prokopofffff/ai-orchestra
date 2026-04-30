@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, type FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 import {
   ArrowRightIcon,
   BotIcon,
@@ -15,7 +16,20 @@ import {
   ZapIcon,
 } from "../components/ui/Icon";
 
+type Mode = "login" | "signup";
+
 export default function Login() {
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation() as { state?: { from?: { pathname: string } } };
+
+  // If we open /login while already authed, redirect to wherever we came from.
+  useEffect(() => {
+    if (!loading && user) {
+      navigate(location.state?.from?.pathname ?? "/kanban", { replace: true });
+    }
+  }, [loading, user, navigate, location.state]);
+
   return (
     <div className="flex min-h-dvh bg-bg-page">
       <BrandingPanel />
@@ -42,10 +56,7 @@ function BrandingPanel() {
             AI Orchestra
           </span>
         </div>
-        <p
-          className="text-lg text-text-secondary max-w-[420px]"
-          style={{ lineHeight: 1.6 }}
-        >
+        <p className="text-lg text-text-secondary max-w-[420px]" style={{ lineHeight: 1.6 }}>
           Orchestrate your AI development team.
           <br />
           Automate tasks, coordinate agents,
@@ -75,9 +86,6 @@ const FEATURES = [
 ];
 
 function AgentViz() {
-  // Absolute-positioned icon badges matching pen frame bpCZY (528w × 320h).
-  // Coordinates are .pen-native; we render into a 528×320 box and let the panel
-  // padding handle margins.
   return (
     <div
       className="relative bg-bg-sidebar border border-border-subtle overflow-hidden"
@@ -105,61 +113,54 @@ function AgentViz() {
 }
 
 const AGENT_NODES = [
-  {
-    id: "code", x: 80,  y: 130, size: 56, bg: "var(--color-accent-blue)",
-    glow: { blur: 14, spread: 2, color: "rgba(59,130,246,0.3)" },
-    icon: <CodeIcon size={26} />,
-  },
-  {
-    id: "palette", x: 220, y: 60, size: 48, bg: "var(--color-accent-purple)",
-    glow: { blur: 14, spread: 2, color: "rgba(168,85,247,0.3)" },
-    icon: <PaletteIcon size={22} />,
-  },
-  {
-    id: "server", x: 350, y: 110, size: 48, bg: "var(--color-accent-green)",
-    glow: { blur: 14, spread: 2, color: "rgba(34,197,94,0.3)" },
-    icon: <ServerIcon size={22} />,
-  },
-  {
-    id: "shield", x: 220, y: 200, size: 48, bg: "var(--color-accent-teal)",
-    glow: { blur: 14, spread: 2, color: "rgba(20,184,166,0.3)" },
-    icon: <ShieldCheckIcon size={22} />,
-  },
-  {
-    id: "brain", x: 200, y: 120, size: 64,
-    bg: "linear-gradient(135deg, #3B82F6 0%, #A855F7 100%)",
-    glow: { blur: 20, spread: 4, color: "rgba(168,85,247,0.4)" },
-    icon: <BrainIcon size={30} />,
-  },
-  {
-    id: "terminal", x: 400, y: 220, size: 44, bg: "var(--color-accent-orange)",
-    glow: { blur: 14, spread: 2, color: "rgba(249,115,22,0.3)" },
-    icon: <TerminalIcon size={20} />,
-  },
+  { id: "code",     x: 80,  y: 130, size: 56, bg: "var(--color-accent-blue)",   glow: { blur: 14, spread: 2, color: "rgba(59,130,246,0.3)" }, icon: <CodeIcon size={26} /> },
+  { id: "palette",  x: 220, y: 60,  size: 48, bg: "var(--color-accent-purple)", glow: { blur: 14, spread: 2, color: "rgba(168,85,247,0.3)" }, icon: <PaletteIcon size={22} /> },
+  { id: "server",   x: 350, y: 110, size: 48, bg: "var(--color-accent-green)",  glow: { blur: 14, spread: 2, color: "rgba(34,197,94,0.3)"  }, icon: <ServerIcon size={22} /> },
+  { id: "shield",   x: 220, y: 200, size: 48, bg: "var(--color-accent-teal)",   glow: { blur: 14, spread: 2, color: "rgba(20,184,166,0.3)" }, icon: <ShieldCheckIcon size={22} /> },
+  { id: "brain",    x: 200, y: 120, size: 64, bg: "linear-gradient(135deg, #3B82F6 0%, #A855F7 100%)", glow: { blur: 20, spread: 4, color: "rgba(168,85,247,0.4)" }, icon: <BrainIcon size={30} /> },
+  { id: "terminal", x: 400, y: 220, size: 44, bg: "var(--color-accent-orange)", glow: { blur: 14, spread: 2, color: "rgba(249,115,22,0.3)" }, icon: <TerminalIcon size={20} /> },
 ];
 
 function FormPanel() {
-  const navigate = useNavigate();
+  const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { login, signup } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation() as { state?: { from?: { pathname: string } } };
 
-  function onSubmit(e: FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    navigate("/kanban");
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (mode === "login") {
+        await login(email, password);
+      } else {
+        await signup(email, username, password);
+      }
+      navigate(location.state?.from?.pathname ?? "/kanban", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
   }
+
+  const isSignup = mode === "signup";
 
   return (
     <section className="flex flex-1 items-center justify-center p-12 lg:p-20">
-      <form
-        onSubmit={onSubmit}
-        className="flex w-full max-w-[400px] flex-col gap-8"
-      >
+      <form onSubmit={onSubmit} className="flex w-full max-w-[400px] flex-col gap-8">
         <header className="flex flex-col gap-2">
           <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-            Welcome back
+            {isSignup ? "Create your workspace" : "Welcome back"}
           </h1>
           <p className="text-sm text-text-secondary">
-            Sign in to your workspace
+            {isSignup ? "Sign up to get started" : "Sign in to your workspace"}
           </p>
         </header>
 
@@ -171,29 +172,53 @@ function FormPanel() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              className="h-11 px-3.5 bg-bg-input border border-border text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue"
+              className={INPUT_CLS}
               placeholder="you@example.com"
             />
           </Field>
-          <Field label="Password">
+          {isSignup && (
+            <Field label="Username">
+              <input
+                type="text"
+                required
+                minLength={3}
+                maxLength={30}
+                pattern="[a-zA-Z0-9_]+"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                className={INPUT_CLS}
+                placeholder="alice"
+              />
+            </Field>
+          )}
+          <Field label="Password" hint={isSignup ? "At least 8 characters" : undefined}>
             <input
               type="password"
               required
+              minLength={isSignup ? 8 : undefined}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              className="h-11 px-3.5 bg-bg-input border border-border text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue"
+              autoComplete={isSignup ? "new-password" : "current-password"}
+              className={INPUT_CLS}
               placeholder="••••••••"
             />
           </Field>
         </div>
 
+        {error && (
+          <p className="text-xs text-accent-red bg-accent-red/10 border border-accent-red/30 px-3 py-2">
+            {error}
+          </p>
+        )}
+
         <button
           type="submit"
-          className="inline-flex h-[46px] w-full items-center justify-center gap-2 bg-accent-blue text-white text-[15px] font-semibold hover:bg-accent-blue/90 transition-colors"
+          disabled={submitting}
+          className="inline-flex h-[46px] w-full items-center justify-center gap-2 bg-accent-blue text-white text-[15px] font-semibold hover:bg-accent-blue/90 transition-colors disabled:opacity-60"
         >
-          Sign In
-          <ArrowRightIcon size={16} />
+          {submitting ? (isSignup ? "Creating…" : "Signing in…") : isSignup ? "Create account" : "Sign In"}
+          {!submitting && <ArrowRightIcon size={16} />}
         </button>
 
         <div className="flex items-center gap-4">
@@ -208,18 +233,28 @@ function FormPanel() {
         </div>
 
         <p className="text-xs text-text-tertiary text-center">
-          Don&apos;t have an account? Contact your admin
+          {isSignup ? "Already have an account?" : "Don't have an account?"}{" "}
+          <button
+            type="button"
+            onClick={() => { setMode(isSignup ? "login" : "signup"); setError(null); }}
+            className="text-accent-blue hover:underline"
+          >
+            {isSignup ? "Sign in" : "Sign up"}
+          </button>
         </p>
       </form>
     </section>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+const INPUT_CLS = "h-11 px-3.5 bg-bg-input border border-border text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue";
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1.5">
       <span className="text-xs font-medium text-text-secondary">{label}</span>
       {children}
+      {hint && <span className="text-[11px] text-text-tertiary">{hint}</span>}
     </label>
   );
 }
@@ -228,7 +263,9 @@ function OAuthButton({ icon, label }: { icon: React.ReactNode; label: string }) 
   return (
     <button
       type="button"
-      className="inline-flex h-11 flex-1 items-center justify-center gap-2 bg-bg-surface border border-border text-sm text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors"
+      disabled
+      title="OAuth not yet wired up"
+      className="inline-flex h-11 flex-1 items-center justify-center gap-2 bg-bg-surface border border-border text-sm text-text-tertiary cursor-not-allowed"
     >
       {icon}
       {label}

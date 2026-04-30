@@ -1,10 +1,16 @@
 import { z } from "zod";
 import {
   ProjectSchema, TaskSchema, TaskCommentSchema, AgentSessionSchema,
-  AuditEntrySchema, MessageSchema, QueueStatusSchema,
+  AuditEntrySchema, MessageSchema, QueueStatusSchema, UserSchema,
   type Project, type Task, type TaskComment, type AgentSession,
-  type AuditEntry, type Message, type QueueStatus,
+  type AuditEntry, type Message, type QueueStatus, type User,
 } from "@ai-orchestra/shared";
+
+export class AuthError extends Error {
+  constructor() {
+    super("Unauthorized");
+  }
+}
 
 const BASE = "/api";
 
@@ -14,7 +20,8 @@ const BASE = "/api";
  * (returns a clear validation error instead of a silent undefined later).
  */
 async function getValidated<T extends z.ZodTypeAny>(path: string, schema: T): Promise<z.infer<T>> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { credentials: "include" });
+  if (res.status === 401) throw new AuthError();
   if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
   return schema.parse(await res.json());
 }
@@ -22,9 +29,11 @@ async function getValidated<T extends z.ZodTypeAny>(path: string, schema: T): Pr
 async function postValidated<T extends z.ZodTypeAny>(path: string, body: unknown, schema: T): Promise<z.infer<T>> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) throw new AuthError();
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
@@ -35,6 +44,7 @@ async function postValidated<T extends z.ZodTypeAny>(path: string, body: unknown
 async function patchValidated<T extends z.ZodTypeAny>(path: string, body: unknown, schema: T): Promise<z.infer<T>> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PATCH",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -43,9 +53,19 @@ async function patchValidated<T extends z.ZodTypeAny>(path: string, body: unknow
 }
 
 async function del(path: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", credentials: "include" });
   if (!res.ok) throw new Error(`DELETE ${path}: ${res.status}`);
 }
+
+// Auth
+export const fetchMe = (): Promise<User> => getValidated("/auth/me", UserSchema);
+export const login = (data: { email: string; password: string }): Promise<User> =>
+  postValidated("/auth/login", data, UserSchema);
+export const signup = (data: { email: string; username: string; password: string }): Promise<User> =>
+  postValidated("/auth/signup", data, UserSchema);
+export const logout = async (): Promise<void> => {
+  await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" });
+};
 
 // Projects
 export const fetchProjects = (): Promise<Project[]> =>

@@ -12,9 +12,10 @@ import {
 import { checkUnblocked } from "./dependency-engine";
 import { dispatchSignal } from "./dispatcher";
 import { loadConfig } from "./config";
-import { notify } from "./notification-hub";
+import { notify, escalate } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
+import { resolveMaxRevisions } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
 const signalBodySchema = z.object({
@@ -98,6 +99,35 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
 
     // 5. Audit log
     await logAudit(signal, "allowed");
+
+    // 5b. Revisions counter — pr_changes_requested means another loop with dev.
+    // Counter resets on merge (pr-watcher). When the cap is hit we freeze the
+    // task and escalate; the dispatcher's frozen_reason gate keeps further
+    // signals from spawning anyone.
+    if (signal.taskId && signal.action === "pr_changes_requested") {
+      const { rows: settingsRows } = await getPool().query(
+        "SELECT settings FROM projects WHERE id = $1", [signal.projectId],
+      );
+      const cap = resolveMaxRevisions(settingsRows[0]?.settings);
+      const { rows: taskRows } = await getPool().query(
+        `UPDATE tasks SET revisions_count = revisions_count + 1, updated_at = now()
+          WHERE id = $1 RETURNING revisions_count`,
+        [signal.taskId],
+      );
+      const count = (taskRows[0]?.revisions_count as number | undefined) ?? 0;
+      if (count >= cap) {
+        const reason = `Revisions cap reached (${count}/${cap}) — manual review needed`;
+        await getPool().query(
+          `UPDATE tasks SET frozen_reason = COALESCE(frozen_reason, $1), updated_at = now()
+            WHERE id = $2`,
+          [reason, signal.taskId],
+        );
+        await escalate(signal.projectId, signal.taskId, reason, {
+          event: "revisions_cap", count, cap,
+        });
+        return reply.code(202).send({ id: rows[0].id, status: "frozen", reason });
+      }
+    }
 
     // 6. Check if state change unblocks other tasks
     if (signal.taskId) {

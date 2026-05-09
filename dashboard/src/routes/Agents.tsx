@@ -4,6 +4,7 @@ import { AgentCards } from "../components/AgentCards";
 import { TaskQueue } from "../components/TaskQueue";
 import { UsageWidget } from "../components/UsageWidget";
 import { CostWidget } from "../components/CostWidget";
+import { CostHistoryChart } from "../components/CostHistoryChart";
 import { EmptyProjects } from "../components/EmptyProjects";
 
 export default function Agents() {
@@ -18,6 +19,7 @@ export default function Agents() {
         <UsageWidget />
         <CostWidget />
       </div>
+      <CostHistoryChart />
     </div>
   );
 }

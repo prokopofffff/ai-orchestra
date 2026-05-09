@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { getDailyCostBreakdown, getCostsInRange } from "./cost-tracker";
+import { getDailyCostBreakdown, getCostsInRange, getDailyCostSeries } from "./cost-tracker";
 import { resolveDailyCostCap } from "./limits";
 import { getPool } from "./db";
 
@@ -37,5 +37,23 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
     const parsed = querySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     return await getCostsInRange(parsed.data);
+  });
+
+  /**
+   * Daily-bucketed series over the last N days (max 90), with role/model
+   * breakdown per bucket. Empty days included so the chart x-axis stays
+   * contiguous regardless of activity.
+   */
+  app.get<{ Querystring: { projectId?: string; days?: string } }>("/usage/costs/series", async (request, reply) => {
+    const projectId = request.query.projectId;
+    const days = Number(request.query.days ?? 7);
+    if (!Number.isFinite(days) || days < 1) {
+      return reply.code(400).send({ error: "days must be a positive integer" });
+    }
+    if (projectId && !/^[0-9a-f-]{36}$/i.test(projectId)) {
+      return reply.code(400).send({ error: "projectId must be a UUID" });
+    }
+    const series = await getDailyCostSeries({ projectId, days });
+    return { days: series };
   });
 };

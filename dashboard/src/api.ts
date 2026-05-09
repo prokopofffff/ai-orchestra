@@ -172,6 +172,18 @@ export const fetchUsageCosts = (params: { projectId?: string; from?: string; to?
   return getValidated(`/usage/costs${q ? `?${q}` : ""}`, UsageCostsSchema);
 };
 
+const UsageSeriesSchema = z.object({
+  days: z.array(z.object({
+    day: z.string(),
+    total: z.number(),
+    byRole: z.record(z.number()),
+    byModel: z.record(z.number()),
+  })),
+});
+export type UsageSeries = z.infer<typeof UsageSeriesSchema>;
+export const fetchUsageSeries = (projectId: string, days: 7 | 30 = 7): Promise<UsageSeries> =>
+  getValidated(`/usage/costs/series?projectId=${projectId}&days=${days}`, UsageSeriesSchema);
+
 // Health
 const HealthSchema = z.object({ status: z.string(), timestamp: z.string() });
 export const fetchHealth = () => getValidated("/health", HealthSchema);

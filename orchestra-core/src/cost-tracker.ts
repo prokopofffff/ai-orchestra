@@ -123,6 +123,74 @@ export async function getDailyCostBreakdown(projectId: string): Promise<DailyCos
   return { total: totalRows[0]?.total ?? 0, byRole, byModel };
 }
 
+export type DailyCostPoint = {
+  day: string;
+  total: number;
+  byRole: Record<string, number>;
+  byModel: Record<string, number>;
+};
+
+/**
+ * Per-day cost totals for the last N days, with role + model breakdown per
+ * bucket. Backs the dashboard's history chart. Days with zero spend are
+ * still emitted so the chart's x-axis is contiguous.
+ */
+export async function getDailyCostSeries(opts: {
+  projectId?: string;
+  days: number;
+}): Promise<DailyCostPoint[]> {
+  const days = Math.max(1, Math.min(opts.days, 90));
+  const pool = getPool();
+  const params: unknown[] = [days];
+  let projectFilter = "";
+  if (opts.projectId) {
+    params.push(opts.projectId);
+    projectFilter = ` AND project_id = $${params.length}`;
+  }
+
+  // Generate the date axis up front so empty days remain in the result.
+  const { rows: axisRows } = await pool.query(
+    `SELECT to_char(d::date, 'YYYY-MM-DD') AS day
+       FROM generate_series(
+         (now() - ($1::int - 1) * interval '1 day')::date,
+         now()::date,
+         interval '1 day'
+       ) AS d`,
+    params.slice(0, 1),
+  );
+  const axis = (axisRows as Array<{ day: string }>).map((r) => r.day);
+
+  const { rows: roleRows } = await pool.query(
+    `SELECT to_char(created_at::date, 'YYYY-MM-DD') AS day,
+            role, COALESCE(SUM(cost_usd), 0)::float8 AS total
+       FROM usage_costs
+      WHERE created_at >= (now() - ($1::int - 1) * interval '1 day')::date${projectFilter}
+      GROUP BY day, role`,
+    params,
+  );
+  const { rows: modelRows } = await pool.query(
+    `SELECT to_char(created_at::date, 'YYYY-MM-DD') AS day,
+            model, COALESCE(SUM(cost_usd), 0)::float8 AS total
+       FROM usage_costs
+      WHERE created_at >= (now() - ($1::int - 1) * interval '1 day')::date${projectFilter}
+      GROUP BY day, model`,
+    params,
+  );
+
+  const out: Record<string, DailyCostPoint> = {};
+  for (const day of axis) out[day] = { day, total: 0, byRole: {}, byModel: {} };
+  for (const r of roleRows as Array<{ day: string; role: string; total: number }>) {
+    if (!out[r.day]) out[r.day] = { day: r.day, total: 0, byRole: {}, byModel: {} };
+    out[r.day].byRole[r.role] = r.total;
+    out[r.day].total += r.total;
+  }
+  for (const r of modelRows as Array<{ day: string; model: string; total: number }>) {
+    if (!out[r.day]) out[r.day] = { day: r.day, total: 0, byRole: {}, byModel: {} };
+    out[r.day].byModel[r.model] = r.total;
+  }
+  return axis.map((d) => out[d]);
+}
+
 /**
  * Project-level cost rollup over an arbitrary range. Used by /api/usage/costs.
  */

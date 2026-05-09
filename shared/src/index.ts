@@ -76,6 +76,8 @@ export const LimitsSchema = z.object({
   maxRevisions: z.number().int().positive().optional(),
   maxFails: z.number().int().positive().optional(),
   maxSignalsPerTask: z.number().int().positive().optional(),
+  maxQaDepth: z.number().int().positive().optional(),
+  maxConcurrentSessions: z.number().int().positive().optional(),
   runTimeoutMs: z.record(AgentRoleSchema, z.number().int().positive()).optional(),
 });
 export type Limits = z.infer<typeof LimitsSchema>;

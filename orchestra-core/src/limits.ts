@@ -19,6 +19,8 @@ export const DEFAULT_LIMITS = {
   maxRevisions: 5,
   maxFails: 3,
   maxSignalsPerTask: 200,
+  maxQaDepth: 5,
+  maxConcurrentSessions: 4,
   runTimeoutMs: {
     "tech-lead": 2 * 60 * 60 * 1000,
     designer: 30 * 60 * 1000,
@@ -65,4 +67,12 @@ export function resolveMaxSignalsPerTask(settings: unknown): number {
 
 export function resolveRunTimeoutMs(role: AgentRole, settings: unknown): number {
   return parseLimits(settings).runTimeoutMs?.[role] ?? DEFAULT_LIMITS.runTimeoutMs[role];
+}
+
+export function resolveMaxQaDepth(settings: unknown): number {
+  return parseLimits(settings).maxQaDepth ?? DEFAULT_LIMITS.maxQaDepth;
+}
+
+export function resolveMaxConcurrentSessions(settings: unknown): number {
+  return parseLimits(settings).maxConcurrentSessions ?? DEFAULT_LIMITS.maxConcurrentSessions;
 }

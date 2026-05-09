@@ -15,7 +15,7 @@ import { loadConfig } from "./config";
 import { notify, escalate } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
-import { resolveMaxRevisions, resolveMaxSignalsPerTask, resolveMaxFails } from "./limits";
+import { resolveMaxRevisions, resolveMaxSignalsPerTask, resolveMaxFails, resolveMaxQaDepth } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
 const signalBodySchema = z.object({
@@ -52,6 +52,41 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
     if (!routeCheck.allowed) {
       await logAudit(signal, "rejected", routeCheck.reason);
       return reply.code(403).send({ error: routeCheck.reason });
+    }
+
+    // 1a. Q&A depth cap. Counts prior `question` signals on this task; the
+    // (N+1)-th question is rejected so a chatty agent ↔ TL pair can't loop
+    // through the spawn cycle indefinitely. Answers don't count themselves —
+    // they just continue an existing round.
+    if (signal.taskId && signal.action === "question") {
+      const { rows: settingsRows } = await getPool().query(
+        "SELECT settings FROM projects WHERE id = $1", [signal.projectId],
+      );
+      const qaCap = resolveMaxQaDepth(settingsRows[0]?.settings);
+      const { rows: priorRows } = await getPool().query(
+        "SELECT COUNT(*)::int AS c FROM signals WHERE task_id = $1 AND action = 'question'",
+        [signal.taskId],
+      );
+      const prior = priorRows[0]?.c as number;
+      if (prior >= qaCap) {
+        // Single escalate — distinguish the first rejection from later ones
+        // by looking for a prior reject audit on this same task.
+        const { rows: priorRejects } = await getPool().query(
+          `SELECT 1 FROM flow_audit
+            WHERE task_id = $1 AND status = 'rejected' AND reason = 'qa_depth_exceeded'
+            LIMIT 1`,
+          [signal.taskId],
+        );
+        await logAudit(signal, "rejected", "qa_depth_exceeded");
+        if (priorRejects.length === 0) {
+          await escalate(
+            signal.projectId, signal.taskId,
+            `Q&A depth ${qaCap} reached on task — possible loop`,
+            { event: "qa_depth_cap", count: prior, cap: qaCap },
+          );
+        }
+        return reply.code(429).send({ error: `Q&A depth cap exceeded (${prior}/${qaCap})` });
+      }
     }
 
     // 1b. Per-task signal cap. Catches loops that drown the system in valid

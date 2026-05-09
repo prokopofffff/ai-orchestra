@@ -84,11 +84,20 @@ describe("dispatcher — frozen_reason gate", () => {
 
     await reconcileOrphanedTasks(config);
 
-    expect(enqueue).not.toHaveBeenCalled();
+    // Scoped: vitest may run sibling files in parallel, leaving foreign
+    // active tasks the reconciler also picks up — assert only on our project.
+    expect(enqueueCallsForProject(projectId)).toHaveLength(0);
   });
 
   it("reconcileOrphanedTasks picks up non-frozen orphans", async () => {
     await reconcileOrphanedTasks(config);
-    expect(enqueue).toHaveBeenCalledOnce();
+    expect(enqueueCallsForProject(projectId)).toHaveLength(1);
   });
 });
+
+function enqueueCallsForProject(pid: string) {
+  return vi.mocked(enqueue).mock.calls.filter((c) => {
+    const arg = c[0] as { projectId?: string };
+    return arg?.projectId === pid;
+  });
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import { waitForDatabase, runMigrations, getPool } from "../db";
-import { runOneJob, enqueue } from "../scheduler";
+import { runOneJob, enqueue, registerBucket } from "../scheduler";
 import "../pr-watcher"; // side-effect: registers the handlers
 
 const DATABASE_URL = process.env.DATABASE_URL
@@ -21,6 +21,11 @@ beforeEach(async () => {
   await pool.query("DELETE FROM graphile_worker._private_jobs").catch(() => {});
   await pool.query("DELETE FROM tasks");
   await pool.query("DELETE FROM projects WHERE slug = 'pr-test'");
+  // 0-token bucket: enqueue tags check-one with bucket:github:rest, the
+  // forbiddenFlags check then keeps those jobs queued so we can assert their
+  // shape. Without this, runOneJob() would drain them before the test SELECTs.
+  await pool.query("DELETE FROM rate_buckets WHERE key = 'github:rest'");
+  await registerBucket({ key: "github:rest", capacity: 0, refillPerSecond: 0 });
 
   const { rows } = await pool.query(
     "INSERT INTO projects (name, slug, repo_url) VALUES ('PR Test', 'pr-test', 'https://github.com/test/pr') RETURNING id",

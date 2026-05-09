@@ -20,6 +20,7 @@ import { conversationPlugin } from "./conversation-api";
 import { webhookPlugin } from "./webhooks";
 import { prPlugin } from "./pr-api";
 import { authPlugin } from "./auth-api";
+import { usagePlugin } from "./usage-api";
 import { requireAuth, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
 import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
@@ -97,6 +98,7 @@ async function main() {
   await app.register(conversationPlugin, { prefix: "/api" });
   await app.register(webhookPlugin, { prefix: "/api" });
   await app.register(prPlugin, { prefix: "/api" });
+  await app.register(usagePlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
   const dashboardRoot = path.resolve(config.dashboardPath);

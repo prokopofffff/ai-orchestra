@@ -17,6 +17,9 @@ import { installScopeHook } from "./scope-enforcer";
 import { runAgentSdk } from "./agents/sdk-runner";
 import { loadSystemPrompt, buildScopeRules, assemblePrompt } from "./agents/prompt";
 import { providerFor } from "./providers";
+import { assertWithinDailyCap, CostCapExceeded } from "./cost-tracker";
+import { resolveDailyCostCap } from "./limits";
+import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 
 // ─── Spawn Agent ───
@@ -79,6 +82,21 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   }
 
   const model = getModelForRole(config, role, settings as Record<string, unknown>);
+
+  // ── 1b. Daily cost cap gate ─────────────────────────────────────────
+  // Hit before any worktree/IO so a tripped cap is cheap. cap=0 → unlimited.
+  try {
+    await assertWithinDailyCap(projectId, resolveDailyCostCap(settings));
+  } catch (err) {
+    if (err instanceof CostCapExceeded) {
+      await escalate(
+        projectId, taskId,
+        `Daily cost cap reached: $${err.spent.toFixed(2)} / $${err.cap.toFixed(2)} — agent ${role} not started`,
+        { event: "daily_cost_cap", role, spent: err.spent, cap: err.cap },
+      );
+    }
+    throw err;
+  }
 
   // ── 2. Worktree + scope hook ────────────────────────────────────────
   let repoDir: string;

@@ -137,6 +137,24 @@ export async function getCostsInRange(opts: {
   return { total, rows: rows as Array<{ projectId: string; role: string; model: string; total: number }> };
 }
 
+export class CostCapExceeded extends Error {
+  constructor(public readonly cap: number, public readonly spent: number) {
+    super(`Daily cost cap reached: $${spent.toFixed(2)} / $${cap.toFixed(2)}`);
+    this.name = "CostCapExceeded";
+  }
+}
+
+/**
+ * Pre-spawn check. Throws CostCapExceeded if today's spend already meets or
+ * exceeds the project's cap. cap=0 means unlimited (no check).
+ */
+export async function assertWithinDailyCap(projectId: string, cap: number): Promise<{ spent: number; cap: number }> {
+  if (cap <= 0) return { spent: await getDailyCost(projectId), cap };
+  const spent = await getDailyCost(projectId);
+  if (spent >= cap) throw new CostCapExceeded(cap, spent);
+  return { spent, cap };
+}
+
 /**
  * Test/utility helper. Lets tests insert synthetic spend without going through
  * the SDK runner.

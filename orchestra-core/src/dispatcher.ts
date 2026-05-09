@@ -245,6 +245,14 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
       continue;
     }
 
+    // Mirror applySpawn's concurrency check: reconcile must not bypass it,
+    // otherwise a deferred-on-cap task would over-spawn the project.
+    const conc = await checkProjectConcurrency(task.project_id);
+    if (!conc.ok) {
+      log.info(conc, "reconcile skip: project concurrency cap");
+      continue;
+    }
+
     log.info({ state: task.state, role, taskId: task.id }, "reconcile → enqueue");
     await enqueue({ projectId: task.project_id, taskId: task.id, role, config });
   }

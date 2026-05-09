@@ -29,6 +29,7 @@ import { getLogs } from "./logger";
 import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling";
 import { startPrWatcher, stopPrWatcher } from "./pr-watcher";
 import { startCostVelocityWatcher, stopCostVelocityWatcher } from "./cost-velocity-watcher";
+import { startDispatchReconciler, stopDispatchReconciler } from "./dispatch-reconciler";
 import { reconcileOrphanedTasks } from "./dispatcher";
 import { startScheduler, stopScheduler, registerBucket } from "./scheduler";
 import "./agents/check-handlers"; // side-effect: registers agent:observe-check handler
@@ -148,6 +149,7 @@ async function main() {
   await startUsageTracking();
   await startPrWatcher();
   await startCostVelocityWatcher();
+  await startDispatchReconciler();
 
   // Start Telegram polling (long-poll loop, not a tick — kept as-is)
   startTelegramPolling();
@@ -175,6 +177,7 @@ async function main() {
     stopTelegramPolling();
     stopPrWatcher();
     stopCostVelocityWatcher();
+    stopDispatchReconciler();
     await stopScheduler();
 
     await app.close();

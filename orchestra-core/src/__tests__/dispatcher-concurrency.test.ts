@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { waitForDatabase, runMigrations, getPool } from "../db";
-import { dispatchSignal } from "../dispatcher";
+import { dispatchSignal, reconcileOrphanedTasks } from "../dispatcher";
 import { configSchema } from "../config";
 
 vi.mock("../rate-limiter", () => ({ enqueue: vi.fn() }));
@@ -77,6 +77,18 @@ describe("dispatcher — project concurrency cap", () => {
     );
     expect(r.dispatched).toBe(false);
     expect(r.reason).toMatch(/concurrency cap/i);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("reconcileOrphanedTasks also honours the concurrency cap", async () => {
+    await seedActiveSessions(2); // already at cap (=2)
+    // Task is in an active state with no session of its own → would normally
+    // be reconciled, but the project is over cap so it must be skipped.
+    await getPool().query(
+      "UPDATE tasks SET state = 'in_development' WHERE id = $1", [taskId],
+    );
+
+    await reconcileOrphanedTasks(config);
     expect(enqueue).not.toHaveBeenCalled();
   });
 

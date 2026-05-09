@@ -57,6 +57,20 @@ export async function recordCost(input: RecordCostInput): Promise<void> {
 }
 
 /**
+ * Total USD spent across all projects in the last 24h. Used by the
+ * orchestra-wide cap so an organisation-level number can complement
+ * (or overrule) any per-project setting.
+ */
+export async function getOrchestraDailyCost(): Promise<number> {
+  const { rows } = await getPool().query(
+    `SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
+       FROM usage_costs
+      WHERE created_at >= now() - interval '1 day'`,
+  );
+  return rows[0]?.total ?? 0;
+}
+
+/**
  * Total USD spent on a project within the last 24h ending now.
  * The pre-spawn gate (M1.1) reads this before each agent launch.
  */
@@ -153,6 +167,28 @@ export async function assertWithinDailyCap(projectId: string, cap: number): Prom
   const spent = await getDailyCost(projectId);
   if (spent >= cap) throw new CostCapExceeded(cap, spent);
   return { spent, cap };
+}
+
+/**
+ * Orchestra-wide cap. Reads `orchestra_daily_cost_cap_usd` from system_config
+ * (env override `ORCHESTRA_DAILY_COST_CAP_USD`). Missing / 0 = disabled.
+ */
+export async function assertWithinOrchestraDailyCap(): Promise<{ spent: number; cap: number }> {
+  const cap = await getOrchestraDailyCostCap();
+  const spent = await getOrchestraDailyCost();
+  if (cap > 0 && spent >= cap) throw new CostCapExceeded(cap, spent);
+  return { spent, cap };
+}
+
+export async function getOrchestraDailyCostCap(): Promise<number> {
+  const env = Number(process.env.ORCHESTRA_DAILY_COST_CAP_USD);
+  if (Number.isFinite(env) && env >= 0) return env;
+  const { rows } = await getPool().query(
+    "SELECT value FROM system_config WHERE key = 'orchestra_daily_cost_cap_usd' LIMIT 1",
+  ).catch(() => ({ rows: [] as Array<{ value: string }> }));
+  const raw = rows[0]?.value;
+  const n = raw != null ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
 /**

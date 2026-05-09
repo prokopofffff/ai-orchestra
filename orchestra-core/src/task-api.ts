@@ -261,7 +261,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
 
   // ─── System Config ───
 
-  const ALLOWED_KEYS = ["claude_auth", "claude_api_key", "github_token", "github_default_org", "github_default_branch"] as const;
+  const ALLOWED_KEYS = ["claude_auth", "claude_api_key", "github_token", "github_default_org", "github_default_branch", "orchestra_daily_cost_cap_usd"] as const;
   type ConfigKey = typeof ALLOWED_KEYS[number];
   type SystemConfigMap = Partial<Record<ConfigKey, string>>;
 

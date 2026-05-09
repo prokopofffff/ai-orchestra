@@ -16,7 +16,7 @@
 
 import { sql } from "drizzle-orm";
 import {
-  pgTable, uuid, text, jsonb, timestamp, doublePrecision,
+  pgTable, uuid, text, jsonb, timestamp, doublePrecision, integer,
   boolean, index, uniqueIndex, check,
 } from "drizzle-orm/pg-core";
 
@@ -189,6 +189,29 @@ export const agentLogs = pgTable("agent_logs", {
   check("agent_logs_level_check", sql`level IN ('stdout','stderr','system','error')`),
 ]);
 
+// ─── Usage costs (per-run, per-model spend telemetry) ─────────────────────
+
+export const usageCosts = pgTable("usage_costs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  sessionId: uuid("session_id").references(() => sessions.id, { onDelete: "set null" }),
+  taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+  role: text("role").notNull(),
+  model: text("model").notNull(),
+  costUsd: doublePrecision("cost_usd").notNull(),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+  durationMs: integer("duration_ms").notNull().default(0),
+  resultSubtype: text("result_subtype"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_usage_costs_project_day").on(t.projectId, t.createdAt),
+  index("idx_usage_costs_session").on(t.sessionId),
+  index("idx_usage_costs_task").on(t.taskId),
+]);
+
 // ─── Rate buckets (token-bucket gating for the scheduler) ─────────────────
 
 export const rateBuckets = pgTable("rate_buckets", {
@@ -221,3 +244,5 @@ export type TelegramUser = typeof telegramUsers.$inferSelect;
 export type FlowAudit = typeof flowAudit.$inferSelect;
 export type AgentLog = typeof agentLogs.$inferSelect;
 export type RateBucket = typeof rateBuckets.$inferSelect;
+export type UsageCost = typeof usageCosts.$inferSelect;
+export type NewUsageCost = typeof usageCosts.$inferInsert;

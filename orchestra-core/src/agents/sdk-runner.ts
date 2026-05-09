@@ -11,6 +11,8 @@ import { updateSession } from "../session-manager";
 import { enqueue } from "../scheduler";
 import { CHECK_KIND } from "./check-handlers";
 import { getAgentConfig } from "./configs";
+import { recordCost } from "../cost-tracker";
+import { logBackgroundError } from "../error-handler";
 import type { AgentRole } from "../config";
 
 export type SdkRunInput = {
@@ -83,6 +85,15 @@ export async function runAgentSdk(p: SdkRunInput): Promise<void> {
   try {
     for await (const message of stream) {
       logMessage(p, message);
+      if (message.type === "result") {
+        await recordCost({
+          projectId: p.projectId,
+          sessionId: p.sessionId,
+          taskId: p.taskId,
+          role: p.role,
+          result: message,
+        }).catch((e) => logBackgroundError("sdk-runner:recordCost", e, p.projectId));
+      }
     }
     await updateSession(p.sessionId, { status: "terminated", finishedAt: new Date() });
     appendLog(p.projectId, p.sessionId, p.role, "system", "SDK run completed");

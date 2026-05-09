@@ -11,7 +11,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
 
-const config = configSchema.parse({ databaseUrl: DATABASE_URL });
+const config = configSchema.parse({ databaseUrl: DATABASE_URL, jwtSecret: "test-test-test-test-test-test" });
 
 let projectId: string;
 

@@ -5,6 +5,7 @@ import { configSchema } from "../config";
 const config = configSchema.parse({
   databaseUrl: "postgres://localhost:5432/test",
   port: 3000,
+  jwtSecret: "test-test-test-test-test-test",
 });
 
 describe("mcp-config-generator", () => {

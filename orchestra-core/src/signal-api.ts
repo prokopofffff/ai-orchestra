@@ -15,7 +15,7 @@ import { loadConfig } from "./config";
 import { notify, escalate } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
-import { resolveMaxRevisions, resolveMaxSignalsPerTask } from "./limits";
+import { resolveMaxRevisions, resolveMaxSignalsPerTask, resolveMaxFails } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
 const signalBodySchema = z.object({
@@ -138,6 +138,33 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
           `Task exceeded ${sigCap} signals — possible loop`,
           { event: "signal_cap", count: newCount, cap: sigCap },
         );
+      }
+    }
+
+    // 5c. Failed-loop counter — tests_failed sends task back to dev. Same
+    // shape as revisions: INC, freeze + escalate at the cap.
+    if (signal.taskId && signal.action === "tests_failed") {
+      const { rows: settingsRows } = await getPool().query(
+        "SELECT settings FROM projects WHERE id = $1", [signal.projectId],
+      );
+      const cap = resolveMaxFails(settingsRows[0]?.settings);
+      const { rows: taskRows } = await getPool().query(
+        `UPDATE tasks SET failed_count = failed_count + 1, updated_at = now()
+          WHERE id = $1 RETURNING failed_count`,
+        [signal.taskId],
+      );
+      const count = (taskRows[0]?.failed_count as number | undefined) ?? 0;
+      if (count >= cap) {
+        const reason = `Failed-loop cap reached (${count}/${cap}) — manual review needed`;
+        await getPool().query(
+          `UPDATE tasks SET frozen_reason = COALESCE(frozen_reason, $1), updated_at = now()
+            WHERE id = $2`,
+          [reason, signal.taskId],
+        );
+        await escalate(signal.projectId, signal.taskId, reason, {
+          event: "failed_cap", count, cap,
+        });
+        return reply.code(202).send({ id: rows[0].id, status: "frozen", reason });
       }
     }
 

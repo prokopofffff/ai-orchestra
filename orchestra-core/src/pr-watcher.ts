@@ -102,7 +102,11 @@ registerHandler(PR_CHECK_ONE_KIND, CheckOnePayload, async (p, ctx) => {
     if (!qaMerged) return;
 
     await pool.query(
-      "UPDATE tasks SET state = 'merged', revisions_count = 0, updated_at = now() WHERE id = $1",
+      `UPDATE tasks SET state = 'merged',
+                       revisions_count = 0,
+                       failed_count = 0,
+                       updated_at = now()
+        WHERE id = $1`,
       [p.taskId],
     );
     appendLog(p.projectId, null, "system", "system", `Task "${p.title}" → merged (code + tests PRs merged)`);

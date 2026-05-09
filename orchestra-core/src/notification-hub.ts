@@ -72,6 +72,33 @@ export async function notifyPrReady(
 }
 
 /**
+ * Raise an escalation: writes a `system → user` signal with `action='escalate'`
+ * and pushes a high-priority notification. Single entry point so call sites
+ * (cost cap, revisions cap, signal cap, run timeout, …) don't duplicate the
+ * INSERT + notify pair.
+ */
+export async function escalate(
+  projectId: string,
+  taskId: string | null,
+  reason: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  const payload = { message: reason, ...(metadata ?? {}) };
+  await getPool().query(
+    `INSERT INTO signals (project_id, task_id, from_role, to_role, action, payload)
+     VALUES ($1, $2, 'system', 'user', 'escalate', $3)`,
+    [projectId, taskId, JSON.stringify(payload)],
+  );
+  await notify({
+    projectId,
+    text: `⚠ ${reason}`,
+    priority: "high",
+    fromRole: "system",
+    metadata: { event: "escalation", taskId, ...(metadata ?? {}) },
+  });
+}
+
+/**
  * Notify about escalation.
  */
 export async function notifyEscalation(

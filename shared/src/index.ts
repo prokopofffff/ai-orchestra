@@ -64,10 +64,27 @@ export const ProjectProviderConfigSchema = z.object({
 });
 export type ProjectProviderConfig = z.infer<typeof ProjectProviderConfigSchema>;
 
+/**
+ * Per-project safety limits. `dailyCostUsd = 0` means unlimited; absence of
+ * any field means "use the in-code default". Numeric defaults live in
+ * orchestra-core/src/config.ts → `DEFAULT_LIMITS` so they can change without
+ * touching the wire schema.
+ */
+export const LimitsSchema = z.object({
+  dailyCostUsd: z.number().nonnegative().optional(),
+  perRunBudgetUsd: z.record(AgentRoleSchema, z.number().positive()).optional(),
+  maxRevisions: z.number().int().positive().optional(),
+  maxFails: z.number().int().positive().optional(),
+  maxSignalsPerTask: z.number().int().positive().optional(),
+  runTimeoutMs: z.record(AgentRoleSchema, z.number().int().positive()).optional(),
+});
+export type Limits = z.infer<typeof LimitsSchema>;
+
 export const ProjectSettingsSchema = z.object({
   models: z.record(AgentRoleSchema, z.string()).optional(),
   checks: z.record(AgentRoleSchema, z.array(AgentCheckSchema)).optional(),
   provider: ProjectProviderConfigSchema.optional(),
+  limits: LimitsSchema.optional(),
 }).catchall(z.unknown());
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

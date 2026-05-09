@@ -97,3 +97,40 @@ export async function terminateSession(id: string): Promise<void> {
     [id],
   );
 }
+
+// ─── In-process AbortController registry ──────────────────────────────────
+//
+// Lives only in the running orchestra-core process. Used by sdk-runner to
+// expose the SDK's `Options.abortController` for external cancellation:
+// timeout watchdogs, manual kill API, daily-cap watchers. Cleared whenever
+// a run terminates so we don't leak signals.
+
+const controllers = new Map<string, AbortController>();
+
+export function registerSessionController(sessionId: string, controller: AbortController): void {
+  controllers.set(sessionId, controller);
+}
+
+export function unregisterSessionController(sessionId: string): void {
+  controllers.delete(sessionId);
+}
+
+export function getSessionController(sessionId: string): AbortController | undefined {
+  return controllers.get(sessionId);
+}
+
+export async function abortSession(sessionId: string, reason: string): Promise<boolean> {
+  const c = controllers.get(sessionId);
+  if (!c) return false;
+  c.abort(reason);
+  return true;
+}
+
+export async function abortProjectSessions(projectId: string, reason: string): Promise<number> {
+  const active = await getActiveSessions(projectId);
+  let count = 0;
+  for (const s of active) {
+    if (await abortSession(s.id, reason)) count++;
+  }
+  return count;
+}

@@ -7,12 +7,14 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { minimatch } from "minimatch";
 import { appendLog } from "../logger";
-import { updateSession } from "../session-manager";
+import { updateSession, registerSessionController, unregisterSessionController } from "../session-manager";
 import { enqueue } from "../scheduler";
 import { CHECK_KIND } from "./check-handlers";
 import { getAgentConfig } from "./configs";
 import { recordCost } from "../cost-tracker";
+import { resolvePerRunBudgetUsd } from "../limits";
 import { logBackgroundError } from "../error-handler";
+import { escalate } from "../notification-hub";
 import type { AgentRole } from "../config";
 
 export type SdkRunInput = {
@@ -24,7 +26,18 @@ export type SdkRunInput = {
   worktree: string;
   fullPrompt: string;
   mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+  /** Project settings (used to resolve per-run budget). */
+  settings?: unknown;
   resumeSessionId?: string;
+};
+
+/**
+ * Outcome of a run, surfaced to the caller (agent-spawner) so it can take
+ * follow-up actions like freezing the task on a budget breach.
+ */
+export type SdkRunOutcome = {
+  /** Set when the run aborted due to a cap rather than completing normally. */
+  capExceeded?: { kind: "budget" | "timeout" | "aborted"; detail: string };
 };
 
 /**
@@ -34,14 +47,22 @@ export type SdkRunInput = {
  * lease for the duration. On crash mid-run, the lease expires and the job
  * re-claims — at which point `resumeSessionId` lets us pick up where we left off.
  */
-export async function runAgentSdk(p: SdkRunInput): Promise<void> {
+export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
   const cfg = getAgentConfig(p.role);
+  const outcome: SdkRunOutcome = {};
+
+  const abortController = new AbortController();
+  registerSessionController(p.sessionId, abortController);
+
+  const maxBudgetUsd = resolvePerRunBudgetUsd(p.role, p.settings);
 
   const options: Options = {
     model: p.model,
     cwd: p.worktree,
     resume: p.resumeSessionId,
     permissionMode: "bypassPermissions",
+    abortController,
+    maxBudgetUsd,
     canUseTool: buildCanUseTool(cfg.scope.denied),
     mcpServers: Object.fromEntries(
       Object.entries(p.mcpServers).map(([name, s]) => [
@@ -78,7 +99,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<void> {
   };
 
   appendLog(p.projectId, p.sessionId, p.role, "system",
-    `SDK run started: model=${p.model} worktree=${p.worktree}`);
+    `SDK run started: model=${p.model} worktree=${p.worktree} budget=$${maxBudgetUsd}`);
 
   const stream = query({ prompt: p.fullPrompt, options });
 
@@ -93,6 +114,20 @@ export async function runAgentSdk(p: SdkRunInput): Promise<void> {
           role: p.role,
           result: message,
         }).catch((e) => logBackgroundError("sdk-runner:recordCost", e, p.projectId));
+
+        if (message.subtype === "error_max_budget_usd") {
+          outcome.capExceeded = {
+            kind: "budget",
+            detail: `Run exceeded per-run budget $${maxBudgetUsd}`,
+          };
+          appendLog(p.projectId, p.sessionId, p.role, "error",
+            `SDK aborted: per-run budget $${maxBudgetUsd} exceeded`);
+          await escalate(
+            p.projectId, p.taskId,
+            `Agent ${p.role} exceeded per-run budget $${maxBudgetUsd} on task ${p.taskId}`,
+            { event: "budget_cap", role: p.role, sessionId: p.sessionId, budgetUsd: maxBudgetUsd },
+          ).catch((e) => logBackgroundError("sdk-runner:budget-escalate", e, p.projectId));
+        }
       }
     }
     await updateSession(p.sessionId, { status: "terminated", finishedAt: new Date() });
@@ -102,7 +137,11 @@ export async function runAgentSdk(p: SdkRunInput): Promise<void> {
     await updateSession(p.sessionId, { status: "crashed", finishedAt: new Date() });
     appendLog(p.projectId, p.sessionId, p.role, "error", `SDK run failed: ${msg}`);
     throw err; // let the scheduler handler decide retry
+  } finally {
+    unregisterSessionController(p.sessionId);
   }
+
+  return outcome;
 }
 
 function logMessage(p: SdkRunInput, m: SDKMessage): void {

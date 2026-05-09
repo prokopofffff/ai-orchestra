@@ -31,6 +31,8 @@ export interface SpawnAgentParams {
 
 export interface SpawnResult {
   session: Session;
+  /** Set when the SDK aborted on a cap; downstream may freeze the task. */
+  capExceeded?: { kind: "budget" | "timeout" | "aborted"; detail: string };
 }
 
 /**
@@ -106,8 +108,9 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   appendLog(projectId, session.id, role, "system", `agent run: model=${model} worktree=${worktreeDir}`);
 
   // ── 5. SDK run (awaits the full agent) ──────────────────────────────
+  let capExceeded: SpawnResult["capExceeded"];
   try {
-    await runAgentSdk({
+    const outcome = await runAgentSdk({
       projectId,
       taskId,
       sessionId: session.id,
@@ -116,8 +119,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       worktree: worktreeDir,
       fullPrompt,
       mcpServers,
+      settings,
       resumeSessionId: params.resumeSessionId,
     });
+    capExceeded = outcome.capExceeded;
   } finally {
     // ── 6. Notify + cleanup ────────────────────────────────────────────
     const taskTitle = (await getPool().query("SELECT title FROM tasks WHERE id = $1", [taskId])).rows[0]?.title;
@@ -130,5 +135,5 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     await cleanupWorktree(repoDir, worktreeDir);
   }
 
-  return { session };
+  return { session, capExceeded };
 }

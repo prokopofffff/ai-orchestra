@@ -1,10 +1,11 @@
 import { type Config, type AgentRole } from "./config";
-import { getActiveSessionForRole } from "./session-manager";
+import { getActiveSessionForRole, getActiveSessions } from "./session-manager";
 import { enqueue } from "./rate-limiter";
 import { getPool } from "./db";
 import { checkUnblocked } from "./dependency-engine";
 import { logBackgroundError } from "./error-handler";
 import { getEdge, type Edge, type Target } from "./flow";
+import { resolveMaxConcurrentSessions } from "./limits";
 import { log } from "./obs";
 
 export interface DispatchResult {
@@ -107,8 +108,27 @@ async function applySpawn(edge: Edge, signal: Signal, config: Config): Promise<D
     return { dispatched: false, reason: `Task frozen: ${frozen}` };
   }
 
+  // Project-level concurrency cap. Prevents the orchestra from running all
+  // six roles in parallel and tripping rate limits / token costs all at once.
+  // Signal stays in DB; reconcile or the next heartbeat picks it up later.
+  const concurrencyCheck = await checkProjectConcurrency(signal.projectId);
+  if (!concurrencyCheck.ok) {
+    log.info(concurrencyCheck, "skip spawn: project concurrency cap");
+    return { dispatched: false, reason: `Project concurrency cap reached (${concurrencyCheck.active}/${concurrencyCheck.cap})` };
+  }
+
   await enqueue({ projectId: signal.projectId, taskId, role: targetRole, config });
   return { dispatched: true, role: targetRole, queued: true };
+}
+
+async function checkProjectConcurrency(projectId: string): Promise<
+  { ok: true } | { ok: false; active: number; cap: number; projectId: string }
+> {
+  const { rows } = await getPool().query("SELECT settings FROM projects WHERE id = $1", [projectId]);
+  const cap = resolveMaxConcurrentSessions(rows[0]?.settings);
+  const active = (await getActiveSessions(projectId)).length;
+  if (active >= cap) return { ok: false, active, cap, projectId };
+  return { ok: true };
 }
 
 async function getFrozenReason(taskId: string): Promise<string | null> {

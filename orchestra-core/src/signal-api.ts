@@ -15,7 +15,7 @@ import { loadConfig } from "./config";
 import { notify, escalate } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
-import { resolveMaxRevisions } from "./limits";
+import { resolveMaxRevisions, resolveMaxSignalsPerTask } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
 const signalBodySchema = z.object({
@@ -52,6 +52,24 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
     if (!routeCheck.allowed) {
       await logAudit(signal, "rejected", routeCheck.reason);
       return reply.code(403).send({ error: routeCheck.reason });
+    }
+
+    // 1b. Per-task signal cap. Catches loops that drown the system in valid
+    // but redundant signals. Counter on tasks.signals_count is INC'd after
+    // store; this branch reads the prior value and silently rejects past cap.
+    if (signal.taskId) {
+      const { rows: settingsRows } = await getPool().query(
+        "SELECT settings FROM projects WHERE id = $1", [signal.projectId],
+      );
+      const sigCap = resolveMaxSignalsPerTask(settingsRows[0]?.settings);
+      const { rows: countRows } = await getPool().query(
+        "SELECT signals_count FROM tasks WHERE id = $1", [signal.taskId],
+      );
+      const current = (countRows[0]?.signals_count as number | undefined) ?? 0;
+      if (current >= sigCap) {
+        await logAudit(signal, "rejected", "signal_cap_exceeded");
+        return reply.code(429).send({ error: `Signal cap exceeded for task (${current}/${sigCap})` });
+      }
     }
 
     // 2. If task-related, validate state transition
@@ -99,6 +117,29 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
 
     // 5. Audit log
     await logAudit(signal, "allowed");
+
+    // 5a. Increment signals_count. Boundary escalate (one shot) when newly
+    // hitting the cap so the user knows; further sends will hit the silent
+    // reject branch above.
+    if (signal.taskId) {
+      const { rows: settingsRows } = await getPool().query(
+        "SELECT settings FROM projects WHERE id = $1", [signal.projectId],
+      );
+      const sigCap = resolveMaxSignalsPerTask(settingsRows[0]?.settings);
+      const { rows: incRows } = await getPool().query(
+        `UPDATE tasks SET signals_count = signals_count + 1, updated_at = now()
+          WHERE id = $1 RETURNING signals_count`,
+        [signal.taskId],
+      );
+      const newCount = (incRows[0]?.signals_count as number | undefined) ?? 0;
+      if (newCount === sigCap) {
+        await escalate(
+          signal.projectId, signal.taskId,
+          `Task exceeded ${sigCap} signals — possible loop`,
+          { event: "signal_cap", count: newCount, cap: sigCap },
+        );
+      }
+    }
 
     // 5b. Revisions counter — pr_changes_requested means another loop with dev.
     // Counter resets on merge (pr-watcher). When the cap is hit we freeze the

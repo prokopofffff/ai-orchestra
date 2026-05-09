@@ -99,8 +99,24 @@ async function applySpawn(edge: Edge, signal: Signal, config: Config): Promise<D
     return { dispatched: false, reason: `No task to dispatch ${targetRole} on` };
   }
 
+  // Frozen tasks block all spawns. Set by safety caps (revisions, failed,
+  // budget); cleared via /tasks/:id/unfreeze.
+  const frozen = await getFrozenReason(taskId);
+  if (frozen) {
+    log.info({ taskId, reason: frozen }, "skip spawn: task is frozen");
+    return { dispatched: false, reason: `Task frozen: ${frozen}` };
+  }
+
   await enqueue({ projectId: signal.projectId, taskId, role: targetRole, config });
   return { dispatched: true, role: targetRole, queued: true };
+}
+
+async function getFrozenReason(taskId: string): Promise<string | null> {
+  const { rows } = await getPool().query(
+    "SELECT frozen_reason FROM tasks WHERE id = $1",
+    [taskId],
+  );
+  return (rows[0]?.frozen_reason as string | null) ?? null;
 }
 
 /**
@@ -177,6 +193,7 @@ export async function reconcileOrphanedTasks(config: Config): Promise<void> {
     `SELECT t.id, t.project_id, t.assignee_role, t.state
      FROM tasks t
      WHERE t.state = ANY($1)
+       AND t.frozen_reason IS NULL
        AND NOT EXISTS (
          SELECT 1 FROM sessions s
          WHERE s.task_id = t.id AND s.status = 'running'

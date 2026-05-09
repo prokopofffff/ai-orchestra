@@ -114,6 +114,10 @@ export const TaskSchema = z.object({
   blockedBy: z.array(z.string().uuid()),
   branchName: z.string().nullable(),
   prUrl: z.string().nullable(),
+  frozenReason: z.string().nullable().optional(),
+  revisionsCount: z.number().int().nonnegative().optional(),
+  failedCount: z.number().int().nonnegative().optional(),
+  signalsCount: z.number().int().nonnegative().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });

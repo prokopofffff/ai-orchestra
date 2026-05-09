@@ -214,6 +214,28 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     return { deleted: true };
   });
 
+  // ─── Unfreeze ───
+  //
+  // Clear `frozen_reason` and zero out the safety counters so the task can be
+  // picked up by the dispatcher again. Atomic so we can't reactivate while a
+  // counter still holds the cap value.
+
+  app.post<{ Params: { id: string } }>("/tasks/:id/unfreeze", async (request, reply) => {
+    const { rows } = await getPool().query(
+      `UPDATE tasks
+          SET frozen_reason = NULL,
+              revisions_count = 0,
+              failed_count = 0,
+              signals_count = 0,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [request.params.id],
+    );
+    if (!rows.length) return reply.code(404).send({ error: "Task not found" });
+    return parseRow(taskSchema, rows[0]);
+  });
+
   // ─── Task Comments ───
 
   app.get<{ Params: { id: string } }>("/tasks/:id/comments", async (request) => {

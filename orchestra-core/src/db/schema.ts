@@ -51,6 +51,12 @@ export const tasks = pgTable("tasks", {
   blockedBy: uuid("blocked_by").array().notNull().default(sql`'{}'::uuid[]`),
   branchName: text("branch_name"),
   prUrl: text("pr_url"),
+  // Non-NULL = dispatcher refuses to spawn for this task. Generic across
+  // revisions/failed/budget caps so we don't proliferate booleans.
+  frozenReason: text("frozen_reason"),
+  revisionsCount: integer("revisions_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  signalsCount: integer("signals_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [

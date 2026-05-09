@@ -123,6 +123,12 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       resumeSessionId: params.resumeSessionId,
     });
     capExceeded = outcome.capExceeded;
+    if (capExceeded) {
+      await pool.query(
+        "UPDATE tasks SET frozen_reason = $1, updated_at = now() WHERE id = $2 AND frozen_reason IS NULL",
+        [capExceeded.detail, taskId],
+      );
+    }
   } finally {
     // ── 6. Notify + cleanup ────────────────────────────────────────────
     const taskTitle = (await getPool().query("SELECT title FROM tasks WHERE id = $1", [taskId])).rows[0]?.title;

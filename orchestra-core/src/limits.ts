@@ -21,6 +21,7 @@ export const DEFAULT_LIMITS = {
   maxSignalsPerTask: 200,
   maxQaDepth: 5,
   maxConcurrentSessions: 4,
+  taskHourlyCostUsd: 5,
   runTimeoutMs: {
     "tech-lead": 2 * 60 * 60 * 1000,
     designer: 30 * 60 * 1000,
@@ -75,4 +76,8 @@ export function resolveMaxQaDepth(settings: unknown): number {
 
 export function resolveMaxConcurrentSessions(settings: unknown): number {
   return parseLimits(settings).maxConcurrentSessions ?? DEFAULT_LIMITS.maxConcurrentSessions;
+}
+
+export function resolveTaskHourlyCostUsd(settings: unknown): number {
+  return parseLimits(settings).taskHourlyCostUsd ?? DEFAULT_LIMITS.taskHourlyCostUsd;
 }

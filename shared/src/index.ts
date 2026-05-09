@@ -78,6 +78,8 @@ export const LimitsSchema = z.object({
   maxSignalsPerTask: z.number().int().positive().optional(),
   maxQaDepth: z.number().int().positive().optional(),
   maxConcurrentSessions: z.number().int().positive().optional(),
+  /** Per-task cost-per-hour ceiling. Trips a freeze + escalate. */
+  taskHourlyCostUsd: z.number().nonnegative().optional(),
   runTimeoutMs: z.record(AgentRoleSchema, z.number().int().positive()).optional(),
 });
 export type Limits = z.infer<typeof LimitsSchema>;

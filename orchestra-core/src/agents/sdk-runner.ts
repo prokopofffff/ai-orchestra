@@ -12,7 +12,7 @@ import { enqueue } from "../scheduler";
 import { CHECK_KIND } from "./check-handlers";
 import { getAgentConfig } from "./configs";
 import { recordCost } from "../cost-tracker";
-import { resolvePerRunBudgetUsd } from "../limits";
+import { resolvePerRunBudgetUsd, resolveRunTimeoutMs } from "../limits";
 import { logBackgroundError } from "../error-handler";
 import { escalate } from "../notification-hub";
 import type { AgentRole } from "../config";
@@ -55,6 +55,16 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
   registerSessionController(p.sessionId, abortController);
 
   const maxBudgetUsd = resolvePerRunBudgetUsd(p.role, p.settings);
+  const runTimeoutMs = resolveRunTimeoutMs(p.role, p.settings);
+
+  // Watchdog: any run that exceeds its role's timeout is aborted via the
+  // shared controller. SDK then surfaces an aborted-streaming terminal_reason
+  // and we throw out of the for-await below.
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    abortController.abort(`run timeout after ${runTimeoutMs}ms`);
+  }, runTimeoutMs);
 
   const options: Options = {
     model: p.model,
@@ -99,7 +109,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
   };
 
   appendLog(p.projectId, p.sessionId, p.role, "system",
-    `SDK run started: model=${p.model} worktree=${p.worktree} budget=$${maxBudgetUsd}`);
+    `SDK run started: model=${p.model} worktree=${p.worktree} budget=$${maxBudgetUsd} timeout=${runTimeoutMs}ms`);
 
   const stream = query({ prompt: p.fullPrompt, options });
 
@@ -135,9 +145,24 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await updateSession(p.sessionId, { status: "crashed", finishedAt: new Date() });
-    appendLog(p.projectId, p.sessionId, p.role, "error", `SDK run failed: ${msg}`);
-    throw err; // let the scheduler handler decide retry
+    if (timedOut) {
+      outcome.capExceeded = { kind: "timeout", detail: `Run exceeded ${runTimeoutMs}ms` };
+      appendLog(p.projectId, p.sessionId, p.role, "error",
+        `SDK run aborted by timeout after ${runTimeoutMs}ms: ${msg}`);
+      await escalate(
+        p.projectId, p.taskId,
+        `Agent ${p.role} run exceeded ${runTimeoutMs}ms timeout on task ${p.taskId}`,
+        { event: "run_timeout", role: p.role, sessionId: p.sessionId, timeoutMs: runTimeoutMs },
+      ).catch((e) => logBackgroundError("sdk-runner:timeout-escalate", e, p.projectId));
+    } else if (abortController.signal.aborted) {
+      outcome.capExceeded = { kind: "aborted", detail: String(abortController.signal.reason ?? "aborted") };
+      appendLog(p.projectId, p.sessionId, p.role, "error", `SDK run aborted: ${msg}`);
+    } else {
+      appendLog(p.projectId, p.sessionId, p.role, "error", `SDK run failed: ${msg}`);
+      throw err; // let the scheduler handler decide retry
+    }
   } finally {
+    clearTimeout(timeoutHandle);
     unregisterSessionController(p.sessionId);
   }
 

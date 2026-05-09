@@ -82,6 +82,16 @@ export function TaskDetail({ taskId, onClose }: Props) {
         </div>
 
         <div className="modal-body flex flex-col gap-3 p-6">
+          {task.frozenReason && (
+            <FrozenBanner taskId={taskId} reason={task.frozenReason} />
+          )}
+          {(task.revisionsCount || task.failedCount || task.signalsCount) ? (
+            <div className="flex flex-wrap gap-3 text-[11px] font-mono text-text-tertiary">
+              {!!task.revisionsCount && <span>revisions: {task.revisionsCount}</span>}
+              {!!task.failedCount && <span>failed: {task.failedCount}</span>}
+              {!!task.signalsCount && <span>signals: {task.signalsCount}</span>}
+            </div>
+          ) : null}
           <Row label="State">
             <select className={FIELD_INPUT} value={task.state} onChange={(e) => handleUpdate({ state: e.target.value as TaskState })}>
               {ALL_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -177,6 +187,30 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="field-row flex items-center gap-3">
       <label className="text-xs font-medium text-text-secondary w-20 shrink-0">{label}</label>
       {children}
+    </div>
+  );
+}
+
+function FrozenBanner({ taskId, reason }: { taskId: string; reason: string }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  async function unfreeze() {
+    if (!confirm("Unfreeze this task? Counters reset to 0; agents resume on the next signal.")) return;
+    setBusy(true);
+    try {
+      await api.unfreezeTask(taskId);
+      await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="flex items-start justify-between gap-3 px-3 py-2 border border-accent-yellow/40 bg-[color:var(--color-accent-yellow,#f59e0b)]/10">
+      <div className="flex items-start gap-2 text-xs">
+        <span className="font-semibold text-accent-yellow">Frozen</span>
+        <span className="text-text-secondary">{reason}</span>
+      </div>
+      <Button variant="primary-blue" size="sm" onClick={unfreeze} disabled={busy}>
+        {busy ? "…" : "Unfreeze"}
+      </Button>
     </div>
   );
 }

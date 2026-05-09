@@ -8,7 +8,7 @@ import * as api from "../api";
 import type { SystemConfig } from "../api";
 import type { Project } from "../types";
 
-type Tab = "project" | "checks" | "system";
+type Tab = "project" | "checks" | "limits" | "system";
 
 export default function Settings() {
   const { project } = useProjectContext();
@@ -22,7 +22,7 @@ export default function Settings() {
   return (
     <div className="settings flex flex-col h-full">
       <nav className="settings-tabs flex items-center gap-0 px-16 border-b border-border bg-bg-surface shrink-0">
-        {(["project", "checks", "system"] as Tab[]).map((t) => (
+        {(["project", "checks", "limits", "system"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -33,7 +33,10 @@ export default function Settings() {
                 : "border-transparent text-text-secondary hover:text-text-primary",
             ].join(" ")}
           >
-            {t === "project" ? "Project" : t === "checks" ? "Agent Checks" : "System"}
+            {t === "project" ? "Project"
+              : t === "checks" ? "Agent Checks"
+              : t === "limits" ? "Limits"
+              : "System"}
           </button>
         ))}
       </nav>
@@ -41,6 +44,7 @@ export default function Settings() {
       <div className="flex-1 overflow-y-auto">
         {tab === "project" && <ProjectTab project={project} onSaved={refresh} />}
         {tab === "checks" && <ProjectChecks projectId={project.id} />}
+        {tab === "limits" && <LimitsTab project={project} onSaved={refresh} />}
         {tab === "system" && <SystemTab />}
       </div>
     </div>
@@ -147,10 +151,113 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
   );
 }
 
+function LimitsTab({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  const initial = (project.settings as { limits?: Record<string, unknown> })?.limits ?? {};
+  const num = (k: string) => (initial[k] != null ? String(initial[k]) : "");
+
+  const [dailyCostUsd, setDailyCostUsd] = useState(num("dailyCostUsd"));
+  const [maxRevisions, setMaxRevisions] = useState(num("maxRevisions"));
+  const [maxFails, setMaxFails] = useState(num("maxFails"));
+  const [maxSignalsPerTask, setMaxSignalsPerTask] = useState(num("maxSignalsPerTask"));
+  const [maxQaDepth, setMaxQaDepth] = useState(num("maxQaDepth"));
+  const [maxConcurrentSessions, setMaxConcurrentSessions] = useState(num("maxConcurrentSessions"));
+  const [taskHourlyCostUsd, setTaskHourlyCostUsd] = useState(num("taskHourlyCostUsd"));
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  function pickNumber(s: string): number | undefined {
+    const n = Number(s);
+    return s.trim() && Number.isFinite(n) ? n : undefined;
+  }
+
+  async function save() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const limits: Record<string, number> = {};
+      const fields: Array<[string, string]> = [
+        ["dailyCostUsd", dailyCostUsd],
+        ["maxRevisions", maxRevisions],
+        ["maxFails", maxFails],
+        ["maxSignalsPerTask", maxSignalsPerTask],
+        ["maxQaDepth", maxQaDepth],
+        ["maxConcurrentSessions", maxConcurrentSessions],
+        ["taskHourlyCostUsd", taskHourlyCostUsd],
+      ];
+      for (const [k, v] of fields) {
+        const n = pickNumber(v);
+        if (n !== undefined) limits[k] = n;
+      }
+      await api.updateProject(project.id, { settings: { limits } } as never);
+      setStatus("Saved");
+      onSaved();
+    } catch (e) {
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
+      <header className="flex items-start justify-between gap-8">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Safety Limits</h2>
+          <p className="text-sm text-text-secondary">
+            Per-project caps on cost and loop depth. Empty fields use the in-code default.
+            Tasks tripping a cap get <code className="font-mono">frozen_reason</code> and an escalation —
+            unfreeze from the task panel.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 pt-1">
+          {status && <span className="text-xs text-text-tertiary">{status}</span>}
+          <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </header>
+
+      <section className="flex flex-col gap-5">
+        <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
+          Cost
+        </p>
+        <Field label="Daily cost cap (USD)" hint="0 = unlimited. Default: 20.">
+          <input className={INPUT} value={dailyCostUsd} onChange={(e) => setDailyCostUsd(e.target.value)} placeholder="20" />
+        </Field>
+        <Field label="Per-task hourly cap (USD)" hint="Cost-velocity watcher freezes tasks above this. Default: 5.">
+          <input className={INPUT} value={taskHourlyCostUsd} onChange={(e) => setTaskHourlyCostUsd(e.target.value)} placeholder="5" />
+        </Field>
+      </section>
+
+      <section className="flex flex-col gap-5">
+        <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
+          Loop guards
+        </p>
+        <Field label="Max revisions" hint="Default: 5. PR-changes-requested past this freezes the task.">
+          <input className={INPUT} value={maxRevisions} onChange={(e) => setMaxRevisions(e.target.value)} placeholder="5" />
+        </Field>
+        <Field label="Max QA fails" hint="Default: 3. tests_failed past this freezes the task.">
+          <input className={INPUT} value={maxFails} onChange={(e) => setMaxFails(e.target.value)} placeholder="3" />
+        </Field>
+        <Field label="Max Q&A depth" hint="Default: 5. Caps agent ↔ TL question chains.">
+          <input className={INPUT} value={maxQaDepth} onChange={(e) => setMaxQaDepth(e.target.value)} placeholder="5" />
+        </Field>
+        <Field label="Max signals per task" hint="Default: 200. Hard cap before silent reject.">
+          <input className={INPUT} value={maxSignalsPerTask} onChange={(e) => setMaxSignalsPerTask(e.target.value)} placeholder="200" />
+        </Field>
+        <Field label="Max concurrent sessions" hint="Default: 4 (six roles total — leaves headroom).">
+          <input className={INPUT} value={maxConcurrentSessions} onChange={(e) => setMaxConcurrentSessions(e.target.value)} placeholder="4" />
+        </Field>
+      </section>
+    </div>
+  );
+}
+
 function SystemTab() {
   const [config, setConfig] = useState<SystemConfig>({});
   const [claudeAuth, setClaudeAuth] = useState<"max" | "api">("max");
   const [apiKey, setApiKey] = useState("");
+  const [orgDailyCap, setOrgDailyCap] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -160,6 +267,7 @@ function SystemTab() {
       setConfig(c);
       setClaudeAuth(c.claude_auth ?? "max");
       setApiKey(c.claude_api_key ?? "");
+      setOrgDailyCap(c.orchestra_daily_cost_cap_usd ?? "");
     } catch {
       // system_config table may not exist yet (migration pending)
     }
@@ -173,6 +281,7 @@ function SystemTab() {
     try {
       const patch: SystemConfig = { claude_auth: claudeAuth };
       if (claudeAuth === "api") patch.claude_api_key = apiKey;
+      if (orgDailyCap.trim()) patch.orchestra_daily_cost_cap_usd = orgDailyCap.trim();
       await api.updateSystemConfig(patch);
       setStatus("Saved — takes effect on the next agent run");
       setConfig({ ...config, ...patch });
@@ -251,6 +360,23 @@ function SystemTab() {
             />
           </Field>
         )}
+      </section>
+
+      <section className="flex flex-col gap-5">
+        <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
+          Orchestra-wide cost cap
+        </p>
+        <Field
+          label="Daily cap (USD)"
+          hint="Sum across every project. Empty / 0 = disabled. ORCHESTRA_DAILY_COST_CAP_USD env var overrides this if set."
+        >
+          <input
+            className={INPUT}
+            value={orgDailyCap}
+            onChange={(e) => setOrgDailyCap(e.target.value)}
+            placeholder="0"
+          />
+        </Field>
       </section>
     </div>
   );

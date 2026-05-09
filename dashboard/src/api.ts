@@ -82,6 +82,7 @@ const SystemConfigSchema = z.object({
   github_token: z.string().optional(),
   github_default_org: z.string().optional(),
   github_default_branch: z.string().optional(),
+  orchestra_daily_cost_cap_usd: z.string().optional(),
 });
 export type SystemConfig = z.infer<typeof SystemConfigSchema>;
 export const fetchSystemConfig = (): Promise<SystemConfig> =>
@@ -99,6 +100,8 @@ export const createTask = (data: Partial<Task> & { projectId: string; title: str
 export const updateTask = (id: string, data: Partial<Task>): Promise<Task> =>
   patchValidated(`/tasks/${id}`, data, TaskSchema);
 export const deleteTask = (id: string) => del(`/tasks/${id}`);
+export const unfreezeTask = (id: string): Promise<Task> =>
+  postValidated(`/tasks/${id}/unfreeze`, {}, TaskSchema);
 
 // Comments
 export const fetchComments = (taskId: string): Promise<TaskComment[]> =>
@@ -141,6 +144,33 @@ const UsageSchema = z.object({
 });
 export type UsageInfo = z.infer<typeof UsageSchema>;
 export const fetchUsage = (): Promise<UsageInfo> => getValidated("/usage", UsageSchema);
+
+// Cost — per-project 24h spend with breakdown + configured cap.
+const UsageTodaySchema = z.object({
+  total: z.number(),
+  cap: z.number(),
+  byRole: z.record(z.number()),
+  byModel: z.record(z.number()),
+});
+export type UsageToday = z.infer<typeof UsageTodaySchema>;
+export const fetchUsageToday = (projectId: string): Promise<UsageToday> =>
+  getValidated(`/usage/today?projectId=${projectId}`, UsageTodaySchema);
+
+const UsageCostsSchema = z.object({
+  total: z.number(),
+  rows: z.array(z.object({
+    projectId: z.string(),
+    role: z.string(),
+    model: z.string(),
+    total: z.number(),
+  })),
+});
+export const fetchUsageCosts = (params: { projectId?: string; from?: string; to?: string }) => {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  const q = qs.toString();
+  return getValidated(`/usage/costs${q ? `?${q}` : ""}`, UsageCostsSchema);
+};
 
 // Health
 const HealthSchema = z.object({ status: z.string(), timestamp: z.string() });

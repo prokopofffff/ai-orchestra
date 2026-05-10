@@ -10,7 +10,12 @@ mermaid.initialize({
   startOnLoad: false,
   theme: "dark",
   securityLevel: "loose",
-  flowchart: { curve: "basis" },
+  // Both diagram types: ask mermaid to size SVGs to the container instead
+  // of baking the natural pixel size into width/height attributes — keeps
+  // big graphs from overflowing the canvas (and dodges the SVG-bigger-
+  // than-its-scroll-container "centered crop" problem on canvas resize).
+  flowchart: { curve: "basis", useMaxWidth: true },
+  stateDiagram: { useMaxWidth: true },
 });
 
 type View = "state" | "roles";
@@ -30,7 +35,21 @@ export function FlowDiagram() {
     mermaid
       .render(id, src)
       .then(({ svg }) => {
-        if (!cancelled && ref.current) ref.current.innerHTML = svg;
+        if (!cancelled && ref.current) {
+          ref.current.innerHTML = svg;
+          // Even with useMaxWidth, mermaid sometimes leaves a fixed
+          // `style="max-width: …px"` on the SVG that bounds it below the
+          // canvas. Strip it so the SVG fills available width up to its
+          // viewBox aspect ratio, and uncap height too.
+          const el = ref.current.querySelector("svg") as SVGSVGElement | null;
+          if (el) {
+            el.removeAttribute("width");
+            el.removeAttribute("height");
+            el.style.maxWidth = "100%";
+            el.style.height = "auto";
+            el.style.display = "block";
+          }
+        }
       })
       .catch((e) => { if (!cancelled) setError(String(e)); });
     return () => { cancelled = true; };
@@ -61,7 +80,10 @@ export function FlowDiagram() {
       )}
 
       <div
-        className="flow-canvas flex-1 min-h-[400px] bg-bg-surface border border-border p-4 overflow-auto grid place-items-center"
+        // overflow-auto so very tall graphs scroll inside the canvas instead
+        // of pushing the whole page; no centering — center+overflow makes the
+        // scroll origin land mid-diagram and clip the top/left.
+        className="flow-canvas flex-1 min-h-[400px] bg-bg-surface border border-border p-4 overflow-auto"
         ref={ref}
       />
 

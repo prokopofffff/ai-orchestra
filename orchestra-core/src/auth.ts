@@ -47,3 +47,14 @@ export function isPublicApiPath(url: string): boolean {
   if (url.startsWith("/api/webhooks/")) return true;
   return false;
 }
+
+/**
+ * Extract the authenticated user id from the request. Assumes `requireAuth`
+ * already ran — throws if jwtVerify wasn't done. Use this in handlers that
+ * need to scope queries by current user.
+ */
+export function currentUserId(request: FastifyRequest): string {
+  const u = request.user as { id?: string } | undefined;
+  if (!u?.id) throw new Error("currentUserId called without prior auth");
+  return u.id;
+}

@@ -63,6 +63,22 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
     );
 
     const user = toUser(rows[0]);
+
+    // First-user-on-fresh-install backfill: if every existing project is
+    // ownerless (e.g. legacy install where projects predated users), assign
+    // them all to this brand-new account. Migration 017 already does this
+    // when there's at least one user at apply time, but covers the case of
+    // users being deleted or projects created before signup ever happened.
+    const { rows: countRow } = await pool.query<{ c: number }>(
+      "SELECT COUNT(*)::int AS c FROM users",
+    );
+    if (countRow[0].c === 1) {
+      await pool.query(
+        "UPDATE projects SET owner_id = $1 WHERE owner_id IS NULL",
+        [user.id],
+      );
+    }
+
     const token = await reply.jwtSign({ id: user.id, email: user.email, username: user.username });
     setSessionCookie(reply, token);
     return reply.code(201).send(user);

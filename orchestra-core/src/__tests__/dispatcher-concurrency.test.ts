@@ -89,7 +89,13 @@ describe("dispatcher — project concurrency cap", () => {
     );
 
     await reconcileOrphanedTasks(config);
-    expect(enqueue).not.toHaveBeenCalled();
+    // Scoped: vitest runs sibling files in parallel, reconcile scans the
+    // whole DB — assert only on calls for our project.
+    const ours = vi.mocked(enqueue).mock.calls.filter((c) => {
+      const arg = c[0] as { projectId?: string };
+      return arg?.projectId === projectId;
+    });
+    expect(ours).toHaveLength(0);
   });
 
   it("counts only sessions of the same project", async () => {

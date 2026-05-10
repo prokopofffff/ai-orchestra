@@ -27,12 +27,27 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   repoUrl: text("repo_url"),
+  localPath: text("local_path"),
   description: text("description"),
   settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
+  // FK to users(id) — backfill in migration 017 sets this to the first-
+  // registered user for legacy projects. Non-null going forward via API.
+  ownerId: uuid("owner_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("projects_slug_key").on(t.slug),
+  index("idx_projects_owner_id").on(t.ownerId),
+]);
+
+export const projectMembers = pgTable("project_members", {
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull(), // → users(id)
+  role: text("role").notNull().default("editor"),
+  addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_project_members_user_id").on(t.userId),
+  check("project_members_role_check", sql`role IN ('viewer','editor','admin')`),
 ]);
 
 // ─── Tasks ────────────────────────────────────────────────────────────────
@@ -252,3 +267,5 @@ export type AgentLog = typeof agentLogs.$inferSelect;
 export type RateBucket = typeof rateBuckets.$inferSelect;
 export type UsageCost = typeof usageCosts.$inferSelect;
 export type NewUsageCost = typeof usageCosts.$inferInsert;
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type NewProjectMember = typeof projectMembers.$inferInsert;

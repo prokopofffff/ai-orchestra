@@ -3,6 +3,7 @@ import Fastify, { type FastifyError, type FastifyRequest, type FastifyReply } fr
 import { taskPlugin } from "../task-api";
 import { signalPlugin } from "../signal-api";
 import { waitForDatabase, runMigrations, getPool } from "../db";
+import { setupTestUser } from "./helpers/test-auth";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
@@ -33,8 +34,10 @@ beforeAll(async () => {
   await pool.query("DELETE FROM messages");
   await pool.query("DELETE FROM conversations");
   await pool.query("DELETE FROM projects");
+  await pool.query("DELETE FROM users WHERE email = 'integration-test@orchestra.local'");
 
   app = Fastify();
+  await setupTestUser(app, "integration-test@orchestra.local");
   await app.register(taskPlugin, { prefix: "/api" });
   await app.register(signalPlugin, { prefix: "/api" });
 

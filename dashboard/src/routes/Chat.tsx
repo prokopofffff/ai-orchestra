@@ -31,8 +31,8 @@ function ChatSidebar({
   onSelect: (id: string) => void;
 }) {
   return (
-    <aside className="w-[280px] shrink-0 bg-bg-sidebar border-r border-border py-4 flex flex-col">
-      <div className="flex items-center justify-between px-4">
+    <aside className="w-[280px] shrink-0 min-h-0 bg-bg-sidebar border-r border-border py-4 flex flex-col">
+      <div className="shrink-0 flex items-center justify-between px-4">
         <span className="text-[14px] font-semibold text-text-primary">Conversations</span>
         <button
           className="inline-flex items-center gap-1 bg-accent-blue text-white text-[11px] font-medium px-2.5 py-1.5 hover:bg-accent-blue/90"
@@ -43,7 +43,7 @@ function ChatSidebar({
         </button>
       </div>
 
-      <ul className="flex flex-col gap-0.5 px-2 py-3">
+      <ul className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5 px-2 py-3">
         {projects.map((p) => {
           const active = p.id === activeId;
           return (

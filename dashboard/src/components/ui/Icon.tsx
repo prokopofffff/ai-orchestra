@@ -144,6 +144,19 @@ export const GitBranchIcon = ({ size, ...rest }: IconProps) => (
   </svg>
 );
 
+export const CircleIcon = ({ size, ...rest }: IconProps) => (
+  <svg {...base(size)} {...rest}>
+    <circle cx="12" cy="12" r="9" />
+  </svg>
+);
+
+export const CheckCircleIcon = ({ size, ...rest }: IconProps) => (
+  <svg {...base(size)} {...rest}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+);
+
 export const ZapIcon = ({ size, ...rest }: IconProps) => (
   <svg {...base(size)} {...rest}>
     <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />

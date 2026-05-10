@@ -157,12 +157,19 @@ export const users = pgTable("users", {
   email: text("email").notNull(),
   username: text("username").notNull(),
   passwordHash: text("password_hash").notNull(),
+  onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("users_email_key").on(t.email),
   uniqueIndex("users_username_key").on(t.username),
 ]);
+
+export const systemConfig = pgTable("system_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -283,3 +290,4 @@ export type ProjectMember = typeof projectMembers.$inferSelect;
 export type NewProjectMember = typeof projectMembers.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type SystemConfig = typeof systemConfig.$inferSelect;

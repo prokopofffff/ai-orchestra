@@ -223,3 +223,24 @@ export const fetchUsageSeries = (projectId: string, days: 7 | 30 = 7): Promise<U
 // Health
 const HealthSchema = z.object({ status: z.string(), timestamp: z.string() });
 export const fetchHealth = () => getValidated("/health", HealthSchema);
+
+// Onboarding
+const OnboardingStepSchema = z.object({
+  key: z.enum(["claude_auth", "project", "git_token"]),
+  title: z.string(),
+  done: z.boolean(),
+  href: z.string(),
+  hint: z.string().optional(),
+});
+const OnboardingSchema = z.object({
+  dismissedAt: z.string().nullable(),
+  showWelcome: z.boolean(),
+  allDone: z.boolean(),
+  steps: z.array(OnboardingStepSchema),
+});
+export type OnboardingStep = z.infer<typeof OnboardingStepSchema>;
+export type OnboardingState = z.infer<typeof OnboardingSchema>;
+export const fetchOnboarding = (): Promise<OnboardingState> =>
+  getValidated("/onboarding", OnboardingSchema);
+export const dismissOnboarding = (): Promise<OnboardingState> =>
+  postValidated("/onboarding/dismiss", {}, OnboardingSchema);

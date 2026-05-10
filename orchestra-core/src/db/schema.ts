@@ -152,6 +152,18 @@ export const conversations = pgTable("conversations", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull(),
+  username: text("username").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("users_email_key").on(t.email),
+  uniqueIndex("users_username_key").on(t.username),
+]);
+
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
@@ -269,3 +281,5 @@ export type UsageCost = typeof usageCosts.$inferSelect;
 export type NewUsageCost = typeof usageCosts.$inferInsert;
 export type ProjectMember = typeof projectMembers.$inferSelect;
 export type NewProjectMember = typeof projectMembers.$inferInsert;
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;

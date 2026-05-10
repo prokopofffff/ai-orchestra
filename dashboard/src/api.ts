@@ -90,6 +90,42 @@ export const fetchSystemConfig = (): Promise<SystemConfig> =>
 export const updateSystemConfig = (data: SystemConfig): Promise<SystemConfig> =>
   patchValidated("/system-config", data, SystemConfigSchema);
 
+// Members
+const MemberSchema = z.object({
+  userId: z.string().uuid(),
+  email: z.string(),
+  username: z.string(),
+  role: z.enum(["owner", "viewer", "editor", "admin"]),
+  addedAt: z.coerce.date().optional().nullable(),
+});
+export type ProjectMember = z.infer<typeof MemberSchema>;
+
+const MembersListSchema = z.object({
+  owner: MemberSchema.nullable(),
+  members: z.array(MemberSchema),
+});
+export type ProjectMembersList = z.infer<typeof MembersListSchema>;
+
+export const fetchProjectMembers = (projectId: string): Promise<ProjectMembersList> =>
+  getValidated(`/projects/${projectId}/members`, MembersListSchema);
+
+export const inviteProjectMember = (
+  projectId: string,
+  identifier: string,
+  role: "viewer" | "editor" | "admin",
+): Promise<ProjectMember> =>
+  postValidated(`/projects/${projectId}/members`, { identifier, role }, MemberSchema);
+
+export const removeProjectMember = (projectId: string, userId: string): Promise<void> =>
+  del(`/projects/${projectId}/members/${userId}`);
+
+export const updateProjectMemberRole = (
+  projectId: string,
+  userId: string,
+  role: "viewer" | "editor" | "admin",
+): Promise<ProjectMember> =>
+  patchValidated(`/projects/${projectId}/members/${userId}`, { role }, MemberSchema);
+
 // Tasks
 export const fetchTasks = (projectId: string): Promise<Task[]> =>
   getValidated(`/tasks?projectId=${projectId}`, z.array(TaskSchema));

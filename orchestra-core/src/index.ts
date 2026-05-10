@@ -21,6 +21,7 @@ import { webhookPlugin } from "./webhooks";
 import { prPlugin } from "./pr-api";
 import { authPlugin } from "./auth-api";
 import { usagePlugin } from "./usage-api";
+import { membersPlugin } from "./members-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { userCanAccessProject } from "./project-access";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
@@ -108,6 +109,7 @@ async function main() {
   await app.register(webhookPlugin, { prefix: "/api" });
   await app.register(prPlugin, { prefix: "/api" });
   await app.register(usagePlugin, { prefix: "/api" });
+  await app.register(membersPlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
   const dashboardRoot = path.resolve(config.dashboardPath);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjectContext } from "../contexts/ProjectContext";
 import { ProjectChecks } from "../components/ProjectChecks";
 import { EmptyProjects } from "../components/EmptyProjects";
@@ -8,7 +8,7 @@ import * as api from "../api";
 import type { SystemConfig } from "../api";
 import type { Project } from "../types";
 
-type Tab = "project" | "checks" | "limits" | "system";
+type Tab = "project" | "checks" | "members" | "limits" | "system";
 
 export default function Settings() {
   const { project } = useProjectContext();
@@ -22,7 +22,7 @@ export default function Settings() {
   return (
     <div className="settings flex flex-col h-full">
       <nav className="settings-tabs flex items-center gap-0 px-16 border-b border-border bg-bg-surface shrink-0">
-        {(["project", "checks", "limits", "system"] as Tab[]).map((t) => (
+        {(["project", "checks", "members", "limits", "system"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -35,6 +35,7 @@ export default function Settings() {
           >
             {t === "project" ? "Project"
               : t === "checks" ? "Agent Checks"
+              : t === "members" ? "Members"
               : t === "limits" ? "Limits"
               : "System"}
           </button>
@@ -44,6 +45,7 @@ export default function Settings() {
       <div className="flex-1 overflow-y-auto">
         {tab === "project" && <ProjectTab project={project} onSaved={refresh} />}
         {tab === "checks" && <ProjectChecks projectId={project.id} />}
+        {tab === "members" && <MembersTab projectId={project.id} />}
         {tab === "limits" && <LimitsTab project={project} onSaved={refresh} />}
         {tab === "system" && <SystemTab />}
       </div>
@@ -147,6 +149,147 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
           </Field>
         </div>
       </section>
+    </div>
+  );
+}
+
+function MembersTab({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["project-members", projectId],
+    queryFn: () => api.fetchProjectMembers(projectId),
+  });
+  const [identifier, setIdentifier] = useState("");
+  const [role, setRole] = useState<"viewer" | "editor" | "admin">("editor");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["project-members", projectId] });
+
+  async function invite(e: React.FormEvent) {
+    e.preventDefault();
+    if (!identifier.trim()) return;
+    setBusy(true); setStatus(null);
+    try {
+      await api.inviteProjectMember(projectId, identifier.trim(), role);
+      setIdentifier("");
+      setStatus("Member added");
+      refresh();
+    } catch (e) {
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(userId: string) {
+    if (!confirm("Remove this member from the project?")) return;
+    await api.removeProjectMember(projectId, userId);
+    refresh();
+  }
+
+  async function changeRole(userId: string, newRole: "viewer" | "editor" | "admin") {
+    await api.updateProjectMemberRole(projectId, userId, newRole);
+    refresh();
+  }
+
+  return (
+    <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
+      <header className="flex flex-col gap-1">
+        <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Members</h2>
+        <p className="text-sm text-text-secondary">
+          People with access to this project. Owner has full control.
+          Admins can invite and remove. Editors can act on the project.
+          Viewers see everything but can't change anything.
+        </p>
+      </header>
+
+      <form onSubmit={invite} className="flex flex-col gap-3 border border-border bg-bg-surface p-4">
+        <h3 className="text-xs font-mono uppercase tracking-wider text-text-tertiary">Invite by username or email</h3>
+        <div className="flex gap-2">
+          <input
+            className={INPUT}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder="alice@example.com or alice"
+          />
+          <select
+            className={`${INPUT} w-32`}
+            value={role}
+            onChange={(e) => setRole(e.target.value as "viewer" | "editor" | "admin")}
+          >
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="admin">Admin</option>
+          </select>
+          <Button variant="primary-blue" size="md" type="submit" disabled={busy}>
+            {busy ? "…" : "Invite"}
+          </Button>
+        </div>
+        {status && <span className="text-xs text-text-tertiary">{status}</span>}
+      </form>
+
+      <section className="flex flex-col gap-2">
+        {isLoading && <p className="text-sm text-text-tertiary">Loading…</p>}
+        {error && <p className="text-sm text-accent-red">Failed to load members.</p>}
+        {data?.owner && (
+          <MemberRow
+            email={data.owner.email}
+            username={data.owner.username}
+            role="owner"
+          />
+        )}
+        {data?.members.map((m) => (
+          <MemberRow
+            key={m.userId}
+            email={m.email}
+            username={m.username}
+            role={m.role}
+            onRoleChange={(r) => void changeRole(m.userId, r)}
+            onRemove={() => void remove(m.userId)}
+          />
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function MemberRow({
+  email, username, role,
+  onRoleChange, onRemove,
+}: {
+  email: string;
+  username: string;
+  role: "owner" | "viewer" | "editor" | "admin";
+  onRoleChange?: (r: "viewer" | "editor" | "admin") => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 bg-bg-surface border border-border">
+      <div className="flex flex-col">
+        <span className="text-sm text-text-primary">{username}</span>
+        <span className="text-xs text-text-tertiary">{email}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        {role === "owner" || !onRoleChange ? (
+          <span className="text-xs font-mono uppercase text-text-tertiary tracking-wider px-2 py-1 border border-border">
+            {role}
+          </span>
+        ) : (
+          <select
+            className={`${INPUT} w-28`}
+            value={role}
+            onChange={(e) => onRoleChange(e.target.value as "viewer" | "editor" | "admin")}
+          >
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="admin">Admin</option>
+          </select>
+        )}
+        {onRemove && (
+          <Button variant="primary-red" size="sm" onClick={onRemove}>Remove</Button>
+        )}
+      </div>
     </div>
   );
 }

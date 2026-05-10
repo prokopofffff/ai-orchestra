@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import Fastify, { type FastifyError, type FastifyRequest, type FastifyReply } from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { conversationPlugin, addSystemMessage, addTechLeadMessage } from "../conversation-api";
+import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
@@ -24,6 +25,7 @@ beforeAll(async () => {
   await runMigrations(DATABASE_URL);
 
   app = Fastify();
+  await setupTestUser(app, "conv-test@orchestra.local");
   await app.register(conversationPlugin, { prefix: "/api" });
   app.setErrorHandler(async (err: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
     return reply.code(500).send({ error: err.message });
@@ -35,13 +37,15 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   const pool = getPool();
+  const userId = await getOrCreateTestUser("conv-test@orchestra.local");
   await pool.query("DELETE FROM messages");
   await pool.query("DELETE FROM conversations");
   await pool.query("DELETE FROM tasks");
   await pool.query("DELETE FROM projects WHERE slug = 'conv-test'");
 
   const { rows } = await pool.query(
-    "INSERT INTO projects (name, slug) VALUES ('Conv Test', 'conv-test') RETURNING id",
+    "INSERT INTO projects (name, slug, owner_id) VALUES ('Conv Test', 'conv-test', $1) RETURNING id",
+    [userId],
   );
   projectId = rows[0].id;
 

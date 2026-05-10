@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vites
 import Fastify from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { signalPlugin } from "../signal-api";
+import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
 
 vi.mock("../dispatcher", () => ({
   dispatchSignal: vi.fn().mockResolvedValue({ dispatched: false }),
@@ -27,11 +28,12 @@ beforeEach(async () => {
   await pool.query("DELETE FROM tasks WHERE title LIKE 'qa-depth%'");
   await pool.query("DELETE FROM projects WHERE slug = 'qa-depth'");
 
+  const userId = await getOrCreateTestUser("qa-depth@orchestra.local");
   // Tight cap = 2 to avoid sending dozens of test signals.
   const settings = JSON.stringify({ limits: { maxQaDepth: 2 } });
   const { rows: pRows } = await pool.query(
-    "INSERT INTO projects (name, slug, settings) VALUES ('QA Depth', 'qa-depth', $1::jsonb) RETURNING id",
-    [settings],
+    "INSERT INTO projects (name, slug, settings, owner_id) VALUES ('QA Depth', 'qa-depth', $1::jsonb, $2) RETURNING id",
+    [settings, userId],
   );
   projectId = pRows[0].id;
   await pool.query("INSERT INTO conversations (project_id) VALUES ($1)", [projectId]);
@@ -49,6 +51,7 @@ afterAll(async () => {
 
 async function buildApp() {
   const app = Fastify();
+  await setupTestUser(app, "qa-depth@orchestra.local");
   await app.register(signalPlugin, { prefix: "/api" });
   await app.ready();
   return app;

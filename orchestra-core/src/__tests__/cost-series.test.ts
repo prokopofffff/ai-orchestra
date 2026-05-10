@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { getDailyCostSeries, recordCostRaw } from "../cost-tracker";
 import { usagePlugin } from "../usage-api";
+import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
@@ -18,8 +19,10 @@ beforeEach(async () => {
   const pool = getPool();
   await pool.query("DELETE FROM usage_costs");
   await pool.query("DELETE FROM projects WHERE slug = 'series-test'");
+  const userId = await getOrCreateTestUser("series-test@orchestra.local");
   const { rows } = await pool.query(
-    "INSERT INTO projects (name, slug) VALUES ('Series', 'series-test') RETURNING id",
+    "INSERT INTO projects (name, slug, owner_id) VALUES ('Series', 'series-test', $1) RETURNING id",
+    [userId],
   );
   projectId = rows[0].id;
 });
@@ -30,6 +33,7 @@ afterAll(async () => {
 
 async function buildApp() {
   const app = Fastify();
+  await setupTestUser(app, "series-test@orchestra.local");
   await app.register(usagePlugin, { prefix: "/api" });
   await app.ready();
   return app;

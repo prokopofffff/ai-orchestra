@@ -384,6 +384,6 @@ describe("Signal API", () => {
 
   it("GET /api/signals — filters by toRole", async () => {
     const { body } = await api(`/api/signals?projectId=${projectId}&toRole=tech-lead`);
-    expect(body.every((s: { to_role: string }) => s.to_role === "tech-lead")).toBe(true);
+    expect(body.every((s: { toRole: string }) => s.toRole === "tech-lead")).toBe(true);
   });
 });

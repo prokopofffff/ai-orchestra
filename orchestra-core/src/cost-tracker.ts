@@ -137,6 +137,7 @@ export type DailyCostPoint = {
  */
 export async function getDailyCostSeries(opts: {
   projectId?: string;
+  projectIds?: string[];
   days: number;
 }): Promise<DailyCostPoint[]> {
   const days = Math.max(1, Math.min(opts.days, 90));
@@ -146,6 +147,9 @@ export async function getDailyCostSeries(opts: {
   if (opts.projectId) {
     params.push(opts.projectId);
     projectFilter = ` AND project_id = $${params.length}`;
+  } else if (opts.projectIds && opts.projectIds.length > 0) {
+    params.push(opts.projectIds);
+    projectFilter = ` AND project_id = ANY($${params.length})`;
   }
 
   // Generate the date axis up front so empty days remain in the result.
@@ -196,14 +200,21 @@ export async function getDailyCostSeries(opts: {
  */
 export async function getCostsInRange(opts: {
   projectId?: string;
+  projectIds?: string[];
   from?: Date;
   to?: Date;
 }): Promise<{ total: number; rows: Array<{ projectId: string; role: string; model: string; total: number }> }> {
   const wheres: string[] = [];
   const vals: unknown[] = [];
-  if (opts.projectId) { wheres.push(`project_id = $${vals.length + 1}`); vals.push(opts.projectId); }
-  if (opts.from)      { wheres.push(`created_at >= $${vals.length + 1}`); vals.push(opts.from); }
-  if (opts.to)        { wheres.push(`created_at < $${vals.length + 1}`); vals.push(opts.to); }
+  if (opts.projectId) {
+    wheres.push(`project_id = $${vals.length + 1}`);
+    vals.push(opts.projectId);
+  } else if (opts.projectIds && opts.projectIds.length > 0) {
+    wheres.push(`project_id = ANY($${vals.length + 1})`);
+    vals.push(opts.projectIds);
+  }
+  if (opts.from) { wheres.push(`created_at >= $${vals.length + 1}`); vals.push(opts.from); }
+  if (opts.to)   { wheres.push(`created_at < $${vals.length + 1}`); vals.push(opts.to); }
   const where = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
 
   const pool = getPool();

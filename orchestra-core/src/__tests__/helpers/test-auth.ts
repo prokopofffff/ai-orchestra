@@ -2,14 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { getPool } from "../../db";
 
 /**
- * Insert a real test user (or return the existing one with the same email)
- * and decorate the Fastify app so every request looks authenticated as that
- * user. Mirrors what jwtVerify would do in production without dragging cookies
- * / fastify-jwt into every test file.
- *
- * Returns the user id so tests can set `owner_id` directly when seeding rows.
+ * Upsert a test user by email and return its id. Lets test setup seed
+ * `owner_id` on projects without spinning up an app first.
  */
-export async function setupTestUser(app: FastifyInstance, email = "test@orchestra.local"): Promise<string> {
+export async function getOrCreateTestUser(email = "test@orchestra.local"): Promise<string> {
   const pool = getPool();
   const username = email.split("@")[0].replace(/[^a-z0-9]/gi, "") || "testuser";
   const { rows } = await pool.query(
@@ -19,11 +15,21 @@ export async function setupTestUser(app: FastifyInstance, email = "test@orchestr
      RETURNING id`,
     [email, username],
   );
-  const userId = rows[0].id as string;
+  return rows[0].id as string;
+}
 
+/**
+ * Decorate the Fastify app so every request looks authenticated as the user
+ * with the given email. Mirrors what jwtVerify would do in production without
+ * dragging cookies / fastify-jwt into every test file.
+ *
+ * Returns the user id (also used by the test as `owner_id` on projects).
+ */
+export async function setupTestUser(app: FastifyInstance, email = "test@orchestra.local"): Promise<string> {
+  const userId = await getOrCreateTestUser(email);
+  const username = email.split("@")[0].replace(/[^a-z0-9]/gi, "") || "testuser";
   app.addHook("preHandler", async (request) => {
     (request as { user?: unknown }).user = { id: userId, email, username };
   });
-
   return userId;
 }

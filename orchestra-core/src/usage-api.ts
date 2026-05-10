@@ -1,8 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { getDb } from "./db";
+import { projects } from "./db/schema";
 import { getDailyCostBreakdown, getCostsInRange, getDailyCostSeries } from "./cost-tracker";
 import { resolveDailyCostCap } from "./limits";
-import { getPool } from "./db";
+import { currentUserId } from "./auth";
+import { userCanAccessProject, visibleProjectIds } from "./project-access";
 
 const querySchema = z.object({
   projectId: z.string().uuid().optional(),
@@ -16,27 +20,43 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
    * cap. Used by the dashboard's Usage widget.
    */
   app.get<{ Querystring: { projectId: string } }>("/usage/today", async (request, reply) => {
+    const userId = currentUserId(request);
     const projectId = request.query.projectId;
     if (!projectId) return reply.code(400).send({ error: "projectId required" });
 
-    const { rows } = await getPool().query(
-      "SELECT settings FROM projects WHERE id = $1", [projectId],
-    );
-    if (!rows.length) return reply.code(404).send({ error: "Project not found" });
+    if (!(await userCanAccessProject(userId, projectId))) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const [row] = await getDb()
+      .select({ settings: projects.settings })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row) return reply.code(404).send({ error: "Project not found" });
 
     const breakdown = await getDailyCostBreakdown(projectId);
-    const cap = resolveDailyCostCap(rows[0].settings);
+    const cap = resolveDailyCostCap(row.settings);
     return { ...breakdown, cap };
   });
 
   /**
    * Range query for charts and reporting. All filters optional; total returned
-   * alongside the per-(project, role, model) breakdown.
+   * alongside the per-(project, role, model) breakdown — but always scoped to
+   * the projects the caller can see, so a leak via an unfiltered query is
+   * impossible.
    */
   app.get("/usage/costs", async (request, reply) => {
+    const userId = currentUserId(request);
     const parsed = querySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-    return await getCostsInRange(parsed.data);
+    const opts = parsed.data;
+
+    if (opts.projectId && !(await userCanAccessProject(userId, opts.projectId))) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const visible = opts.projectId ? [opts.projectId] : await visibleProjectIds(userId);
+    if (!visible.length) return { total: 0, rows: [] };
+    return await getCostsInRange({ ...opts, projectIds: visible });
   });
 
   /**
@@ -45,6 +65,7 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
    * contiguous regardless of activity.
    */
   app.get<{ Querystring: { projectId?: string; days?: string } }>("/usage/costs/series", async (request, reply) => {
+    const userId = currentUserId(request);
     const projectId = request.query.projectId;
     const days = Number(request.query.days ?? 7);
     if (!Number.isFinite(days) || days < 1) {
@@ -53,7 +74,16 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
     if (projectId && !/^[0-9a-f-]{36}$/i.test(projectId)) {
       return reply.code(400).send({ error: "projectId must be a UUID" });
     }
-    const series = await getDailyCostSeries({ projectId, days });
+    if (projectId) {
+      if (!(await userCanAccessProject(userId, projectId))) {
+        return reply.code(404).send({ error: "Project not found" });
+      }
+      const series = await getDailyCostSeries({ projectId, days });
+      return { days: series };
+    }
+    const visible = await visibleProjectIds(userId);
+    if (!visible.length) return { days: [] };
+    const series = await getDailyCostSeries({ projectIds: visible, days });
     return { days: series };
   });
 };

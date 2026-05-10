@@ -8,6 +8,7 @@ import {
 } from "../cost-tracker";
 import { resolveDailyCostCap } from "../limits";
 import { usagePlugin } from "../usage-api";
+import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
@@ -21,10 +22,12 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   const pool = getPool();
+  const userId = await getOrCreateTestUser("cap-test@orchestra.local");
   await pool.query("DELETE FROM usage_costs");
   await pool.query("DELETE FROM projects WHERE slug = 'cap-test'");
   const { rows } = await pool.query(
-    "INSERT INTO projects (name, slug) VALUES ('Cap Test', 'cap-test') RETURNING id",
+    "INSERT INTO projects (name, slug, owner_id) VALUES ('Cap Test', 'cap-test', $1) RETURNING id",
+    [userId],
   );
   projectId = rows[0].id;
 });
@@ -35,6 +38,7 @@ afterAll(async () => {
 
 async function buildApp() {
   const app = Fastify();
+  await setupTestUser(app, "cap-test@orchestra.local");
   await app.register(usagePlugin, { prefix: "/api" });
   await app.ready();
   return app;

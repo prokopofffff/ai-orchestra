@@ -1,6 +1,8 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { getPool } from "./db";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { getDb, getPool } from "./db";
+import { flowAudit, signals as signalsTable } from "./db/schema";
 import { parseRows } from "./db-utils";
 import {
   validateSignal,
@@ -15,6 +17,8 @@ import { loadConfig } from "./config";
 import { notify, escalate } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { validateSignalSender } from "./agent-auth";
+import { currentUserId } from "./auth";
+import { userCanAccessProject, userCanEditProject, visibleProjectIds } from "./project-access";
 import { resolveMaxRevisions, resolveMaxSignalsPerTask, resolveMaxFails, resolveMaxQaDepth } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
@@ -37,8 +41,19 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
     const body = signalBodySchema.parse(request.body);
     const signal: SignalPayload = body;
 
-    // 0. Validate sender identity (prevent role impersonation)
+    // 0a. Project membership: only members can post signals into a project's
+    // workflow. Agent runs use a service-style header (`x-agent-role`) and
+    // are exempt — they're internal callers, already trusted by signature.
     const agentRole = request.headers["x-agent-role"] as string | undefined;
+    if (!agentRole) {
+      const userId = currentUserId(request);
+      if (!(await userCanEditProject(userId, signal.projectId))) {
+        await logAudit(signal, "rejected", "no project access");
+        return reply.code(403).send({ error: "Insufficient permissions on project" });
+      }
+    }
+
+    // 0b. Validate sender identity (prevent role impersonation)
     if (agentRole) {
       const senderCheck = validateSignalSender(signal.from, agentRole);
       if (!senderCheck.allowed) {
@@ -262,67 +277,64 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
 
   // ─── Audit Log ───
 
-  app.get("/flow/audit", async (request) => {
-    const query_ = request.query as Record<string, string>;
-    const projectId = query_.projectId;
-    const limit = Math.min(Number(query_.limit) || 50, 200);
-
-    let query = "SELECT * FROM flow_audit";
-    const vals: unknown[] = [];
-
-    if (projectId) {
-      query += " WHERE project_id = $1";
-      vals.push(projectId);
-    }
-
-    query += " ORDER BY created_at DESC LIMIT $" + (vals.length + 1);
-    vals.push(limit);
-
-    const { rows } = await getPool().query(query, vals);
-    return parseRows(auditSchema, rows);
+  app.get("/flow/audit", async (request, reply) => {
+    return await listAudit(request, reply, /* rejectedOnly */ false);
   });
 
-  app.get("/flow/violations", async (request) => {
-    const query_ = request.query as Record<string, string>;
-    const projectId = query_.projectId;
-    const limit = Math.min(Number(query_.limit) || 50, 200);
-
-    let query = "SELECT * FROM flow_audit WHERE status = 'rejected'";
-    const vals: unknown[] = [];
-
-    if (projectId) {
-      query += " AND project_id = $1";
-      vals.push(projectId);
-    }
-
-    query += " ORDER BY created_at DESC LIMIT $" + (vals.length + 1);
-    vals.push(limit);
-
-    const { rows } = await getPool().query(query, vals);
-    return parseRows(auditSchema, rows);
+  app.get("/flow/violations", async (request, reply) => {
+    return await listAudit(request, reply, /* rejectedOnly */ true);
   });
 
   // ─── Pending Signals ───
 
-  app.get("/signals", async (request) => {
-    const query_ = request.query as Record<string, string>;
-    const projectId = query_.projectId;
-    const toRole = query_.toRole;
-    const unreadOnly = query_.unread === "true";
+  app.get("/signals", async (request, reply) => {
+    const userId = currentUserId(request);
+    const q = request.query as Record<string, string>;
+    const toRole = q.toRole;
+    const unreadOnly = q.unread === "true";
 
-    const wheres: string[] = [];
-    const vals: unknown[] = [];
-    let i = 1;
+    if (q.projectId && !(await userCanAccessProject(userId, q.projectId))) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const visible = q.projectId ? [q.projectId] : await visibleProjectIds(userId);
+    if (!visible.length) return [];
 
-    if (projectId) { wheres.push(`project_id = $${i++}`); vals.push(projectId); }
-    if (toRole) { wheres.push(`to_role = $${i++}`); vals.push(toRole); } // eslint-disable-line no-useless-assignment
-    if (unreadOnly) { wheres.push(`read = false`); }
+    const conds = [inArray(signalsTable.projectId, visible)];
+    if (toRole) conds.push(eq(signalsTable.toRole, toRole));
+    if (unreadOnly) conds.push(eq(signalsTable.read, false));
 
-    const where = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
-    const { rows } = await getPool().query(
-      `SELECT * FROM signals ${where} ORDER BY created_at DESC LIMIT 100`,
-      vals,
-    );
-    return rows;
+    return await getDb()
+      .select()
+      .from(signalsTable)
+      .where(and(...conds))
+      .orderBy(desc(signalsTable.createdAt))
+      .limit(100);
   });
 };
+
+async function listAudit(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  rejectedOnly: boolean,
+) {
+  const userId = currentUserId(request);
+  const q = request.query as Record<string, string>;
+  const limit = Math.min(Number(q.limit) || 50, 200);
+
+  if (q.projectId && !(await userCanAccessProject(userId, q.projectId))) {
+    return reply.code(404).send({ error: "Project not found" });
+  }
+  const visible = q.projectId ? [q.projectId] : await visibleProjectIds(userId);
+  if (!visible.length) return [];
+
+  const conds = [inArray(flowAudit.projectId, visible)];
+  if (rejectedOnly) conds.push(eq(flowAudit.status, "rejected"));
+
+  const rows = await getDb()
+    .select()
+    .from(flowAudit)
+    .where(and(...conds))
+    .orderBy(desc(flowAudit.createdAt))
+    .limit(limit);
+  return parseRows(auditSchema, rows);
+}

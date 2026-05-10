@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vites
 import Fastify from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { signalPlugin } from "../signal-api";
+import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
 
 vi.mock("../dispatcher", () => ({
   dispatchSignal: vi.fn().mockResolvedValue({ dispatched: false }),
@@ -27,11 +28,12 @@ beforeEach(async () => {
   await pool.query("DELETE FROM tasks WHERE title LIKE 'sigcap-test%'");
   await pool.query("DELETE FROM projects WHERE slug = 'sigcap-test'");
 
+  const userId = await getOrCreateTestUser("sigcap-test@orchestra.local");
   // Use a tiny override so we don't need to send 200 signals.
   const settings = JSON.stringify({ limits: { maxSignalsPerTask: 3 } });
   const { rows: pRows } = await pool.query(
-    "INSERT INTO projects (name, slug, settings) VALUES ('SigCap Test', 'sigcap-test', $1::jsonb) RETURNING id",
-    [settings],
+    "INSERT INTO projects (name, slug, settings, owner_id) VALUES ('SigCap Test', 'sigcap-test', $1::jsonb, $2) RETURNING id",
+    [settings, userId],
   );
   projectId = pRows[0].id;
   await pool.query("INSERT INTO conversations (project_id) VALUES ($1)", [projectId]);
@@ -49,6 +51,7 @@ afterAll(async () => {
 
 async function buildApp() {
   const app = Fastify();
+  await setupTestUser(app, "sigcap-test@orchestra.local");
   await app.register(signalPlugin, { prefix: "/api" });
   await app.ready();
   return app;

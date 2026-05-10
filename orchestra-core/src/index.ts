@@ -21,7 +21,8 @@ import { webhookPlugin } from "./webhooks";
 import { prPlugin } from "./pr-api";
 import { authPlugin } from "./auth-api";
 import { usagePlugin } from "./usage-api";
-import { requireAuth, isPublicApiPath, SESSION_COOKIE } from "./auth";
+import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
+import { userCanAccessProject } from "./project-access";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
 import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
@@ -83,6 +84,12 @@ async function main() {
     const query = request.query as Record<string, string>;
     const projectId = query.projectId;
     if (!projectId) return reply.code(400).send({ error: "projectId required" });
+    // Membership gate: agent_logs are project-scoped, so a non-member must
+    // not be able to read another project's logs by guessing the id.
+    const userId = currentUserId(request);
+    if (!(await userCanAccessProject(userId, projectId))) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
     const logs = await getLogs(projectId, {
       sessionId: query.sessionId,
       role: query.role,

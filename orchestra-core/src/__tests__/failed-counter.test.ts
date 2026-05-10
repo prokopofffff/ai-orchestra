@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vites
 import Fastify from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { signalPlugin } from "../signal-api";
+import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
 
 vi.mock("../dispatcher", () => ({
   dispatchSignal: vi.fn().mockResolvedValue({ dispatched: false }),
@@ -27,8 +28,10 @@ beforeEach(async () => {
   await pool.query("DELETE FROM tasks WHERE title LIKE 'fail-test%'");
   await pool.query("DELETE FROM projects WHERE slug = 'fail-test'");
 
+  const userId = await getOrCreateTestUser("fail-test@orchestra.local");
   const { rows: pRows } = await pool.query(
-    "INSERT INTO projects (name, slug) VALUES ('Fail Test', 'fail-test') RETURNING id",
+    "INSERT INTO projects (name, slug, owner_id) VALUES ('Fail Test', 'fail-test', $1) RETURNING id",
+    [userId],
   );
   projectId = pRows[0].id;
   await pool.query("INSERT INTO conversations (project_id) VALUES ($1)", [projectId]);
@@ -46,6 +49,7 @@ afterAll(async () => {
 
 async function buildApp() {
   const app = Fastify();
+  await setupTestUser(app, "fail-test@orchestra.local");
   await app.register(signalPlugin, { prefix: "/api" });
   await app.ready();
   return app;

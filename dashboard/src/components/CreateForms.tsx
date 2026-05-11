@@ -69,7 +69,7 @@ function ProjectForm({ onCreated }: { onCreated: () => void }) {
     <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" required className={INPUT_CLS} />
       <input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="Local path (e.g. /Users/you/myapp)" className={INPUT_CLS} style={{ minWidth: 260 }} />
-      <Button variant="primary-blue" type="submit">Create Project</Button>
+      <Button variant="primary-red" type="submit">Create Project</Button>
     </form>
   );
 }
@@ -107,10 +107,10 @@ function TaskForm({ projectId, onCreated }: { projectId: string; onCreated: () =
         <option value="">Unassigned</option>
         {["tech-lead", "designer", "frontend", "backend", "qa", "devops"].map((r) => <option key={r}>{r}</option>)}
       </select>
-      <Button variant="primary-blue" type="submit">Create Task</Button>
+      <Button variant="primary-red" type="submit">Create Task</Button>
     </form>
   );
 }
 
 const INPUT_CLS =
-  "h-8 px-3 bg-bg-input border border-border text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue";
+  "h-8 px-3 bg-bg-input border border-border text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-red";

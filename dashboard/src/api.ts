@@ -232,12 +232,18 @@ const OnboardingStepSchema = z.object({
   href: z.string(),
   hint: z.string().optional(),
 });
+const TabKeySchema = z.enum([
+  "kanban", "chat", "signals", "agents", "flow", "logs", "settings", "profile",
+]);
+export type OnboardingTabKey = z.infer<typeof TabKeySchema>;
+
 const OnboardingSchema = z.object({
   dismissedAt: z.string().nullable(),
   welcomeSeenAt: z.string().nullable(),
   showWelcome: z.boolean(),
   allDone: z.boolean(),
   steps: z.array(OnboardingStepSchema),
+  tabsSeen: z.array(TabKeySchema),
 });
 export type OnboardingStep = z.infer<typeof OnboardingStepSchema>;
 export type OnboardingState = z.infer<typeof OnboardingSchema>;
@@ -247,3 +253,5 @@ export const dismissOnboarding = (): Promise<OnboardingState> =>
   postValidated("/onboarding/dismiss", {}, OnboardingSchema);
 export const markWelcomeSeen = (): Promise<OnboardingState> =>
   postValidated("/onboarding/welcome-seen", {}, OnboardingSchema);
+export const markTabSeen = (key: OnboardingTabKey): Promise<OnboardingState> =>
+  postValidated(`/onboarding/tabs/${key}`, {}, OnboardingSchema);

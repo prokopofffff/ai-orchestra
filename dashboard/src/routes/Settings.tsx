@@ -21,7 +21,7 @@ export default function Settings() {
 
   return (
     <div className="settings flex flex-col h-full">
-      <nav className="settings-tabs flex items-center gap-0 px-16 border-b border-border bg-bg-surface shrink-0">
+      <nav data-tour="settings.tabs" className="settings-tabs flex items-center gap-0 px-16 border-b border-border bg-bg-surface shrink-0">
         {(["project", "agents", "checks", "members", "limits", "system"] as Tab[]).map((t) => (
           <button
             key={t}

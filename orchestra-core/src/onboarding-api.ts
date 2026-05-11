@@ -32,12 +32,18 @@ export const StepSchema = z.object({
   hint: z.string().optional(),
 });
 
+export const TabKeySchema = z.enum([
+  "kanban", "chat", "signals", "agents", "flow", "logs", "settings", "profile",
+]);
+export type OnboardingTabKey = z.infer<typeof TabKeySchema>;
+
 export const OnboardingSchema = z.object({
   dismissedAt: z.string().nullable(),
   welcomeSeenAt: z.string().nullable(),
   showWelcome: z.boolean(),
   allDone: z.boolean(),
   steps: z.array(StepSchema),
+  tabsSeen: z.array(TabKeySchema),
 });
 
 export const onboardingPlugin: FastifyPluginAsync = async (app) => {
@@ -66,6 +72,28 @@ export const onboardingPlugin: FastifyPluginAsync = async (app) => {
       .where(eq(users.id, userId));
     return await computeOnboarding(userId);
   });
+
+  // Mark a tab's coachmark tour as seen. Idempotent — uses a JSONB array
+  // append guarded by a containment check so re-posts are no-ops.
+  app.post<{ Params: { key: string } }>("/onboarding/tabs/:key", async (request, reply) => {
+    const parsed = TabKeySchema.safeParse(request.params.key);
+    if (!parsed.success) return reply.code(400).send({ error: "Unknown tab key" });
+    const userId = currentUserId(request);
+    const key = parsed.data;
+    await getDb()
+      .update(users)
+      .set({
+        onboardingTabsSeen: sql`
+          CASE
+            WHEN ${users.onboardingTabsSeen} @> ${JSON.stringify([key])}::jsonb
+              THEN ${users.onboardingTabsSeen}
+            ELSE ${users.onboardingTabsSeen} || ${JSON.stringify([key])}::jsonb
+          END
+        `,
+      })
+      .where(eq(users.id, userId));
+    return await computeOnboarding(userId);
+  });
 };
 
 export async function computeOnboarding(userId: string) {
@@ -75,6 +103,7 @@ export async function computeOnboarding(userId: string) {
     .select({
       dismissedAt: users.onboardingDismissedAt,
       welcomeSeenAt: users.onboardingWelcomeSeenAt,
+      tabsSeen: users.onboardingTabsSeen,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -144,6 +173,15 @@ export async function computeOnboarding(userId: string) {
   const allDone = steps.every((s) => s.done);
   const dismissedAt = user?.dismissedAt ?? null;
   const welcomeSeenAt = user?.welcomeSeenAt ?? null;
+  const rawTabs = (user?.tabsSeen ?? []) as unknown;
+  // The column has a NOT NULL default of [] but be defensive: validate
+  // and silently drop unknown keys (a future schema can shrink/rename).
+  const tabsSeen = Array.isArray(rawTabs)
+    ? rawTabs
+      .map((t) => TabKeySchema.safeParse(t))
+      .filter((r) => r.success)
+      .map((r) => (r as { success: true; data: OnboardingTabKey }).data)
+    : [];
 
   return {
     dismissedAt: dismissedAt ? dismissedAt.toISOString() : null,
@@ -155,5 +193,6 @@ export async function computeOnboarding(userId: string) {
     showWelcome: !welcomeSeenAt && !dismissedAt && !hasProject,
     allDone,
     steps,
+    tabsSeen,
   };
 }

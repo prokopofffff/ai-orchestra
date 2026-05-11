@@ -159,6 +159,7 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
   onboardingWelcomeSeenAt: timestamp("onboarding_welcome_seen_at", { withTimezone: true }),
+  onboardingTabsSeen: jsonb("onboarding_tabs_seen").notNull().default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [

@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useProjectContext } from "../contexts/ProjectContext";
 import { useAuth } from "../contexts/AuthContext";
 import { ChevronDownIcon } from "./ui/Icon";
+import { useRouteTour } from "./TourHost";
 
 const TABS = [
   { to: "/kanban",   label: "Kanban"   },
@@ -52,8 +53,25 @@ export function TopBar() {
         ))}
       </nav>
 
+      <HelpButton />
       <UserMenu />
     </header>
+  );
+}
+
+function HelpButton() {
+  const { open, available } = useRouteTour();
+  if (!available) return null;
+  return (
+    <button
+      type="button"
+      onClick={open}
+      aria-label="Show tour for this page"
+      title="Show tour"
+      className="grid h-7 w-7 place-items-center rounded-full border border-border text-text-tertiary hover:text-text-primary hover:border-text-secondary transition-colors text-xs font-semibold"
+    >
+      ?
+    </button>
   );
 }
 

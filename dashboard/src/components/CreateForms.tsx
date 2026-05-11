@@ -18,23 +18,27 @@ export function CreateForms({ projectId, onCreated }: Props) {
     <div className="create-forms flex flex-col">
       <div className="form-buttons flex h-12 items-center gap-3 px-6 bg-bg-surface border-b border-border-subtle">
         {projectId && (
+          <span data-tour="kanban.create-task">
+            <Button
+              variant="primary-red"
+              aria-label="+ Task"
+              onClick={() => setShowTaskForm((v) => !v)}
+              leadingIcon={<PlusIcon size={14} />}
+            >
+              Task
+            </Button>
+          </span>
+        )}
+        <span data-tour="kanban.create-project">
           <Button
-            variant="primary-red"
-            aria-label="+ Task"
-            onClick={() => setShowTaskForm((v) => !v)}
+            variant="secondary"
+            aria-label="+ Project"
+            onClick={() => setShowProjectForm((v) => !v)}
             leadingIcon={<PlusIcon size={14} />}
           >
-            Task
+            Project
           </Button>
-        )}
-        <Button
-          variant="secondary"
-          aria-label="+ Project"
-          onClick={() => setShowProjectForm((v) => !v)}
-          leadingIcon={<PlusIcon size={14} />}
-        >
-          Project
-        </Button>
+        </span>
       </div>
 
       {showProjectForm && (

@@ -63,7 +63,7 @@ export function FlowDiagram() {
         <h2 className="text-5xl font-semibold tracking-tight text-text-primary" style={{ letterSpacing: "-2px" }}>
           Flow
         </h2>
-        <div className="flow-view-toggle flex h-9 border border-border">
+        <div data-tour="flow.toggle" className="flow-view-toggle flex h-9 border border-border">
           <ToggleButton active={view === "state"} onClick={() => setView("state")}>
             State Machine
           </ToggleButton>
@@ -80,6 +80,7 @@ export function FlowDiagram() {
       )}
 
       <div
+        data-tour="flow.canvas"
         // overflow-auto so very tall graphs scroll inside the canvas instead
         // of pushing the whole page; no centering — center+overflow makes the
         // scroll origin land mid-diagram and clip the top/left.

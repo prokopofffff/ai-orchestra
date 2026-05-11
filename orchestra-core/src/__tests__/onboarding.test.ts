@@ -201,6 +201,37 @@ describe("onboarding — dismiss", () => {
   });
 });
 
+describe("onboarding — per-tab tours", () => {
+  it("fresh user has empty tabsSeen", async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: "/api/onboarding" });
+    await app.close();
+    expect(res.json().tabsSeen).toEqual([]);
+  });
+
+  it("POST /onboarding/tabs/:key appends idempotently", async () => {
+    const app = await buildApp();
+    const a = await app.inject({ method: "POST", url: "/api/onboarding/tabs/kanban" });
+    expect(a.statusCode).toBe(200);
+    expect(a.json().tabsSeen).toEqual(["kanban"]);
+
+    const b = await app.inject({ method: "POST", url: "/api/onboarding/tabs/chat" });
+    expect(b.json().tabsSeen).toEqual(["kanban", "chat"]);
+
+    // Re-post same key — no duplicate.
+    const c = await app.inject({ method: "POST", url: "/api/onboarding/tabs/kanban" });
+    expect(c.json().tabsSeen).toEqual(["kanban", "chat"]);
+    await app.close();
+  });
+
+  it("rejects unknown tab keys", async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: "POST", url: "/api/onboarding/tabs/not-a-real-tab" });
+    await app.close();
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe("onboarding — allDone", () => {
   it("flips when every step is satisfied", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-test";

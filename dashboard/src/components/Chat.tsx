@@ -43,7 +43,7 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="chat-input h-[72px] shrink-0 bg-bg-surface border-t border-border px-6 flex items-center gap-3">
+      <div data-tour="chat.input" className="chat-input h-[72px] shrink-0 bg-bg-surface border-t border-border px-6 flex items-center gap-3">
         <select
           aria-label="Agent"
           className="h-10 bg-bg-input border border-border px-3 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-blue"

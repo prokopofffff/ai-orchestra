@@ -18,7 +18,7 @@ export default function Kanban() {
   return (
     <div className="flex flex-col h-full min-h-0">
       <CreateForms projectId={project.id} onCreated={refresh} />
-      <div className="flex-1 min-h-0 p-4">
+      <div className="flex-1 min-h-0 p-4" data-tour="kanban.board">
         <KanbanBoard projectId={project.id} onTaskClick={setSelectedTaskId} />
       </div>
       {selectedTaskId && (

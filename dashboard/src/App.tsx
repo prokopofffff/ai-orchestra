@@ -3,6 +3,7 @@ import { ProjectProvider } from "./contexts/ProjectContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { TopBar } from "./components/TopBar";
 import { OnboardingHost } from "./components/OnboardingHost";
+import { TourHost } from "./components/TourHost";
 import Login from "./routes/Login";
 import Kanban from "./routes/Kanban";
 import ChatRoute from "./routes/Chat";
@@ -54,13 +55,15 @@ function RequireAuth() {
 function AppShell() {
   return (
     <ProjectProvider>
-      <div className="flex h-dvh flex-col">
-        <TopBar />
-        <main className="flex-1 min-h-0 overflow-auto">
-          <Outlet />
-        </main>
-        <OnboardingHost />
-      </div>
+      <TourHost>
+        <div className="flex h-dvh flex-col">
+          <TopBar />
+          <main className="flex-1 min-h-0 overflow-auto">
+            <Outlet />
+          </main>
+          <OnboardingHost />
+        </div>
+      </TourHost>
     </ProjectProvider>
   );
 }

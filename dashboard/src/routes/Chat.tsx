@@ -31,7 +31,7 @@ function ChatSidebar({
   onSelect: (id: string) => void;
 }) {
   return (
-    <aside className="w-[280px] shrink-0 min-h-0 bg-bg-sidebar border-r border-border py-4 flex flex-col">
+    <aside data-tour="chat.sidebar" className="w-[280px] shrink-0 min-h-0 bg-bg-sidebar border-r border-border py-4 flex flex-col">
       <div className="shrink-0 flex items-center justify-between px-4">
         <span className="text-[14px] font-semibold text-text-primary">Conversations</span>
         <button

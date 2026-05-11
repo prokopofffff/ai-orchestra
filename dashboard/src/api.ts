@@ -234,6 +234,7 @@ const OnboardingStepSchema = z.object({
 });
 const OnboardingSchema = z.object({
   dismissedAt: z.string().nullable(),
+  welcomeSeenAt: z.string().nullable(),
   showWelcome: z.boolean(),
   allDone: z.boolean(),
   steps: z.array(OnboardingStepSchema),
@@ -244,3 +245,5 @@ export const fetchOnboarding = (): Promise<OnboardingState> =>
   getValidated("/onboarding", OnboardingSchema);
 export const dismissOnboarding = (): Promise<OnboardingState> =>
   postValidated("/onboarding/dismiss", {}, OnboardingSchema);
+export const markWelcomeSeen = (): Promise<OnboardingState> =>
+  postValidated("/onboarding/welcome-seen", {}, OnboardingSchema);

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
 import { OnboardingChecklist } from "./OnboardingChecklist";
 import { WelcomeModal } from "./WelcomeModal";
@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
  * stays in the bottom-right corner until dismissed or all steps satisfied.
  */
 export function OnboardingHost() {
+  const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: ["onboarding"],
     queryFn: api.fetchOnboarding,
@@ -24,10 +25,23 @@ export function OnboardingHost() {
     if (data?.showWelcome) setWelcomeOpen(true);
   }, [data?.showWelcome]);
 
+  async function closeWelcome() {
+    setWelcomeOpen(false);
+    // Persist so it doesn't reappear on the next page load. Best-effort:
+    // a network blip would mean re-showing on reload, which is annoying
+    // but not broken.
+    try {
+      await api.markWelcomeSeen();
+      await queryClient.invalidateQueries({ queryKey: ["onboarding"] });
+    } catch {
+      // intentionally swallow
+    }
+  }
+
   if (!data) return null;
   return (
     <>
-      {welcomeOpen && <WelcomeModal onClose={() => setWelcomeOpen(false)} />}
+      {welcomeOpen && <WelcomeModal onClose={closeWelcome} />}
       <div className="onboarding-floating fixed bottom-6 right-6 z-40 w-[340px] max-w-[calc(100vw-3rem)]">
         <OnboardingChecklist />
       </div>

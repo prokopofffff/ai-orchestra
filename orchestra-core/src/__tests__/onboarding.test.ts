@@ -167,6 +167,26 @@ describe("onboarding — dismiss", () => {
     await app.close();
   });
 
+  it("POST /api/onboarding/welcome-seen hides the welcome without touching the checklist", async () => {
+    const app = await buildApp();
+    const before = await app.inject({ method: "GET", url: "/api/onboarding" });
+    expect(before.json().showWelcome).toBe(true);
+    expect(before.json().dismissedAt).toBeNull();
+
+    const mark = await app.inject({ method: "POST", url: "/api/onboarding/welcome-seen" });
+    expect(mark.statusCode).toBe(200);
+    expect(mark.json().showWelcome).toBe(false);
+    expect(mark.json().welcomeSeenAt).toBeTruthy();
+    // Checklist itself is NOT dismissed — that's a separate user action.
+    expect(mark.json().dismissedAt).toBeNull();
+
+    // Survives a reload (re-fetch).
+    const after = await app.inject({ method: "GET", url: "/api/onboarding" });
+    expect(after.json().showWelcome).toBe(false);
+    expect(after.json().dismissedAt).toBeNull();
+    await app.close();
+  });
+
   it("welcome doesn't show for a returning user who already has a project", async () => {
     // No dismissal, but they've already created a project — they're not
     // a fresh signup, no need to flash the modal at them.

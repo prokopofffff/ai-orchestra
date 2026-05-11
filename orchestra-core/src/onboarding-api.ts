@@ -34,6 +34,7 @@ export const StepSchema = z.object({
 
 export const OnboardingSchema = z.object({
   dismissedAt: z.string().nullable(),
+  welcomeSeenAt: z.string().nullable(),
   showWelcome: z.boolean(),
   allDone: z.boolean(),
   steps: z.array(StepSchema),
@@ -53,13 +54,28 @@ export const onboardingPlugin: FastifyPluginAsync = async (app) => {
       .where(eq(users.id, userId));
     return await computeOnboarding(userId);
   });
+
+  // Distinct from /dismiss: marks that the user has closed the welcome
+  // modal (Skip / Next-through / X). Stops the modal from reappearing on
+  // reload without affecting the checklist visibility.
+  app.post("/onboarding/welcome-seen", async (request) => {
+    const userId = currentUserId(request);
+    await getDb()
+      .update(users)
+      .set({ onboardingWelcomeSeenAt: sql`now()` })
+      .where(eq(users.id, userId));
+    return await computeOnboarding(userId);
+  });
 };
 
 export async function computeOnboarding(userId: string) {
   const db = getDb();
 
   const [user] = await db
-    .select({ dismissedAt: users.onboardingDismissedAt })
+    .select({
+      dismissedAt: users.onboardingDismissedAt,
+      welcomeSeenAt: users.onboardingWelcomeSeenAt,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
@@ -127,15 +143,16 @@ export async function computeOnboarding(userId: string) {
 
   const allDone = steps.every((s) => s.done);
   const dismissedAt = user?.dismissedAt ?? null;
+  const welcomeSeenAt = user?.welcomeSeenAt ?? null;
 
   return {
     dismissedAt: dismissedAt ? dismissedAt.toISOString() : null,
-    // Welcome modal: never dismissed AND user hasn't created a project yet.
-    // A returning user who already has projects doesn't see the intro again
-    // even if they never explicitly dismissed it. The git_token step can
-    // auto-tick on a fresh account with no projects (no remote project →
-    // nothing needing a token), so we key on hasProject specifically.
-    showWelcome: !dismissedAt && !hasProject,
+    welcomeSeenAt: welcomeSeenAt ? welcomeSeenAt.toISOString() : null,
+    // Welcome modal: hide once the user has explicitly closed it OR they
+    // already have a project (so a long-time user the field rolled out to
+    // doesn't see the intro at all). Also suppressed by the checklist's
+    // global dismiss — that's a stronger "I don't want any of this" signal.
+    showWelcome: !welcomeSeenAt && !dismissedAt && !hasProject,
     allDone,
     steps,
   };

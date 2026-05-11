@@ -13,7 +13,7 @@ import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir } from "./repo-manager";
 import { extractText } from "./agents/sdk-runner";
-import { loadSystemPrompt, assemblePrompt } from "./agents/prompt";
+import { buildAgentDefinitions } from "./agents/role-definitions";
 import { providerFor } from "./providers";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 
@@ -59,16 +59,16 @@ export async function dispatchTechLead(
     const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, "tech-lead"));
     const conversationHistory = await getConversationHistory(projectId);
 
-    const fullPrompt = assemblePrompt({
-      systemPrompt: loadSystemPrompt("tech-lead"),
+    // Dynamic user turn = bootstrap context + conversation history + new
+    // user message. Role identity/rules come from the SDK agent definition
+    // selected below via `agent: "tech-lead"`.
+    const userTurn = [
       bootstrap,
-      tail: [
-        conversationHistory,
-        "\n## Latest User Message\n",
-        userMessage,
-        "\n\nRespond to the user's latest message above. You have the full conversation history — do NOT ask the user to repeat themselves. Continue where the conversation left off.",
-      ].join("\n"),
-    });
+      conversationHistory,
+      "\n## Latest User Message\n",
+      userMessage,
+      "\n\nRespond to the user's latest message above. You have the full conversation history — do NOT ask the user to repeat themselves. Continue where the conversation left off.",
+    ].join("\n");
 
     const session = await createSession({
       projectId,
@@ -82,7 +82,8 @@ export async function dispatchTechLead(
     // Run the conversation in the background — the HTTP request that triggered
     // this returns immediately; the tech-lead's reply arrives via notify().
     void runTechLead({
-      projectId, sessionId: session.id, model, workDir, fullPrompt, mcpServers,
+      projectId, sessionId: session.id, model, workDir,
+      userTurn, mcpServers, pencilEnabled: config.pencilEnabled,
     });
 
     return { action: "spawned", sessionId: session.id };
@@ -97,14 +98,18 @@ async function runTechLead(p: {
   sessionId: string;
   model: string;
   workDir: string;
-  fullPrompt: string;
+  userTurn: string;
+  pencilEnabled?: boolean;
   mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
 }): Promise<void> {
   appendLog(p.projectId, p.sessionId, "tech-lead", "system", `tech-lead run: model=${p.model}`);
 
+  const agents = buildAgentDefinitions({ pencilEnabled: p.pencilEnabled });
   const stream = query({
-    prompt: p.fullPrompt,
+    prompt: p.userTurn,
     options: {
+      agent: "tech-lead",
+      agents,
       model: p.model,
       cwd: p.workDir,
       permissionMode: "bypassPermissions",

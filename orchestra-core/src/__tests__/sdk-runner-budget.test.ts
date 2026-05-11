@@ -118,7 +118,7 @@ describe("sdk-runner — per-run budget cap", () => {
     await runAgentSdk({
       projectId, taskId, sessionId, role: "backend",
       model: "sonnet", worktree: "/tmp/wt",
-      fullPrompt: "do thing", mcpServers: {},
+      bootstrap: "do thing", mcpServers: {},
     });
 
     const callArgs = vi.mocked(query).mock.calls[0][0] as { options: { maxBudgetUsd: number } };
@@ -131,7 +131,7 @@ describe("sdk-runner — per-run budget cap", () => {
     await runAgentSdk({
       projectId, taskId, sessionId, role: "tech-lead",
       model: "opus", worktree: "/tmp/wt",
-      fullPrompt: "plan", mcpServers: {},
+      bootstrap: "plan", mcpServers: {},
       settings: { limits: { perRunBudgetUsd: { "tech-lead": 12 } } },
     });
 
@@ -145,7 +145,7 @@ describe("sdk-runner — per-run budget cap", () => {
     const outcome = await runAgentSdk({
       projectId, taskId, sessionId, role: "backend",
       model: "sonnet", worktree: "/tmp/wt",
-      fullPrompt: "loop", mcpServers: {},
+      bootstrap: "loop", mcpServers: {},
     });
 
     expect(outcome.capExceeded?.kind).toBe("budget");
@@ -177,7 +177,7 @@ describe("sdk-runner — per-run budget cap", () => {
     await runAgentSdk({
       projectId, taskId, sessionId, role: "backend",
       model: "sonnet", worktree: "/tmp/wt",
-      fullPrompt: "x", mcpServers: {},
+      bootstrap: "x", mcpServers: {},
     });
 
     expect(observed).toBeInstanceOf(AbortController);

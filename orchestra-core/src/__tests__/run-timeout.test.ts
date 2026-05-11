@@ -83,7 +83,7 @@ describe("sdk-runner — run timeout watchdog", () => {
     const outcome = await runAgentSdk({
       projectId, taskId, sessionId, role: "backend",
       model: "sonnet", worktree: "/tmp/wt",
-      fullPrompt: "loop", mcpServers: {},
+      bootstrap: "loop", mcpServers: {},
       settings: { limits: { runTimeoutMs: { backend: 50 } } },
     });
 
@@ -120,7 +120,7 @@ describe("sdk-runner — run timeout watchdog", () => {
       runAgentSdk({
         projectId, taskId, sessionId, role: "backend",
         model: "sonnet", worktree: "/tmp/wt",
-        fullPrompt: "x", mcpServers: {},
+        bootstrap: "x", mcpServers: {},
       }),
     ).rejects.toThrow(/upstream exploded/);
   });

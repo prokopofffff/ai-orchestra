@@ -11,6 +11,7 @@ import { updateSession, registerSessionController, unregisterSessionController }
 import { enqueue } from "../scheduler";
 import { CHECK_KIND } from "./check-handlers";
 import { getAgentConfig } from "./configs";
+import { buildAgentDefinitions } from "./role-definitions";
 import { recordCost } from "../cost-tracker";
 import { resolvePerRunBudgetUsd, resolveRunTimeoutMs } from "../limits";
 import { logBackgroundError } from "../error-handler";
@@ -26,7 +27,15 @@ export type SdkRunInput = {
   /** SDK effort level. Omit → SDK default ("high"). `max` is Opus-only. */
   effort?: "low" | "medium" | "high" | "max";
   worktree: string;
-  fullPrompt: string;
+  /**
+   * Dynamic per-run context that goes in as the first user turn:
+   * task title/description, pending signals, project task list.
+   * The static role identity / scope / rules live on the agent's
+   * `prompt` field, built by buildAgentDefinitions().
+   */
+  bootstrap: string;
+  /** Pencil plugin enabled? Designer prompt has a fallback variant when not. */
+  pencilEnabled?: boolean;
   mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
   /** Project settings (used to resolve per-run budget). */
   settings?: unknown;
@@ -68,7 +77,16 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
     abortController.abort(`run timeout after ${runTimeoutMs}ms`);
   }, runTimeoutMs);
 
+  // SDK-native role config. The agent's prompt/skills/memory/disallowedTools
+  // come from role-definitions.ts; we only need to plumb the runtime
+  // bits (model, abort, budget, mcp) at the top level. Selecting `agent`
+  // by role makes the SDK apply that definition's prompt + tool gates
+  // automatically.
+  const agents = buildAgentDefinitions({ pencilEnabled: p.pencilEnabled });
+
   const options: Options = {
+    agent: p.role,
+    agents,
     model: p.model,
     effort: p.effort,
     cwd: p.worktree,
@@ -76,7 +94,9 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
     permissionMode: "bypassPermissions",
     abortController,
     maxBudgetUsd,
-    canUseTool: buildCanUseTool(cfg.scope.denied, cfg.toolsDeny ?? []),
+    // canUseTool now only enforces file-path scope (out-of-zone Edit/Write).
+    // Tool-name deny is native via agent.disallowedTools.
+    canUseTool: buildCanUseTool(cfg.scope.denied),
     mcpServers: Object.fromEntries(
       Object.entries(p.mcpServers).map(([name, s]) => [
         name,
@@ -114,7 +134,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
   appendLog(p.projectId, p.sessionId, p.role, "system",
     `SDK run started: model=${p.model} effort=${p.effort ?? "(default)"} worktree=${p.worktree} budget=$${maxBudgetUsd} timeout=${runTimeoutMs}ms`);
 
-  const stream = query({ prompt: p.fullPrompt, options });
+  const stream = query({ prompt: p.bootstrap, options });
 
   try {
     for await (const message of stream) {
@@ -215,36 +235,16 @@ export function extractText(content: unknown): string {
 }
 
 /**
- * Translate the role's deny lists into a tool-call gate. Two layers:
- *   - `toolsDeny` blocks specific tool names ("Edit", "mcp__pencil__*"),
- *     regardless of arguments. Used to keep Tech Lead away from file-edit
- *     and design tools entirely, since the SDK happily exposes whatever
- *     MCP plugins are installed globally.
- *   - `deniedGlobs` blocks Edit/Write/MultiEdit when the file_path lands
- *     in a scope-denied location.
- *
- * A tool that's not denied by either layer is allowed unchanged.
+ * File-path scope enforcement: reject Edit/Write/MultiEdit when the
+ * target lands in a denied directory. Tool-name deny ("Edit",
+ * "mcp__pencil__*") is handled natively by the SDK now via
+ * `AgentDefinition.disallowedTools` — this hook only catches the
+ * file-path layer because the SDK doesn't have a built-in equivalent.
  */
-export function buildCanUseTool(
-  deniedGlobs: string[],
-  toolsDeny: string[] = [],
-): CanUseTool | undefined {
-  if (deniedGlobs.length === 0 && toolsDeny.length === 0) return undefined;
+export function buildCanUseTool(deniedGlobs: string[]): CanUseTool | undefined {
+  if (deniedGlobs.length === 0) return undefined;
 
   return async (toolName, input) => {
-    // Layer 1: pure tool-name deny. `mcp__pencil__*` style patterns are
-    // matched by prefix; exact names by equality. Cheap, fires before any
-    // input inspection.
-    for (const pattern of toolsDeny) {
-      if (matchesToolName(toolName, pattern)) {
-        return {
-          behavior: "deny",
-          message: `Tool ${toolName} is not available to this role (use signal-tool / task-tool to delegate to a specialist).`,
-        };
-      }
-    }
-
-    // Layer 2: file-path scope (unchanged).
     if (toolName !== "Edit" && toolName !== "Write" && toolName !== "MultiEdit") {
       return { behavior: "allow", updatedInput: input };
     }
@@ -261,11 +261,4 @@ export function buildCanUseTool(
     }
     return { behavior: "allow", updatedInput: input };
   };
-}
-
-function matchesToolName(toolName: string, pattern: string): boolean {
-  if (pattern.endsWith("*")) {
-    return toolName.startsWith(pattern.slice(0, -1));
-  }
-  return toolName === pattern;
 }

@@ -15,7 +15,6 @@ import {
 } from "./repo-manager";
 import { installScopeHook } from "./scope-enforcer";
 import { runAgentSdk } from "./agents/sdk-runner";
-import { loadSystemPrompt, buildScopeRules, assemblePrompt } from "./agents/prompt";
 import { providerFor } from "./providers";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
 import { resolveDailyCostCap } from "./limits";
@@ -118,11 +117,11 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   installScopeHook(worktreeDir, role);
 
   // ── 3. Prompt ──────────────────────────────────────────────────────
-  const fullPrompt = assemblePrompt({
-    systemPrompt: loadSystemPrompt(role, { pencilEnabled: config.pencilEnabled }),
-    scope: buildScopeRules(role),
-    bootstrap: formatBootstrapPrompt(await buildBootstrapContext(projectId, role, taskId)),
-  });
+  // Static role identity / scope / rules live on the SDK agent definition
+  // (role-definitions.ts). Here we build only the dynamic per-run context
+  // — task, signals, current project state — which goes in as the first
+  // user turn.
+  const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, role, taskId));
 
   // ── 4. Session row + MCP servers (passed inline to SDK) ─────────────
   const session = await createSession({ projectId, role, taskId, model, worktreePath: worktreeDir });
@@ -140,7 +139,8 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       model,
       effort,
       worktree: worktreeDir,
-      fullPrompt,
+      bootstrap,
+      pencilEnabled: config.pencilEnabled,
       mcpServers,
       settings,
       resumeSessionId: params.resumeSessionId,

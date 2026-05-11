@@ -180,6 +180,17 @@ export const fetchMessages = (projectId: string, limit = 50): Promise<Message[]>
 export const sendMessage = (projectId: string, text: string): Promise<Message> =>
   postValidated(`/conversations/${projectId}/messages`, { text }, MessageSchema);
 
+// Live activity ("TL is thinking...") for the chat
+const ChatActivitySchema = z.object({
+  active: z.boolean(),
+  sessionId: z.string().uuid().nullable(),
+  latestActivity: z.string().nullable(),
+  sinceMs: z.number(),
+});
+export type ChatActivity = z.infer<typeof ChatActivitySchema>;
+export const fetchChatActivity = (projectId: string): Promise<ChatActivity> =>
+  getValidated(`/conversations/${projectId}/activity`, ChatActivitySchema);
+
 // Queue
 export const fetchQueueStatus = (): Promise<QueueStatus> =>
   getValidated("/queue/status", QueueStatusSchema);

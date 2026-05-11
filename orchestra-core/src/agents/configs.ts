@@ -24,8 +24,18 @@ export const agentConfigs: Record<AgentRole, AgentConfig> = {
   "tech-lead": {
     role: "tech-lead",
     promptFile: "tech-lead",
+    // TL is a planner: it reads code, talks to the user, and delegates.
+    // It must NOT modify files, run lint/test, or touch design tooling —
+    // each of those is some specialist's responsibility. The deny list
+    // is the enforcement; the system prompt explains the why.
     scope: { allowed: ["**/*"], denied: [] },
     permissions: { allow: BASE_ALLOW, deny: BASE_DENY },
+    toolsDeny: [
+      "Edit", "Write", "MultiEdit", "NotebookEdit",
+      // The pencil MCP is loaded globally (Claude Code plugin) — it's the
+      // designer's surface. TL writing designs directly bypasses the flow.
+      "mcp__pencil__*",
+    ],
     checks: [],
   },
 

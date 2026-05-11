@@ -76,7 +76,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
     permissionMode: "bypassPermissions",
     abortController,
     maxBudgetUsd,
-    canUseTool: buildCanUseTool(cfg.scope.denied),
+    canUseTool: buildCanUseTool(cfg.scope.denied, cfg.toolsDeny ?? []),
     mcpServers: Object.fromEntries(
       Object.entries(p.mcpServers).map(([name, s]) => [
         name,
@@ -215,13 +215,36 @@ export function extractText(content: unknown): string {
 }
 
 /**
- * Translate the role's denied globs into a tool-call gate. Edit/Write/MultiEdit
- * targeting a denied path is rejected before it runs.
+ * Translate the role's deny lists into a tool-call gate. Two layers:
+ *   - `toolsDeny` blocks specific tool names ("Edit", "mcp__pencil__*"),
+ *     regardless of arguments. Used to keep Tech Lead away from file-edit
+ *     and design tools entirely, since the SDK happily exposes whatever
+ *     MCP plugins are installed globally.
+ *   - `deniedGlobs` blocks Edit/Write/MultiEdit when the file_path lands
+ *     in a scope-denied location.
+ *
+ * A tool that's not denied by either layer is allowed unchanged.
  */
-export function buildCanUseTool(deniedGlobs: string[]): CanUseTool | undefined {
-  if (deniedGlobs.length === 0) return undefined;
+export function buildCanUseTool(
+  deniedGlobs: string[],
+  toolsDeny: string[] = [],
+): CanUseTool | undefined {
+  if (deniedGlobs.length === 0 && toolsDeny.length === 0) return undefined;
 
   return async (toolName, input) => {
+    // Layer 1: pure tool-name deny. `mcp__pencil__*` style patterns are
+    // matched by prefix; exact names by equality. Cheap, fires before any
+    // input inspection.
+    for (const pattern of toolsDeny) {
+      if (matchesToolName(toolName, pattern)) {
+        return {
+          behavior: "deny",
+          message: `Tool ${toolName} is not available to this role (use signal-tool / task-tool to delegate to a specialist).`,
+        };
+      }
+    }
+
+    // Layer 2: file-path scope (unchanged).
     if (toolName !== "Edit" && toolName !== "Write" && toolName !== "MultiEdit") {
       return { behavior: "allow", updatedInput: input };
     }
@@ -238,4 +261,11 @@ export function buildCanUseTool(deniedGlobs: string[]): CanUseTool | undefined {
     }
     return { behavior: "allow", updatedInput: input };
   };
+}
+
+function matchesToolName(toolName: string, pattern: string): boolean {
+  if (pattern.endsWith("*")) {
+    return toolName.startsWith(pattern.slice(0, -1));
+  }
+  return toolName === pattern;
 }

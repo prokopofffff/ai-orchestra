@@ -47,6 +47,28 @@ describe("sdk-runner — buildCanUseTool", () => {
     const result = await guard("Edit", { file_path: "src/frontend/Header.tsx" }, {} as never);
     expect(result.behavior).toBe("allow");
   });
+
+  it("toolsDeny: exact-name matcher blocks the tool regardless of args", async () => {
+    const guard = buildCanUseTool([], ["Edit"])!;
+    const result = await guard("Edit", { file_path: "anywhere.ts" }, {} as never);
+    expect(result.behavior).toBe("deny");
+    if (result.behavior === "deny") expect(result.message).toMatch(/not available to this role/);
+  });
+
+  it("toolsDeny: prefix wildcard matches MCP-style names", async () => {
+    const guard = buildCanUseTool([], ["mcp__pencil__*"])!;
+    const r1 = await guard("mcp__pencil__batch_design", {}, {} as never);
+    const r2 = await guard("mcp__pencil__get_editor_state", {}, {} as never);
+    const r3 = await guard("mcp__other__tool", {}, {} as never);
+    expect(r1.behavior).toBe("deny");
+    expect(r2.behavior).toBe("deny");
+    expect(r3.behavior).toBe("allow");
+  });
+
+  it("returns undefined when both deny lists are empty", () => {
+    expect(buildCanUseTool([])).toBeUndefined();
+    expect(buildCanUseTool([], [])).toBeUndefined();
+  });
 });
 
 describe("sdk-runner — extractText", () => {

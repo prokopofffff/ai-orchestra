@@ -23,9 +23,17 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
     refetchInterval: 3_000,
   });
 
+  const { data: activity } = useQuery({
+    queryKey: ["chat-activity", projectId],
+    queryFn: () => api.fetchChatActivity(projectId),
+    // Poll more frequently than messages — this is the "TL is doing X"
+    // marker, latency matters more than freshness of historical lines.
+    refetchInterval: 1_500,
+  });
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages?.length]);
+  }, [messages?.length, activity?.active]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -40,6 +48,7 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
 
       <div className="chat-messages flex-1 min-h-0 overflow-y-auto px-8 py-6 flex flex-col gap-5 justify-end">
         {messages?.map((m) => <ChatMessage key={m.id} message={m} />)}
+        {activity?.active && <ThinkingIndicator label={activity.latestActivity} />}
         <div ref={bottomRef} />
       </div>
 
@@ -65,6 +74,32 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
         >
           <SendIcon size={16} />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Animated "TL is thinking" bubble that appears below the message list
+ * whenever a Tech Lead session is running for the current project.
+ * Shows the latest action (tool call or assistant text fragment) so the
+ * user knows the agent is actively working — not stuck.
+ */
+function ThinkingIndicator({ label }: { label: string | null }) {
+  return (
+    <div className="chat-thinking self-start flex max-w-[70%] flex-col gap-1">
+      <div className="msg-header flex items-center gap-2 text-[11px] text-text-tertiary font-mono">
+        <span className="msg-author font-semibold text-text-secondary">Tech Lead</span>
+        <span>·</span>
+        <span>thinking</span>
+      </div>
+      <div className="thinking-bubble flex items-center gap-2 bg-bg-input text-text-secondary border border-border-subtle px-3.5 py-2.5 text-sm">
+        <span className="thinking-dots inline-flex gap-1" aria-hidden="true">
+          <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" />
+          <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" style={{ animationDelay: "150ms" }} />
+          <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" style={{ animationDelay: "300ms" }} />
+        </span>
+        <span className="text-[13px] truncate">{label ?? "thinking…"}</span>
       </div>
     </div>
   );

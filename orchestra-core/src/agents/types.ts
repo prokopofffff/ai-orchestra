@@ -18,6 +18,14 @@ export type AgentConfig = {
    */
   permissions: { allow: string[]; deny: string[] };
   /**
+   * Tool-name deny patterns enforced at runtime via canUseTool, *in addition*
+   * to scope.denied (which is file-path-based). Supports plain names ("Edit")
+   * and `prefix__*` wildcards ("mcp__pencil__*"). Use for things you don't
+   * want a role to touch by name, regardless of file path — e.g. Tech Lead
+   * shouldn't open the design MCP at all, designer shouldn't run Bash.
+   */
+  toolsDeny?: string[];
+  /**
    * Observe-only check spec. Each entry runs against files matching `pattern`
    * after Edit/Write tool use. `command` is executed in the worktree and its
    * exit code determines pass/fail (logged, not blocking).

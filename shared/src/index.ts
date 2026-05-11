@@ -106,6 +106,7 @@ export const ProjectSchema = z.object({
   description: z.string().nullable(),
   settings: z.record(z.unknown()), // looser at the boundary; ProjectSettings parses it strictly
   ownerId: z.string().uuid().nullable().optional(),
+  introTaskId: z.string().uuid().nullable().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });

@@ -45,7 +45,12 @@ export default function Settings() {
       </nav>
 
       <div className="flex-1 overflow-y-auto">
-        {tab === "project" && <ProjectTab project={project} onSaved={refresh} />}
+        {tab === "project" && (
+          <div className="flex flex-col">
+            <ProjectTab project={project} onSaved={refresh} />
+            <ProjectIntroSection project={project} />
+          </div>
+        )}
         {tab === "agents" && <AgentsTab project={project} onSaved={refresh} />}
         {tab === "checks" && <ProjectChecks projectId={project.id} />}
         {tab === "members" && <MembersTab projectId={project.id} />}
@@ -166,6 +171,74 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
         </div>
       </section>
     </div>
+  );
+}
+
+function ProjectIntroSection({ project }: { project: Project }) {
+  const queryClient = useQueryClient();
+  const [rescanning, setRescanning] = useState(false);
+
+  const { data: notes } = useQuery({
+    queryKey: ["project-notes", project.id],
+    queryFn: () => api.fetchProjectNotes(project.id),
+    refetchInterval: 10_000,
+  });
+
+  const intro = notes?.find((n) => n.kind === "intro_summary");
+  // The intro task is still in flight when there's no note yet AND the
+  // project has an intro_task_id pinned. Once the project predates this
+  // feature (intro_task_id null) we just show "no scan run".
+  const introTaskId = (project as { introTaskId?: string | null }).introTaskId ?? null;
+  const inProgress = !intro && !!introTaskId;
+
+  async function rescan() {
+    if (!confirm("Run a fresh codebase scan? This spawns a Tech Lead session.")) return;
+    setRescanning(true);
+    try {
+      await api.rescanProject(project.id);
+      await queryClient.invalidateQueries({ queryKey: ["project-notes", project.id] });
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    } finally {
+      setRescanning(false);
+    }
+  }
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-semibold text-text-primary">Codebase intro</h3>
+          <p className="text-xs text-text-secondary">
+            Tech Lead's first-pass scan of this repository — stack, layout,
+            suggested check commands, anything to flag. Updates whenever you
+            re-scan.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={rescan} disabled={rescanning} type="button">
+          {rescanning ? "Queuing…" : intro ? "Re-scan" : "Scan now"}
+        </Button>
+      </div>
+
+      {inProgress && (
+        <div className="px-3 py-2 border border-border-subtle bg-bg-input text-xs text-text-secondary font-mono">
+          Tech Lead is exploring the codebase. The summary will appear here
+          when finished.
+        </div>
+      )}
+
+      {intro && (
+        <article className="bg-bg-surface border border-border p-4 text-[13px] leading-relaxed text-text-primary whitespace-pre-wrap font-mono">
+          {intro.body}
+        </article>
+      )}
+
+      {!intro && !inProgress && (
+        <div className="text-xs text-text-tertiary">
+          No scan run yet. Click <code>Scan now</code> to have Tech Lead
+          take a look around.
+        </div>
+      )}
+    </section>
   );
 }
 

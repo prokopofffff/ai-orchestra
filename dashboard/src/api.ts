@@ -90,6 +90,24 @@ export const fetchSystemConfig = (): Promise<SystemConfig> =>
 export const updateSystemConfig = (data: SystemConfig): Promise<SystemConfig> =>
   patchValidated("/system-config", data, SystemConfigSchema);
 
+// Project notes (intro_summary, future kinds)
+const ProjectNoteSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  kind: z.string(),
+  body: z.string(),
+  author: z.string(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type ProjectNote = z.infer<typeof ProjectNoteSchema>;
+export const fetchProjectNotes = (projectId: string): Promise<ProjectNote[]> =>
+  getValidated(`/projects/${projectId}/notes`, z.array(ProjectNoteSchema));
+
+const RescanSchema = z.object({ introTaskId: z.string().uuid() });
+export const rescanProject = (projectId: string) =>
+  postValidated(`/projects/${projectId}/rescan`, {}, RescanSchema);
+
 // Members
 const MemberSchema = z.object({
   userId: z.string().uuid(),

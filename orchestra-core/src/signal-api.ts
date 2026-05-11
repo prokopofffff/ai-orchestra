@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, getPool } from "./db";
-import { flowAudit, signals as signalsTable } from "./db/schema";
+import { flowAudit, signals as signalsTable, projects, taskComments, projectNotes } from "./db/schema";
 import { parseRows } from "./db-utils";
 import {
   validateSignal,
@@ -253,6 +253,10 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
       const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
       if (targetState && doneStates.includes(targetState)) {
         background(checkUnblocked(signal.taskId, signal.projectId), "checkUnblocked", signal.projectId);
+        // If this is the project's intro task, promote TL's last comment
+        // into project_notes so it sticks around as the project's
+        // codebase summary.
+        background(maybePromoteIntroSummary(signal.projectId, signal.taskId), "intro:promote", signal.projectId);
       }
     }
 
@@ -311,6 +315,51 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
       .limit(100);
   });
 };
+
+/**
+ * When the project's intro task transitions to a done state, copy
+ * Tech Lead's most recent comment into project_notes(kind='intro_summary').
+ * No-op if this isn't the intro task or if TL didn't leave a comment.
+ */
+async function maybePromoteIntroSummary(projectId: string, taskId: string): Promise<void> {
+  const db = getDb();
+
+  const [proj] = await db
+    .select({ introTaskId: projects.introTaskId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!proj || proj.introTaskId !== taskId) return;
+
+  const [comment] = await db
+    .select({ body: taskComments.body, createdAt: taskComments.createdAt })
+    .from(taskComments)
+    .where(and(eq(taskComments.taskId, taskId), eq(taskComments.author, "tech-lead")))
+    .orderBy(desc(taskComments.createdAt))
+    .limit(1);
+  if (!comment) return;
+
+  // Idempotent — re-promotion just refreshes the row. Useful if TL hits
+  // the same terminal state twice (e.g. unfreeze + complete again).
+  const [existing] = await db
+    .select({ id: projectNotes.id })
+    .from(projectNotes)
+    .where(and(eq(projectNotes.projectId, projectId), eq(projectNotes.kind, "intro_summary")))
+    .limit(1);
+  if (existing) {
+    await db
+      .update(projectNotes)
+      .set({ body: comment.body, updatedAt: comment.createdAt })
+      .where(eq(projectNotes.id, existing.id));
+  } else {
+    await db.insert(projectNotes).values({
+      projectId,
+      kind: "intro_summary",
+      body: comment.body,
+      author: "tech-lead",
+    });
+  }
+}
 
 async function listAudit(
   request: FastifyRequest,

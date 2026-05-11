@@ -33,6 +33,9 @@ export const projects = pgTable("projects", {
   // FK to users(id) — backfill in migration 017 sets this to the first-
   // registered user for legacy projects. Non-null going forward via API.
   ownerId: uuid("owner_id"),
+  // Set to the auto-created Tech Lead intro task. Lets the signal-api
+  // detect "intro task just completed" without title-matching.
+  introTaskId: uuid("intro_task_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
@@ -167,6 +170,18 @@ export const users = pgTable("users", {
   uniqueIndex("users_username_key").on(t.username),
 ]);
 
+export const projectNotes = pgTable("project_notes", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  body: text("body").notNull(),
+  author: text("author").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_project_notes_project_kind").on(t.projectId, t.kind),
+]);
+
 export const systemConfig = pgTable("system_config", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -293,3 +308,5 @@ export type NewProjectMember = typeof projectMembers.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type SystemConfig = typeof systemConfig.$inferSelect;
+export type ProjectNote = typeof projectNotes.$inferSelect;
+export type NewProjectNote = typeof projectNotes.$inferInsert;

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { ProjectSchema, TaskSchema, TaskCommentSchema } from "@ai-orchestra/shared";
 import { getDb, getPool } from "./db";
-import { projects, tasks, taskComments, conversations } from "./db/schema";
+import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked } from "./dependency-engine";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
@@ -12,6 +12,7 @@ import {
   userCanAccessProject, userCanEditProject,
   visibilityFilter, visibleProjectIds, projectIdOf,
 } from "./project-access";
+import { createIntroTask } from "./intro-task";
 import type { AgentRole } from "./config";
 
 const projectSchema = ProjectSchema;
@@ -53,6 +54,27 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       ownerId: userId,
     }).returning();
     await db.insert(conversations).values({ projectId: row.id });
+
+    // Auto-seed an "introduce yourself to this codebase" task. Only when
+    // there's actually a repo to look at — a project with neither
+    // local_path nor repo_url can't have anything indexed yet.
+    if (row.repoUrl || row.localPath) {
+      try {
+        const introTaskId = await createIntroTask(row.id);
+        await db
+          .update(projects)
+          .set({ introTaskId })
+          .where(eq(projects.id, row.id));
+        row.introTaskId = introTaskId;
+      } catch (err) {
+        // Best-effort: don't fail project creation if the intro task can't
+        // be queued (e.g. flow_audit constraint). User can re-trigger from
+        // Settings later.
+        // eslint-disable-next-line no-console
+        console.error("intro-task seeding failed", err);
+      }
+    }
+
     return reply.code(201).send(parseRow(projectSchema, row));
   });
 
@@ -104,6 +126,43 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .returning();
     if (!row) return reply.code(404).send({ error: "Project not found" });
     return parseRow(projectSchema, row);
+  });
+
+  // ─── Project notes ───
+  //
+  // Project-level memory the orchestrator accumulates over time. First and
+  // canonical inhabitant: `intro_summary` written by Tech Lead after the
+  // initial scan of the codebase.
+
+  app.get<{ Params: { id: string } }>("/projects/:id/notes", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.id;
+    if (!(await userCanAccessProject(userId, projectId))) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const rows = await getDb()
+      .select()
+      .from(projectNotes)
+      .where(eq(projectNotes.projectId, projectId))
+      .orderBy(desc(projectNotes.createdAt));
+    return rows;
+  });
+
+  // Re-trigger the intro task: queues a fresh one so TL re-scans the
+  // codebase. Useful when the project has changed dramatically since the
+  // first scan. Edit-permission required because it spends budget.
+  app.post<{ Params: { id: string } }>("/projects/:id/rescan", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.id;
+    if (!(await userCanEditProject(userId, projectId))) {
+      return reply.code(403).send({ error: "Insufficient permissions" });
+    }
+    const introTaskId = await createIntroTask(projectId);
+    await getDb()
+      .update(projects)
+      .set({ introTaskId })
+      .where(eq(projects.id, projectId));
+    return { introTaskId };
   });
 
   app.delete<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {

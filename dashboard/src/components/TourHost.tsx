@@ -59,9 +59,15 @@ export function TourHost({ children }: { children: React.ReactNode }) {
   // Auto-open on first visit to a route not yet seen. Delay a tick so the
   // anchor elements have time to mount on the new page; without this the
   // first step's anchor is still null and we'd render uncentered.
+  //
+  // Hold off while the welcome modal is up — otherwise a fresh signup
+  // gets both at once, which is overwhelming and stacks z-indexes. As
+  // soon as the user closes the welcome the effect re-runs with
+  // showWelcome=false and the per-tab tour fires.
   useEffect(() => {
     if (!tab || !steps || steps.length === 0) return;
     if (!data) return;
+    if (data.showWelcome) return;
     if (seen.includes(tab)) return;
     const t = setTimeout(() => setOpenFor(tab), 150);
     return () => clearTimeout(t);

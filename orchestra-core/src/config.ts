@@ -74,3 +74,20 @@ export function getModelForRole(config: Config, role: AgentRole, projectSettings
   if (projectModel?.[role]) return projectModel[role];
   return config[modelMap[role]] as string;
 }
+
+/**
+ * Per-role effort override (low/medium/high/max). Returns undefined when
+ * nothing is configured — let the SDK pick its default ("high") rather
+ * than baking that constant into the orchestrator.
+ */
+export type EffortLevel = "low" | "medium" | "high" | "max";
+
+export function getEffortForRole(
+  role: AgentRole,
+  projectSettings?: Record<string, unknown>,
+): EffortLevel | undefined {
+  const override = projectSettings?.["effort"] as Record<string, string> | undefined;
+  const value = override?.[role];
+  if (value === "low" || value === "medium" || value === "high" || value === "max") return value;
+  return undefined;
+}

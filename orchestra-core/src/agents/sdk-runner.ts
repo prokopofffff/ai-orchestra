@@ -23,6 +23,8 @@ export type SdkRunInput = {
   sessionId: string;
   role: AgentRole;
   model: string;
+  /** SDK effort level. Omit → SDK default ("high"). `max` is Opus-only. */
+  effort?: "low" | "medium" | "high" | "max";
   worktree: string;
   fullPrompt: string;
   mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
@@ -68,6 +70,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
 
   const options: Options = {
     model: p.model,
+    effort: p.effort,
     cwd: p.worktree,
     resume: p.resumeSessionId,
     permissionMode: "bypassPermissions",
@@ -109,7 +112,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
   };
 
   appendLog(p.projectId, p.sessionId, p.role, "system",
-    `SDK run started: model=${p.model} worktree=${p.worktree} budget=$${maxBudgetUsd} timeout=${runTimeoutMs}ms`);
+    `SDK run started: model=${p.model} effort=${p.effort ?? "(default)"} worktree=${p.worktree} budget=$${maxBudgetUsd} timeout=${runTimeoutMs}ms`);
 
   const stream = query({ prompt: p.fullPrompt, options });
 

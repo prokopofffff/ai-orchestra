@@ -8,7 +8,7 @@ import * as api from "../api";
 import type { SystemConfig } from "../api";
 import type { Project } from "../types";
 
-type Tab = "project" | "checks" | "members" | "limits" | "system";
+type Tab = "project" | "agents" | "checks" | "members" | "limits" | "system";
 
 export default function Settings() {
   const { project } = useProjectContext();
@@ -22,7 +22,7 @@ export default function Settings() {
   return (
     <div className="settings flex flex-col h-full">
       <nav className="settings-tabs flex items-center gap-0 px-16 border-b border-border bg-bg-surface shrink-0">
-        {(["project", "checks", "members", "limits", "system"] as Tab[]).map((t) => (
+        {(["project", "agents", "checks", "members", "limits", "system"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -34,6 +34,7 @@ export default function Settings() {
             ].join(" ")}
           >
             {t === "project" ? "Project"
+              : t === "agents" ? "Agents"
               : t === "checks" ? "Agent Checks"
               : t === "members" ? "Members"
               : t === "limits" ? "Limits"
@@ -44,6 +45,7 @@ export default function Settings() {
 
       <div className="flex-1 overflow-y-auto">
         {tab === "project" && <ProjectTab project={project} onSaved={refresh} />}
+        {tab === "agents" && <AgentsTab project={project} onSaved={refresh} />}
         {tab === "checks" && <ProjectChecks projectId={project.id} />}
         {tab === "members" && <MembersTab projectId={project.id} />}
         {tab === "limits" && <LimitsTab project={project} onSaved={refresh} />}
@@ -148,6 +150,110 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
             />
           </Field>
         </div>
+      </section>
+    </div>
+  );
+}
+
+const ROLES = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"] as const;
+type AgentRole = typeof ROLES[number];
+
+const MODELS = ["opus", "sonnet", "haiku"] as const;
+type Model = typeof MODELS[number];
+
+const EFFORTS = ["low", "medium", "high", "max"] as const;
+type Effort = typeof EFFORTS[number];
+
+function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  const initial = project.settings as { models?: Record<string, string>; effort?: Record<string, string> };
+  const [models, setModels] = useState<Record<AgentRole, string>>(() => {
+    const out = {} as Record<AgentRole, string>;
+    for (const r of ROLES) out[r] = initial.models?.[r] ?? "";
+    return out;
+  });
+  const [efforts, setEfforts] = useState<Record<AgentRole, string>>(() => {
+    const out = {} as Record<AgentRole, string>;
+    for (const r of ROLES) out[r] = initial.effort?.[r] ?? "";
+    return out;
+  });
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function save() {
+    setSaving(true); setStatus(null);
+    try {
+      const modelsPatch: Record<string, Model> = {};
+      const effortPatch: Record<string, Effort> = {};
+      for (const r of ROLES) {
+        if (models[r]) modelsPatch[r] = models[r] as Model;
+        if (efforts[r]) effortPatch[r] = efforts[r] as Effort;
+      }
+      // PATCH merges into settings (jsonb ||). Empty objects clear nothing —
+      // to remove an override the user should set the field to the dropdown's
+      // first blank entry, which sends an absent key; on save it gets dropped
+      // out of the patch object above.
+      await api.updateProject(project.id, {
+        settings: { models: modelsPatch, effort: effortPatch },
+      } as never);
+      setStatus("Saved — takes effect on the next agent run");
+      onSaved();
+    } catch (e) {
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
+      <header className="flex items-start justify-between gap-8">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Agents</h2>
+          <p className="text-sm text-text-secondary">
+            Pick a model and effort level per role. Empty = inherit the global
+            default. Effort `max` only works on Opus. Higher effort = slower,
+            more thorough, more expensive.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 pt-1">
+          {status && <span className="text-xs text-text-tertiary">{status}</span>}
+          <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </header>
+
+      <section className="flex flex-col gap-2">
+        <div className="grid grid-cols-[120px_1fr_1fr] gap-3 px-3 pb-2 border-b border-border text-[10px] font-mono uppercase tracking-wider text-text-tertiary">
+          <span>Role</span>
+          <span>Model</span>
+          <span>Effort</span>
+        </div>
+        {ROLES.map((role) => (
+          <div key={role} className="grid grid-cols-[120px_1fr_1fr] gap-3 items-center px-3 py-2 border-b border-border-subtle">
+            <span className="text-sm text-text-primary font-medium">{role}</span>
+            <select
+              className={INPUT}
+              value={models[role]}
+              onChange={(e) => setModels((m) => ({ ...m, [role]: e.target.value }))}
+            >
+              <option value="">(global default)</option>
+              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select
+              className={INPUT}
+              value={efforts[role]}
+              onChange={(e) => setEfforts((m) => ({ ...m, [role]: e.target.value }))}
+            >
+              <option value="">(SDK default)</option>
+              {EFFORTS.map((eff) => (
+                <option key={eff} value={eff} disabled={eff === "max" && models[role] !== "opus"}>
+                  {eff}{eff === "max" ? " (Opus only)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
       </section>
     </div>
   );

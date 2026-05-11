@@ -84,8 +84,13 @@ export const LimitsSchema = z.object({
 });
 export type Limits = z.infer<typeof LimitsSchema>;
 
+/** SDK effort levels. `max` is Opus-only. */
+export const EffortLevelSchema = z.enum(["low", "medium", "high", "max"]);
+export type EffortLevel = z.infer<typeof EffortLevelSchema>;
+
 export const ProjectSettingsSchema = z.object({
   models: z.record(AgentRoleSchema, z.string()).optional(),
+  effort: z.record(AgentRoleSchema, EffortLevelSchema).optional(),
   checks: z.record(AgentRoleSchema, z.array(AgentCheckSchema)).optional(),
   provider: ProjectProviderConfigSchema.optional(),
   limits: LimitsSchema.optional(),

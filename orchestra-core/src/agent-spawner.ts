@@ -1,4 +1,4 @@
-import { type Config, type AgentRole, getModelForRole } from "./config";
+import { type Config, type AgentRole, getModelForRole, getEffortForRole } from "./config";
 import { createSession, type Session } from "./session-manager";
 import { appendLog } from "./logger";
 import { notify } from "./notification-hub";
@@ -82,6 +82,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   }
 
   const model = getModelForRole(config, role, settings as Record<string, unknown>);
+  const effort = getEffortForRole(role, settings as Record<string, unknown>);
 
   // ── 1b. Orchestra-wide + per-project daily cost cap gate ────────────
   // Hit before any worktree/IO so a tripped cap is cheap. cap=0 → unlimited.
@@ -137,6 +138,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       sessionId: session.id,
       role,
       model,
+      effort,
       worktree: worktreeDir,
       fullPrompt,
       mcpServers,

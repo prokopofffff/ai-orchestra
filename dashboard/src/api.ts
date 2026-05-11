@@ -224,6 +224,28 @@ export const fetchUsageSeries = (projectId: string, days: 7 | 30 = 7): Promise<U
 const HealthSchema = z.object({ status: z.string(), timestamp: z.string() });
 export const fetchHealth = () => getValidated("/health", HealthSchema);
 
+// Server-side filesystem browse (for the folder picker on Create Project).
+const FsEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  isDir: z.literal(true),
+  isGitRepo: z.boolean(),
+});
+const FsBrowseSchema = z.object({
+  cwd: z.string(),
+  parent: z.string().nullable(),
+  home: z.string(),
+  entries: z.array(FsEntrySchema),
+});
+export type FsBrowseResult = z.infer<typeof FsBrowseSchema>;
+export const browseFs = (path?: string, showHidden = false): Promise<FsBrowseResult> => {
+  const qs = new URLSearchParams();
+  if (path) qs.set("path", path);
+  if (showHidden) qs.set("showHidden", "true");
+  const q = qs.toString();
+  return getValidated(`/fs/browse${q ? `?${q}` : ""}`, FsBrowseSchema);
+};
+
 // Onboarding
 const OnboardingStepSchema = z.object({
   key: z.enum(["claude_auth", "project", "git_token"]),

@@ -4,6 +4,7 @@ import { useProjectContext } from "../contexts/ProjectContext";
 import { ProjectChecks } from "../components/ProjectChecks";
 import { EmptyProjects } from "../components/EmptyProjects";
 import { Button } from "../components/ui/Button";
+import { FolderPicker } from "../components/FolderPicker";
 import * as api from "../api";
 import type { SystemConfig } from "../api";
 import type { Project } from "../types";
@@ -60,6 +61,7 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
   const [description, setDescription] = useState(project.description ?? "");
   const [repoUrl, setRepoUrl] = useState(project.repoUrl ?? "");
   const [localPath, setLocalPath] = useState(project.localPath ?? "");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -133,13 +135,25 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
           </p>
 
           <Field label="Local directory" hint="Absolute path to a git repo on this machine (e.g. /Users/you/myapp)">
-            <input
-              className={INPUT}
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-              placeholder="/Users/you/projects/myapp"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                className={INPUT}
+                value={localPath}
+                onChange={(e) => setLocalPath(e.target.value)}
+                placeholder="/Users/you/projects/myapp"
+              />
+              <Button variant="secondary" size="md" type="button" onClick={() => setPickerOpen(true)}>
+                Browse…
+              </Button>
+            </div>
           </Field>
+          {pickerOpen && (
+            <FolderPicker
+              initialPath={localPath || undefined}
+              onSelect={(p) => setLocalPath(p)}
+              onClose={() => setPickerOpen(false)}
+            />
+          )}
 
           <Field label="Remote repo URL" hint="Used when no local path is set — agents clone and work in worktrees">
             <input

@@ -1,0 +1,75 @@
+import type { FastifyPluginAsync } from "fastify";
+import { z } from "zod";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+/**
+ * Server-side directory browser. Backs the dashboard's folder picker: the
+ * orchestra-core process lives on the same machine as the code the agents
+ * will operate on, so the absolute path it can see is the one we want for
+ * `local_path` on a project. Browsers can't expose absolute paths from
+ * their native folder pickers, so the dashboard renders its own modal and
+ * walks the filesystem through this endpoint.
+ *
+ * No write access — listing only. The `requireAuth` preHandler in index.ts
+ * gates this behind a logged-in user; single-tenant deployments treat
+ * filesystem read as fine.
+ */
+export const fsPlugin: FastifyPluginAsync = async (app) => {
+  app.get<{ Querystring: { path?: string; showHidden?: string } }>(
+    "/fs/browse",
+    async (request, reply) => {
+      const showHidden = request.query.showHidden === "true";
+      const raw = request.query.path;
+      const requested = raw && raw.length > 0 ? path.resolve(raw) : os.homedir();
+
+      let stat;
+      try {
+        stat = await fs.stat(requested);
+      } catch {
+        return reply.code(404).send({ error: `Path not found: ${requested}` });
+      }
+      if (!stat.isDirectory()) {
+        return reply.code(400).send({ error: `Not a directory: ${requested}` });
+      }
+
+      let entries: Array<{ name: string; path: string; isDir: boolean; isGitRepo: boolean }> = [];
+      try {
+        const items = await fs.readdir(requested, { withFileTypes: true });
+        // Filter to directories (we're picking a folder); skip hidden by
+        // default — they're noise (.git, .DS_Store, .vscode, .cache, …).
+        const dirs = items.filter((d) => d.isDirectory() && (showHidden || !d.name.startsWith(".")));
+        entries = await Promise.all(dirs.map(async (d) => {
+          const full = path.join(requested, d.name);
+          // Cheap "is this a repo?" check so the UI can put a git mark on
+          // entries that the user probably wants. stat(.git) is cheap.
+          let isGitRepo = false;
+          try {
+            const gitStat = await fs.stat(path.join(full, ".git"));
+            isGitRepo = gitStat.isDirectory() || gitStat.isFile();
+          } catch {
+            // not a repo or unreadable — fine
+          }
+          return { name: d.name, path: full, isDir: true, isGitRepo };
+        }));
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+      } catch (err) {
+        return reply.code(403).send({ error: `Cannot read ${requested}: ${(err as Error).message}` });
+      }
+
+      // Parent is null at the filesystem root so the UI can hide the "up"
+      // button there. `path.dirname("/")` returns "/" so we guard explicitly.
+      const parent = requested === path.parse(requested).root ? null : path.dirname(requested);
+      const home = os.homedir();
+
+      return { cwd: requested, parent, home, entries };
+    },
+  );
+};
+
+// Exposed for tests.
+export const _querySchema = z.object({
+  path: z.string().optional(),
+  showHidden: z.enum(["true", "false"]).optional(),
+});

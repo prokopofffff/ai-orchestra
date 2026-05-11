@@ -2,6 +2,7 @@ import { useState } from "react";
 import * as api from "../api";
 import { Button } from "./ui/Button";
 import { PlusIcon } from "./ui/Icon";
+import { FolderPicker } from "./FolderPicker";
 
 interface Props {
   projectId: string;
@@ -59,6 +60,7 @@ export function CreateForms({ projectId, onCreated }: Props) {
 function ProjectForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [localPath, setLocalPath] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,11 +72,35 @@ function ProjectForm({ onCreated }: { onCreated: () => void }) {
   };
 
   return (
-    <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" required className={INPUT_CLS} />
-      <input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="Local path (e.g. /Users/you/myapp)" className={INPUT_CLS} style={{ minWidth: 260 }} />
-      <Button variant="primary-red" type="submit">Create Project</Button>
-    </form>
+    <>
+      <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Project name"
+          required
+          className={INPUT_CLS}
+        />
+        <input
+          value={localPath}
+          onChange={(e) => setLocalPath(e.target.value)}
+          placeholder="Local path (or click Browse)"
+          className={INPUT_CLS}
+          style={{ minWidth: 260 }}
+        />
+        <Button variant="secondary" size="md" type="button" onClick={() => setPickerOpen(true)}>
+          Browse…
+        </Button>
+        <Button variant="primary-red" type="submit">Create Project</Button>
+      </form>
+      {pickerOpen && (
+        <FolderPicker
+          initialPath={localPath || undefined}
+          onSelect={(p) => setLocalPath(p)}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

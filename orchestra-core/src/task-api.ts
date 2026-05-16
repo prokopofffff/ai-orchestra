@@ -14,6 +14,8 @@ import {
 } from "./project-access";
 import { createIntroTask } from "./intro-task";
 import { reconcileTelegramNow } from "./telegram-manager";
+import { isGitRepo, initGitRepo } from "./repo-manager";
+import { loadConfig } from "./config";
 import type { AgentRole } from "./config";
 
 /**
@@ -204,6 +206,66 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .set({ introTaskId })
       .where(eq(projects.id, projectId));
     return { introTaskId };
+  });
+
+  // ─── Local path status + init helpers ───
+  //
+  // The dashboard surfaces this so the user can tell at a glance whether
+  // the project's local path is a git repo we can actually operate in.
+  // Pairs with POST /projects/:id/init-git for one-click setup.
+
+  app.get<{ Params: { id: string } }>("/projects/:id/repo-status", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.id;
+    if (!(await userCanAccessProject(userId, projectId))) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const [row] = await getDb()
+      .select({ localPath: projects.localPath, repoUrl: projects.repoUrl })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row) return reply.code(404).send({ error: "Project not found" });
+
+    const localPath = row.localPath ?? null;
+    let exists = false;
+    let isGit = false;
+    if (localPath) {
+      const fs = await import("node:fs");
+      exists = fs.existsSync(localPath);
+      if (exists) isGit = isGitRepo(localPath);
+    }
+    return {
+      localPath,
+      hasRemoteUrl: !!row.repoUrl,
+      exists,
+      isGitRepo: isGit,
+      needsInit: !!localPath && exists && !isGit,
+    };
+  });
+
+  app.post<{ Params: { id: string } }>("/projects/:id/init-git", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.id;
+    if (!(await userCanEditProject(userId, projectId))) {
+      return reply.code(403).send({ error: "Insufficient permissions" });
+    }
+
+    const [row] = await getDb()
+      .select({ localPath: projects.localPath })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row?.localPath) {
+      return reply.code(400).send({ error: "Project has no local path to initialize." });
+    }
+
+    try {
+      await initGitRepo(row.localPath, loadConfig().githubDefaultBranch);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+    return { initialized: true, path: row.localPath };
   });
 
   app.delete<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {

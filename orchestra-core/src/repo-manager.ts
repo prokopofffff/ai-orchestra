@@ -49,6 +49,42 @@ export async function ensureRepo(cloneUrl: string, projectSlug: string): Promise
   return repoDir;
 }
 
+/**
+ * Cheap sync probe for "is this directory a git repo we can operate on?".
+ * Worktree-aware: inside a checkout, `.git` is a file pointing at the
+ * primary; we accept both. Returns false for non-existent paths and for
+ * directories without a `.git` entry at all (the user pointed us at a
+ * folder that hasn't been initialized yet).
+ */
+export function isGitRepo(p: string): boolean {
+  const dotGit = path.join(p, ".git");
+  return fs.existsSync(dotGit);
+}
+
+/**
+ * Initialize a fresh git repo at `p`. Creates an initial empty commit so
+ * `git worktree add` has a base ref to branch from. No-op if the path
+ * is already a repo. Safe to call repeatedly.
+ */
+export async function initGitRepo(p: string, defaultBranch: string): Promise<void> {
+  if (isGitRepo(p)) return;
+  if (!fs.existsSync(p)) {
+    throw new Error(`Path does not exist: ${p}`);
+  }
+  const g = simpleGit(p);
+  await g.init([`--initial-branch=${defaultBranch}`]);
+  // Empty commit so worktree add can base off this branch. Author info
+  // is pulled from the user's global git config; if absent we fall back
+  // to a sane placeholder so init doesn't error out on a vanilla machine.
+  try {
+    await g.raw(["config", "user.email"]);
+  } catch {
+    await g.addConfig("user.email", "orchestra@localhost");
+    await g.addConfig("user.name", "AI Orchestra");
+  }
+  await g.commit("Initial commit", undefined, { "--allow-empty": null });
+}
+
 /** Ensure a working directory exists (for projects without a git repo). */
 export function ensureTempDir(projectSlug: string): string {
   const dir = path.join(workspacePath(projectSlug), "workspace");

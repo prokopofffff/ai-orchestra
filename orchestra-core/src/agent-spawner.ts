@@ -12,7 +12,9 @@ import {
   cleanupWorktree,
   configureRemoteAuth,
   branchName,
+  isGitRepo,
 } from "./repo-manager";
+import { PreflightError } from "./error-handler";
 import { installScopeHook } from "./scope-enforcer";
 import { runAgentSdk } from "./agents/sdk-runner";
 import { providerFor } from "./providers";
@@ -106,6 +108,20 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   let authUrl: string | null = null;
   if (localPath) {
     repoDir = localPath as string;
+    // Preflight: agents work in git worktrees, so the local path has to
+    // actually be a git repo. If it isn't, escalate to the user with an
+    // actionable message (the dashboard surfaces an "Initialize git here"
+    // button on the Settings → Project tab) and bail out cleanly —
+    // PreflightError keeps this out of the [agent-run] fatal log.
+    if (!isGitRepo(repoDir)) {
+      const reason = `The local path \`${repoDir}\` is not a git repository. Open Project Settings to initialize one, or change the path.`;
+      await escalate(projectId, taskId, reason, {
+        event: "not_a_git_repo",
+        path: repoDir,
+        role,
+      });
+      throw new PreflightError(`not a git repo: ${repoDir}`);
+    }
   } else {
     const provider = providerFor(repoUrl, settings as ProjectSettings | null);
     authUrl = provider.tokenizeCloneUrl();

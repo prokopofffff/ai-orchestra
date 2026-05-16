@@ -108,6 +108,21 @@ const RescanSchema = z.object({ introTaskId: z.string().uuid() });
 export const rescanProject = (projectId: string) =>
   postValidated(`/projects/${projectId}/rescan`, {}, RescanSchema);
 
+const RepoStatusSchema = z.object({
+  localPath: z.string().nullable(),
+  hasRemoteUrl: z.boolean(),
+  exists: z.boolean(),
+  isGitRepo: z.boolean(),
+  needsInit: z.boolean(),
+});
+export type RepoStatus = z.infer<typeof RepoStatusSchema>;
+export const fetchRepoStatus = (projectId: string): Promise<RepoStatus> =>
+  getValidated(`/projects/${projectId}/repo-status`, RepoStatusSchema);
+
+const InitGitSchema = z.object({ initialized: z.boolean(), path: z.string() });
+export const initProjectGit = (projectId: string) =>
+  postValidated(`/projects/${projectId}/init-git`, {}, InitGitSchema);
+
 // Members
 const MemberSchema = z.object({
   userId: z.string().uuid(),

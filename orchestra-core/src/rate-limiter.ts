@@ -128,7 +128,8 @@ registerHandler(AGENT_RUN_KIND, AgentRunPayload, async (p, ctx) => {
     }
 
     // Non-rate-limit error — terminal. Don't throw (would trigger scheduler retry).
-    log.error({ role: p.role, projectId: p.projectId, taskId: p.taskId, err }, "agent-run failed");
+    // logBackgroundError handles PreflightError specially (downgrades to info)
+    // so user-facing preflight escalates don't double up as red "fatal" lines.
     logBackgroundError("agent-run", err, p.projectId);
   }
 });

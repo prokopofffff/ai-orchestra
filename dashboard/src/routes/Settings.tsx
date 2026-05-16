@@ -125,6 +125,8 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
         </div>
       )}
 
+      <RepoStatusBanner projectId={project.id} />
+
       <section className="flex flex-col gap-5">
         <Field label="Project name">
           <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} placeholder="my-project" />
@@ -171,6 +173,49 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
           </Field>
         </div>
       </section>
+    </div>
+  );
+}
+
+function RepoStatusBanner({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["repo-status", projectId],
+    queryFn: () => api.fetchRepoStatus(projectId),
+    refetchInterval: 10_000,
+  });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  if (!data?.needsInit) return null;
+
+  async function init() {
+    setBusy(true); setMsg(null);
+    try {
+      await api.initProjectGit(projectId);
+      setMsg(`✓ Initialized at ${data?.localPath}. Agents can run now.`);
+      await queryClient.invalidateQueries({ queryKey: ["repo-status", projectId] });
+    } catch (e) {
+      setMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 bg-[color:var(--color-accent-yellow,#f59e0b)]/10 border border-[color:var(--color-accent-yellow,#f59e0b)]/30 text-xs text-text-secondary">
+      <span className="shrink-0 font-semibold text-accent-yellow mt-0.5">!</span>
+      <div className="flex-1 flex flex-col gap-2">
+        <div>
+          <code className="text-text-primary">{data.localPath}</code> is not a git
+          repository. Agents create branches via <code>git worktree</code>, so the
+          path has to be initialized first.
+        </div>
+        {msg && <span className="text-[11px] text-text-tertiary">{msg}</span>}
+      </div>
+      <Button variant="primary-blue" size="sm" onClick={init} disabled={busy} type="button">
+        {busy ? "Initializing…" : "Initialize git here"}
+      </Button>
     </div>
   );
 }

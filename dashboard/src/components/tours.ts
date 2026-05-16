@@ -122,12 +122,12 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
     {
       anchor: '[data-tour="settings.tabs"]',
       title: "Project · Agents · Checks · Members · Limits · System",
-      body: "Project basics on the first tab. Agents tab picks model + effort per role. Checks defines per-file lint/test commands. Members invites people. Limits sets safety caps. System is global Claude / GitHub auth.",
+      body: "Project basics on the first tab — including the Telegram bot for this project (each project gets its own). Agents tab picks model + effort per role. Checks defines per-file lint/test commands. Members invites people. Limits sets safety caps. System is global Claude / GitHub auth.",
       placement: "bottom",
     },
     {
       title: "All settings are per-project",
-      body: "Except System — that's orchestra-wide. Every other tab applies to the currently-selected project, including model overrides, member roles, and cost caps.",
+      body: "Except System — that's orchestra-wide. Every other tab applies to the currently-selected project, including model overrides, member roles, cost caps, and the Telegram bot token.",
       placement: "center",
     },
   ],

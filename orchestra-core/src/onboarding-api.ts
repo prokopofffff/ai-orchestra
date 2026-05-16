@@ -22,7 +22,7 @@ import { currentUserId } from "./auth";
  * the app: turn on auth → step ticks; create a project → step ticks.
  */
 
-const stepKeySchema = z.enum(["claude_auth", "project", "git_token"]);
+const stepKeySchema = z.enum(["claude_auth", "project", "git_token", "telegram"]);
 
 export const StepSchema = z.object({
   key: stepKeySchema,
@@ -30,6 +30,10 @@ export const StepSchema = z.object({
   done: z.boolean(),
   href: z.string(),
   hint: z.string().optional(),
+  // Optional steps render normally in the checklist but don't block
+  // the "all done" computation — so a user who never wants Telegram
+  // isn't stuck with a permanently-unfinished checklist.
+  optional: z.boolean().optional(),
 });
 
 export const TabKeySchema = z.enum([
@@ -146,6 +150,17 @@ export async function computeOnboarding(userId: string) {
   // user. As soon as they add a remote-repo project, the step re-opens.
   const gitTokenDone = projectsNeedingToken.length === 0 ? true : projectTokenSet || globalToken;
 
+  // Telegram is optional — auto-tick if the user has visible projects but
+  // none with a Telegram bot configured (we don't want to nag people who
+  // never wanted Telegram). If at least one of the user's projects has a
+  // bot wired up, count the step as done. The card on the checklist is
+  // explicit that it's optional.
+  const telegramAny = visibleProjects.some((p) => {
+    const tg = (p.settings as { telegram?: { botToken?: string } } | null)?.telegram;
+    return !!tg?.botToken;
+  });
+  const telegramDone = !hasProject || telegramAny;
+
   const steps = [
     {
       key: "claude_auth" as const,
@@ -168,9 +183,19 @@ export async function computeOnboarding(userId: string) {
       href: "/settings",
       hint: "Needed for PR operations on remote repos. Skip if you only use local paths.",
     },
+    {
+      key: "telegram" as const,
+      title: "Connect Telegram (optional)",
+      done: telegramDone,
+      href: "/settings",
+      hint: "Each project gets its own bot. Skip if you don't want phone notifications.",
+      optional: true,
+    },
   ];
 
-  const allDone = steps.every((s) => s.done);
+  // Required steps gate the "all done" pill; optional ones can stay
+  // unchecked forever without keeping the checklist alive.
+  const allDone = steps.filter((s) => !s.optional).every((s) => s.done);
   const dismissedAt = user?.dismissedAt ?? null;
   const welcomeSeenAt = user?.welcomeSeenAt ?? null;
   const rawTabs = (user?.tabsSeen ?? []) as unknown;

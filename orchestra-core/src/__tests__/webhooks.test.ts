@@ -57,91 +57,10 @@ afterAll(async () => {
   await getPool().end();
 });
 
-describe("Telegram webhook", () => {
-  it("stores user message in conversation (auto-select single project)", async () => {
-    const { status } = await api("/api/telegram/webhook", {
-      method: "POST",
-      body: JSON.stringify({
-        message: { chat: { id: 12345 }, text: "Hello from TG", message_id: 1 },
-      }),
-    });
-    expect(status).toBe(200);
-
-    // Check message stored
-    const { rows } = await getPool().query(
-      `SELECT m.* FROM messages m
-       JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.project_id = $1`,
-      [projectId],
-    );
-    expect(rows.length).toBe(1);
-    expect(rows[0].text).toBe("Hello from TG");
-    expect(rows[0].source).toBe("telegram");
-    expect(rows[0].from_role).toBe("user");
-  });
-
-  it("ignores messages without text", async () => {
-    const { status } = await api("/api/telegram/webhook", {
-      method: "POST",
-      body: JSON.stringify({
-        message: { chat: { id: 12345 } },
-      }),
-    });
-    expect(status).toBe(200);
-  });
-
-  it("handles /start command", async () => {
-    const { status } = await api("/api/telegram/webhook", {
-      method: "POST",
-      body: JSON.stringify({
-        message: { chat: { id: 12345 }, text: "/start", message_id: 1 },
-      }),
-    });
-    expect(status).toBe(200);
-    // Command doesn't store a message in conversation
-  });
-
-  it("handles /switch command", async () => {
-    const { status } = await api("/api/telegram/webhook", {
-      method: "POST",
-      body: JSON.stringify({
-        message: { chat: { id: 99999 }, text: "/switch wh-test", message_id: 1 },
-      }),
-    });
-    expect(status).toBe(200);
-
-    // Check active project set
-    const { rows } = await getPool().query(
-      "SELECT active_project_id FROM telegram_users WHERE chat_id = '99999'",
-    );
-    expect(rows.length).toBe(1);
-    expect(rows[0].active_project_id).toBe(projectId);
-  });
-
-  it("uses active project for subsequent messages", async () => {
-    // Set active project
-    await getPool().query(
-      "INSERT INTO telegram_users (chat_id, active_project_id) VALUES ('77777', $1)",
-      [projectId],
-    );
-
-    const { status } = await api("/api/telegram/webhook", {
-      method: "POST",
-      body: JSON.stringify({
-        message: { chat: { id: 77777 }, text: "Working on auth", message_id: 2 },
-      }),
-    });
-    expect(status).toBe(200);
-
-    const { rows } = await getPool().query(
-      `SELECT m.text FROM messages m
-       JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.project_id = $1`,
-      [projectId],
-    );
-    expect(rows.some((r) => r.text === "Working on auth")).toBe(true);
-  });
-});
+// Telegram webhook endpoint was removed in the per-project rewrite —
+// each project now has its own bot token and runs its own polling loop
+// through telegram-manager. The webhook tests that used to live here
+// don't have a global URL to call any more.
 
 describe("GitHub webhook", () => {
   it("stores PR opened as system message", async () => {

@@ -53,7 +53,7 @@ describe("onboarding — fresh user", () => {
     expect(body.showWelcome).toBe(true);
     expect(body.dismissedAt).toBeNull();
     expect(body.allDone).toBe(false);
-    expect(body.steps).toHaveLength(3);
+    expect(body.steps).toHaveLength(4);
     // claude_auth + project should be unchecked. git_token is auto-ticked
     // when there are no projects yet (nothing needing a token).
     const map = Object.fromEntries((body.steps as { key: string; done: boolean }[]).map((s) => [s.key, s.done]));

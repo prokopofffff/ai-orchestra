@@ -11,6 +11,9 @@ export const configSchema = z.object({
   claudeAuth: z.enum(["max", "api"]).default("max"),
   claudeApiKey: z.string().optional(),
 
+  // Telegram is per-project now (projects.settings.telegram). Kept in the
+  // schema as deprecated-optional only so legacy .env files don't fail to
+  // load — values are ignored at runtime.
   telegramBotToken: z.string().optional(),
   telegramChatId: z.string().optional(),
 

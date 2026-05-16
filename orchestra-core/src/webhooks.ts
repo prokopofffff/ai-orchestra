@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { getPool } from "./db";
 import { addSystemMessage } from "./conversation-api";
-import { handleTelegramMessage, handleTelegramCommand } from "./telegram-handler";
 import { parseGitHubWebhook, parseGitLabWebhook, type WebhookEvent } from "./providers";
 import { log } from "./obs";
 
@@ -43,24 +42,10 @@ async function handleWebhook(event: WebhookEvent): Promise<void> {
 }
 
 export const webhookPlugin: FastifyPluginAsync = async (app) => {
-  // ─── Telegram Webhook ───
-
-  app.post("/telegram/webhook", async (request) => {
-    const update = request.body as Record<string, unknown>;
-    const message = update.message as Record<string, unknown> | undefined;
-    if (!message?.text) return { ok: true };
-
-    const chatId = String((message.chat as Record<string, unknown>).id);
-    const text = message.text as string;
-
-    if (text.startsWith("/")) {
-      await handleTelegramCommand(chatId, text);
-    } else {
-      await handleTelegramMessage(chatId, text, message.message_id as number);
-    }
-
-    return { ok: true };
-  });
+  // Telegram webhook endpoint was removed in the per-project rewrite —
+  // the polling manager owns Telegram now, and webhooks would need to
+  // be registered per-project (one bot token → one URL) which we don't
+  // have a self-hosted URL for. Polling works the same end-to-end.
 
   // ─── Git provider webhooks ───
 

@@ -13,7 +13,27 @@ import {
   visibilityFilter, visibleProjectIds, projectIdOf,
 } from "./project-access";
 import { createIntroTask } from "./intro-task";
+import { reconcileTelegramNow } from "./telegram-manager";
 import type { AgentRole } from "./config";
+
+/**
+ * Reject a settings patch that would make this project share a Telegram
+ * bot token with another project. Returns the conflicting project name
+ * for a friendlier error message; null if there's no conflict.
+ */
+async function findTelegramConflict(
+  newToken: string | undefined,
+  excludeProjectId?: string,
+): Promise<string | null> {
+  if (!newToken) return null;
+  const db = getDb();
+  const rows = await db
+    .select({ id: projects.id, name: projects.name })
+    .from(projects)
+    .where(sql`${projects.settings} -> 'telegram' ->> 'botToken' = ${newToken}`);
+  const conflict = rows.find((r) => r.id !== excludeProjectId);
+  return conflict ? conflict.name : null;
+}
 
 const projectSchema = ProjectSchema;
 const taskSchema = TaskSchema;
@@ -102,6 +122,22 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       settings: z.record(z.unknown()).optional(),
     }).parse(request.body);
 
+    // Telegram bot tokens have to be unique across projects — one bot can
+    // long-poll for exactly one listener, so two projects with the same
+    // token would lose half their updates each. Reject with 409 before
+    // hitting the partial unique index (better error message).
+    if (body.settings) {
+      const newTg = (body.settings.telegram as { botToken?: string } | undefined)?.botToken;
+      if (newTg) {
+        const conflictName = await findTelegramConflict(newTg, request.params.id);
+        if (conflictName) {
+          return reply.code(409).send({
+            error: `Bot token already in use by project "${conflictName}". Each project needs its own Telegram bot.`,
+          });
+        }
+      }
+    }
+
     const updates: Record<string, unknown> = {};
     if (body.name !== undefined) updates.name = body.name;
     if (body.repoUrl !== undefined) updates.repoUrl = body.repoUrl;
@@ -125,6 +161,11 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .where(eq(projects.id, request.params.id))
       .returning();
     if (!row) return reply.code(404).send({ error: "Project not found" });
+    // If the patch touched telegram settings, kick the manager so it
+    // starts / stops / restarts loops without waiting for the 30s timer.
+    if (body.settings && (body.settings as { telegram?: unknown }).telegram !== undefined) {
+      reconcileTelegramNow().catch(() => { /* best-effort */ });
+    }
     return parseRow(projectSchema, row);
   });
 

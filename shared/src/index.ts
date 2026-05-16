@@ -88,12 +88,25 @@ export type Limits = z.infer<typeof LimitsSchema>;
 export const EffortLevelSchema = z.enum(["low", "medium", "high", "max"]);
 export type EffortLevel = z.infer<typeof EffortLevelSchema>;
 
+/**
+ * Per-project Telegram bot configuration. `botToken` from BotFather,
+ * `chatId` auto-captured on the first /start the bot receives. A given
+ * `botToken` may belong to at most one project (enforced both at the
+ * API and via a partial unique index in migration 022).
+ */
+export const TelegramConfigSchema = z.object({
+  botToken: z.string().min(1).optional(),
+  chatId: z.string().min(1).optional(),
+});
+export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
+
 export const ProjectSettingsSchema = z.object({
   models: z.record(AgentRoleSchema, z.string()).optional(),
   effort: z.record(AgentRoleSchema, EffortLevelSchema).optional(),
   checks: z.record(AgentRoleSchema, z.array(AgentCheckSchema)).optional(),
   provider: ProjectProviderConfigSchema.optional(),
   limits: LimitsSchema.optional(),
+  telegram: TelegramConfigSchema.optional(),
 }).catchall(z.unknown());
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

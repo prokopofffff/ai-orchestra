@@ -30,7 +30,7 @@ import { startHeartbeat, stopHeartbeat } from "./heartbeat";
 import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
 import { getLogs } from "./logger";
-import { startTelegramPolling, stopTelegramPolling } from "./telegram-polling";
+import { startTelegramManager, stopTelegramManager } from "./telegram-manager";
 import { startPrWatcher, stopPrWatcher } from "./pr-watcher";
 import { startCostVelocityWatcher, stopCostVelocityWatcher } from "./cost-velocity-watcher";
 import { startDispatchReconciler, stopDispatchReconciler } from "./dispatch-reconciler";
@@ -165,7 +165,7 @@ async function main() {
   await startDispatchReconciler();
 
   // Start Telegram polling (long-poll loop, not a tick — kept as-is)
-  startTelegramPolling();
+  await startTelegramManager();
 
   // Reconcile tasks that are in active states but have no agent running
   reconcileOrphanedTasks(config).catch((err) => log.error({ err }, "startup reconcile failed"));
@@ -187,7 +187,7 @@ async function main() {
 
     stopHeartbeat();
     stopUsageTracking();
-    stopTelegramPolling();
+    stopTelegramManager();
     stopPrWatcher();
     stopCostVelocityWatcher();
     stopDispatchReconciler();

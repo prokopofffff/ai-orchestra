@@ -49,6 +49,7 @@ export default function Settings() {
           <div className="flex flex-col">
             <ProjectTab project={project} onSaved={refresh} />
             <ProjectIntroSection project={project} />
+            <ProjectTelegramSection project={project} onSaved={refresh} />
           </div>
         )}
         {tab === "agents" && <AgentsTab project={project} onSaved={refresh} />}
@@ -171,6 +172,120 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
         </div>
       </section>
     </div>
+  );
+}
+
+function ProjectTelegramSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  const initial = (project.settings as { telegram?: { botToken?: string; chatId?: string } } | undefined)?.telegram;
+  const [token, setToken] = useState(initial?.botToken ?? "");
+  const [savedToken, setSavedToken] = useState(initial?.botToken ?? "");
+  const [savedChatId, setSavedChatId] = useState(initial?.chatId ?? "");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  // Pick up auto-bound chatId once the bot receives /start (poll every 5s
+  // while we're waiting for it). Stops once chatId is bound.
+  const { data: live } = useQuery({
+    queryKey: ["project-telegram", project.id, savedToken],
+    queryFn: async () => (await api.fetchProjects()).find((p) => p.id === project.id),
+    refetchInterval: savedToken && !savedChatId ? 5_000 : false,
+    enabled: !!savedToken,
+  });
+  useEffect(() => {
+    if (!live) return;
+    const tg = (live.settings as { telegram?: { chatId?: string } })?.telegram;
+    if (tg?.chatId && tg.chatId !== savedChatId) setSavedChatId(tg.chatId);
+  }, [live, savedChatId]);
+
+  async function save() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const tg = token.trim() ? { botToken: token.trim() } : {};
+      await api.updateProject(project.id, { settings: { telegram: tg } } as never);
+      setSavedToken(token.trim());
+      setSavedChatId(""); // wiping the token unbinds the chat
+      setStatus(token.trim() ? "Saved — open the bot in Telegram and send /start to bind a chat." : "Telegram disabled for this project.");
+      onSaved();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatus(`Error: ${msg}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function disconnect() {
+    if (!confirm("Disconnect Telegram from this project?")) return;
+    setSaving(true);
+    try {
+      await api.updateProject(project.id, { settings: { telegram: { botToken: undefined, chatId: undefined } } } as never);
+      setToken("");
+      setSavedToken("");
+      setSavedChatId("");
+      setStatus("Disconnected.");
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-semibold text-text-primary">Telegram</h3>
+          <p className="text-xs text-text-secondary">
+            Optional. Each project gets its own bot — create one via{" "}
+            <a href="https://t.me/BotFather" target="_blank" rel="noopener" className="text-accent-blue hover:underline">@BotFather</a>{" "}
+            in Telegram, paste the token below, then send <code>/start</code> to the bot. A single bot can't be shared between projects.
+          </p>
+        </div>
+        {savedToken && (
+          <Button variant="secondary" size="sm" onClick={disconnect} disabled={saving} type="button">
+            Disconnect
+          </Button>
+        )}
+      </div>
+
+      <Field label="Bot token" hint="From @BotFather. Looks like 1234567890:AAH…">
+        <div className="flex items-center gap-2">
+          <input
+            className={INPUT}
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="1234567890:AAH…"
+            autoComplete="off"
+          />
+          <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </Field>
+
+      {savedToken && (
+        <div className="px-3 py-2 border border-border-subtle bg-bg-input text-xs flex items-center gap-2">
+          {savedChatId ? (
+            <>
+              <span className="font-mono text-accent-green">✓</span>
+              <span className="text-text-secondary">
+                Connected · chat <code className="text-text-primary">{savedChatId}</code> · agent notifications go to Telegram.
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="font-mono text-accent-yellow">…</span>
+              <span className="text-text-secondary">
+                Token saved. Send <code className="text-text-primary">/start</code> to the bot in Telegram to bind a chat.
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
+      {status && <p className="text-xs text-text-tertiary">{status}</p>}
+    </section>
   );
 }
 

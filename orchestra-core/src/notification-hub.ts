@@ -27,13 +27,15 @@ export async function notify(notification: Notification): Promise<void> {
     await addSystemMessage(projectId, text, metadata);
   }
 
-  // 2. Push to Telegram (if configured)
-  const telegramChatId = await getTelegramChatId(projectId);
-  if (telegramChatId) {
-    const sent = await sendTelegramMessage(telegramChatId, text);
-    log.debug({ telegramChatId, sent, projectId }, "telegram notify");
+  // 2. Push to Telegram if this project has a bot + chat configured.
+  // Per-project: each project has its own bot token and bound chat, so
+  // we read both off settings.telegram. Missing either = silent skip.
+  const tg = await getProjectTelegram(projectId);
+  if (tg) {
+    const sent = await sendTelegramMessage(tg.botToken, tg.chatId, text);
+    log.debug({ chatId: tg.chatId, sent, projectId }, "telegram notify");
   } else {
-    log.debug({ projectId }, "telegram notify skipped: no chatId");
+    log.debug({ projectId }, "telegram notify skipped: not configured");
   }
 }
 
@@ -139,15 +141,22 @@ export async function notifyAgentEvent(
 
 // ─── Helpers ───
 
-async function getTelegramChatId(projectId: string): Promise<string | null> {
-  // Check if any telegram user has this project as active
+/**
+ * Read a project's Telegram config — both bot token and bound chat have
+ * to be present for outbound notifications. Returns null otherwise so
+ * the caller's `if (tg)` branch handles "not configured".
+ */
+export async function getProjectTelegram(
+  projectId: string,
+): Promise<{ botToken: string; chatId: string } | null> {
   const pool = getPool();
   const { rows } = await pool.query(
-    "SELECT chat_id FROM telegram_users WHERE active_project_id = $1 LIMIT 1",
+    `SELECT settings -> 'telegram' ->> 'botToken'  AS bot_token,
+            settings -> 'telegram' ->> 'chatId'    AS chat_id
+       FROM projects WHERE id = $1`,
     [projectId],
   );
-  if (rows.length) return rows[0].chat_id;
-
-  // Fallback to global TELEGRAM_CHAT_ID
-  return process.env.TELEGRAM_CHAT_ID || null;
+  const r = rows[0] as { bot_token?: string; chat_id?: string } | undefined;
+  if (!r?.bot_token || !r.chat_id) return null;
+  return { botToken: r.bot_token, chatId: r.chat_id };
 }

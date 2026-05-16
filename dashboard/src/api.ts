@@ -277,11 +277,12 @@ export const browseFs = (path?: string, showHidden = false): Promise<FsBrowseRes
 
 // Onboarding
 const OnboardingStepSchema = z.object({
-  key: z.enum(["claude_auth", "project", "git_token"]),
+  key: z.enum(["claude_auth", "project", "git_token", "telegram"]),
   title: z.string(),
   done: z.boolean(),
   href: z.string(),
   hint: z.string().optional(),
+  optional: z.boolean().optional(),
 });
 const TabKeySchema = z.enum([
   "kanban", "chat", "signals", "agents", "flow", "logs", "settings", "profile",

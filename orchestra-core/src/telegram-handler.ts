@@ -1,131 +1,121 @@
-import { getPool } from "./db";
+import { eq, sql } from "drizzle-orm";
+import { getDb } from "./db";
+import { projects, conversations, messages } from "./db/schema";
 import { sendTelegramMessage } from "./notify";
 import { dispatchTechLead } from "./tech-lead-dispatcher";
 import { loadConfig } from "./config";
 import { background } from "./error-handler";
+import { bindChatToProject } from "./telegram-manager";
 
 /**
- * Handle an incoming Telegram message (text, not command).
- * Resolves project, stores in conversation, dispatches Tech Lead.
+ * Project is now implicit in the bot — each project has its own bot
+ * token, the polling manager invokes us with both. We bind the first
+ * chat that talks to the bot as the project's chatId (so notify() knows
+ * where to push), and only respond to that chat thereafter.
+ */
+
+interface BoundChat {
+  current: string | undefined;
+}
+
+async function getProjectChat(projectId: string): Promise<BoundChat> {
+  const [row] = await getDb()
+    .select({ chatId: sql<string | null>`${projects.settings} -> 'telegram' ->> 'chatId'` })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  return { current: row?.chatId ?? undefined };
+}
+
+/**
+ * Handle an incoming text message: store, dispatch TL, but only if the
+ * sender is the project's bound chat (or if no chat is bound yet — in
+ * which case any incoming message must be a /start, see handleCommand).
  */
 export async function handleTelegramMessage(
+  projectId: string,
+  token: string,
   chatId: string,
   text: string,
   messageId?: number,
 ): Promise<void> {
-  const pool = getPool();
-
-  const projectId = await resolveProjectForChat(chatId);
-  if (!projectId) return;
-
-  // Store in conversation
-  const { rows: convRows } = await pool.query(
-    "SELECT id FROM conversations WHERE project_id = $1",
-    [projectId],
-  );
-  if (convRows.length) {
-    await pool.query(
-      `INSERT INTO messages (conversation_id, from_role, source, text, metadata)
-       VALUES ($1, 'user', 'telegram', $2, $3)`,
-      [convRows[0].id, text, JSON.stringify({ chatId, messageId })],
-    );
+  const { current } = await getProjectChat(projectId);
+  if (!current) {
+    await sendTelegramMessage(token, chatId, "Send /start to bind this chat to the project first.");
+    return;
+  }
+  if (current !== chatId) {
+    // Different chat than the bound one — ignore to keep noise out of
+    // the project's conversation. Could surface this as an audit row
+    // later; for now silent + a polite nudge.
+    await sendTelegramMessage(token, chatId, "This bot is bound to a different chat.");
+    return;
   }
 
-  // Dispatch Tech Lead
+  const [conv] = await getDb()
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.projectId, projectId))
+    .limit(1);
+  if (conv) {
+    await getDb().insert(messages).values({
+      conversationId: conv.id,
+      fromRole: "user",
+      source: "telegram",
+      text,
+      metadata: { chatId, messageId },
+    });
+  }
+
   const config = loadConfig();
   background(dispatchTechLead(projectId, text, config), "telegram:dispatch", projectId);
 }
 
 /**
- * Handle a Telegram command (/start, /projects, /switch).
+ * Handle a /command. Only one command matters now (/start) — it binds
+ * the chat to the project and confirms. /projects and /switch went away
+ * because each project has its own dedicated bot.
  */
-export async function handleTelegramCommand(chatId: string, text: string): Promise<void> {
-  const pool = getPool();
-  const [cmd, ...args] = text.split(" ");
-
+export async function handleTelegramCommand(
+  projectId: string,
+  token: string,
+  chatId: string,
+  text: string,
+): Promise<void> {
+  const [cmd] = text.split(" ");
   switch (cmd) {
-    case "/projects": {
-      const { rows } = await pool.query("SELECT id, name, slug FROM projects ORDER BY name");
-      if (!rows.length) {
-        await sendTelegramMessage(chatId, "Нет проектов. Создай через Dashboard.");
-        return;
-      }
-
-      const { rows: userRows } = await pool.query(
-        "SELECT active_project_id FROM telegram_users WHERE chat_id = $1",
-        [chatId],
-      );
-      const activeId = userRows[0]?.active_project_id;
-
-      const list = rows.map((p) => {
-        const mark = p.id === activeId ? " ✓" : "";
-        return `• ${p.name} (${p.slug})${mark}`;
-      }).join("\n");
-
-      await sendTelegramMessage(chatId, `Проекты:\n${list}\n\n/switch <slug>`);
-      break;
-    }
-
-    case "/switch": {
-      const slug = args[0];
-      if (!slug) {
-        await sendTelegramMessage(chatId, "/switch <slug>");
-        return;
-      }
-      const { rows } = await pool.query("SELECT id, name FROM projects WHERE slug = $1", [slug]);
-      if (!rows.length) {
-        await sendTelegramMessage(chatId, `Проект "${slug}" не найден`);
-        return;
-      }
-      await setActiveProject(chatId, rows[0].id);
-      await sendTelegramMessage(chatId, `Активный проект: ${rows[0].name}`);
-      break;
-    }
-
     case "/start": {
-      await sendTelegramMessage(chatId, "AI Orchestra Bot\n\n/projects — список проектов\n/switch <slug> — сменить проект\n\nПросто напиши — сообщение уйдёт Tech Lead.");
+      const [proj] = await getDb()
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1);
+      const projectName = proj?.name ?? "this project";
+
+      const { current } = await getProjectChat(projectId);
+      if (current && current !== chatId) {
+        await sendTelegramMessage(
+          token, chatId,
+          `This bot is already bound to a different chat for "${projectName}". A user has to unbind it from the dashboard first.`,
+        );
+        return;
+      }
+      if (!current) {
+        await bindChatToProject(projectId, chatId);
+        await sendTelegramMessage(
+          token, chatId,
+          `Connected to AI Orchestra · *${projectName}*\n\nJust write — your message goes straight to Tech Lead.`,
+        );
+        return;
+      }
+      // Already bound to this same chat — gentle confirmation.
+      await sendTelegramMessage(
+        token, chatId,
+        `Already connected · *${projectName}*. Write away.`,
+      );
       break;
     }
-
     default:
-      await sendTelegramMessage(chatId, "Неизвестная команда. /start");
+      await sendTelegramMessage(token, chatId, "Unknown command. Try /start.");
   }
-}
-
-/**
- * Resolve the active project for a Telegram chat.
- * Auto-selects if only one project exists. Returns null if user must choose.
- */
-async function resolveProjectForChat(chatId: string): Promise<string | null> {
-  const pool = getPool();
-
-  const { rows: userRows } = await pool.query(
-    "SELECT active_project_id FROM telegram_users WHERE chat_id = $1",
-    [chatId],
-  );
-
-  if (userRows[0]?.active_project_id) return userRows[0].active_project_id;
-
-  // Auto-select if only one project
-  const { rows: projRows } = await pool.query("SELECT id FROM projects LIMIT 2");
-  if (projRows.length === 1) {
-    await setActiveProject(chatId, projRows[0].id);
-    return projRows[0].id;
-  }
-
-  if (projRows.length === 0) {
-    await sendTelegramMessage(chatId, "Нет проектов. Создай через Dashboard.");
-  } else {
-    await sendTelegramMessage(chatId, "Выбери проект: /projects");
-  }
-  return null;
-}
-
-async function setActiveProject(chatId: string, projectId: string): Promise<void> {
-  await getPool().query(
-    `INSERT INTO telegram_users (chat_id, active_project_id)
-     VALUES ($1, $2)
-     ON CONFLICT (chat_id) DO UPDATE SET active_project_id = $2, updated_at = now()`,
-    [chatId, projectId],
-  );
 }

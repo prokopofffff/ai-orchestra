@@ -65,7 +65,15 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       description: z.string().optional(),
     }).parse(request.body);
 
-    const slug = body.slug ?? body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    // Slug derivation: keep ASCII alphanumerics + dashes (URL-friendly).
+    // For names that strip to nothing (cyrillic, kanji, emoji-only…) fall
+    // back to a short random suffix so we never produce `-` or `""`.
+    const slug = body.slug ?? (() => {
+      const stripped = body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (stripped.length > 0) return stripped;
+      // crypto.randomUUID is available everywhere we run.
+      return `project-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36)).slice(0, 8)}`;
+    })();
     const db = getDb();
     const [row] = await db.insert(projects).values({
       name: body.name,

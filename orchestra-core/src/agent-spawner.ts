@@ -59,7 +59,18 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   );
   if (!projRows.length) throw new Error(`Project not found: ${projectId}`);
   const { slug, repo_url: repoUrl, local_path: localPath, settings } = projRows[0];
-  if (!repoUrl && !localPath) throw new Error(`Project ${slug} has no repository URL or local path — configure it in Settings`);
+  if (!repoUrl && !localPath) {
+    // Same shape as the "not a git repo" preflight — the user has an
+    // actionable fix (set a repo URL or local path in Settings), so
+    // escalate cleanly instead of logging a [agent-run] fatal.
+    const reason = `Project "${slug}" has no repo URL or local path. Open Project Settings to configure one.`;
+    await escalate(projectId, taskId, reason, {
+      event: "no_repo_configured",
+      slug,
+      role,
+    });
+    throw new PreflightError(`no repo/local_path on project ${slug}`);
+  }
 
   // Apply any DB-stored auth overrides (set via UI) on top of env defaults.
   const { rows: sysRows } = await pool.query(

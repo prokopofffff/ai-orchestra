@@ -96,7 +96,7 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
     maxBudgetUsd,
     // canUseTool now only enforces file-path scope (out-of-zone Edit/Write).
     // Tool-name deny is native via agent.disallowedTools.
-    canUseTool: buildCanUseTool(cfg.scope.denied),
+    canUseTool: buildCanUseTool(cfg.scope.denied, cfg.toolsDeny ?? []),
     mcpServers: Object.fromEntries(
       Object.entries(p.mcpServers).map(([name, s]) => [
         name,
@@ -220,6 +220,11 @@ function logMessage(p: SdkRunInput, m: SDKMessage): void {
   }
 }
 
+/**
+ * Full extractor — text blocks + `[tool:Name]` markers for tool_use.
+ * Used by the agent_logs stream where the operator wants to see what
+ * the model is doing step by step.
+ */
 export function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -235,16 +240,53 @@ export function extractText(content: unknown): string {
 }
 
 /**
- * File-path scope enforcement: reject Edit/Write/MultiEdit when the
- * target lands in a denied directory. Tool-name deny ("Edit",
- * "mcp__pencil__*") is handled natively by the SDK now via
- * `AgentDefinition.disallowedTools` — this hook only catches the
- * file-path layer because the SDK doesn't have a built-in equivalent.
+ * Text-only extractor — drops tool_use markers entirely. Used for the
+ * user-facing chat reply, where `[tool:Write]` next to a paragraph of
+ * prose is just noise. Returns "" for turns that were all tool calls.
  */
-export function buildCanUseTool(deniedGlobs: string[]): CanUseTool | undefined {
-  if (deniedGlobs.length === 0) return undefined;
+export function extractAssistantText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (typeof block === "object" && block && "type" in block) {
+      const b = block as { type: string; text?: string };
+      if (b.type === "text" && b.text) parts.push(b.text);
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Two-layer runtime guard:
+ *
+ *   1. **Tool-name deny** ("Edit", "mcp__pencil__*", "Bash") — blocked
+ *      regardless of arguments. We *also* pass these in
+ *      `AgentDefinition.disallowedTools`, but the SDK's enforcement
+ *      isn't always reliable when an agent is selected via `agent: ...`
+ *      on the main thread — observed Tech Lead invoking Write despite
+ *      disallowedTools. canUseTool is the belt over the SDK's
+ *      suspenders.
+ *
+ *   2. **File-path scope** — reject Edit/Write/MultiEdit when the
+ *      target lands in a denied directory.
+ */
+export function buildCanUseTool(
+  deniedGlobs: string[],
+  toolsDeny: string[] = [],
+): CanUseTool | undefined {
+  if (deniedGlobs.length === 0 && toolsDeny.length === 0) return undefined;
 
   return async (toolName, input) => {
+    for (const pattern of toolsDeny) {
+      if (matchesToolName(toolName, pattern)) {
+        return {
+          behavior: "deny",
+          message: `Tool ${toolName} is not available to this role. Use signal-tool / task-tool to delegate to a specialist instead.`,
+        };
+      }
+    }
+
     if (toolName !== "Edit" && toolName !== "Write" && toolName !== "MultiEdit") {
       return { behavior: "allow", updatedInput: input };
     }
@@ -261,4 +303,9 @@ export function buildCanUseTool(deniedGlobs: string[]): CanUseTool | undefined {
     }
     return { behavior: "allow", updatedInput: input };
   };
+}
+
+function matchesToolName(toolName: string, pattern: string): boolean {
+  if (pattern.endsWith("*")) return toolName.startsWith(pattern.slice(0, -1));
+  return toolName === pattern;
 }

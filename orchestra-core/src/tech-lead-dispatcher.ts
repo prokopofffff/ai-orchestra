@@ -1,4 +1,4 @@
-import { query, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { type Config, getModelForRole } from "./config";
 import {
   createSession,
@@ -12,7 +12,8 @@ import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir } from "./repo-manager";
-import { extractText } from "./agents/sdk-runner";
+import { extractText, extractAssistantText, buildCanUseTool } from "./agents/sdk-runner";
+import { getAgentConfig } from "./agents/configs";
 import { buildAgentDefinitions } from "./agents/role-definitions";
 import { providerFor } from "./providers";
 import type { ProjectSettings } from "@ai-orchestra/shared";
@@ -105,6 +106,7 @@ async function runTechLead(p: {
   appendLog(p.projectId, p.sessionId, "tech-lead", "system", `tech-lead run: model=${p.model}`);
 
   const agents = buildAgentDefinitions({ pencilEnabled: p.pencilEnabled });
+  const tlCfg = getAgentConfig("tech-lead");
   const stream = query({
     prompt: p.userTurn,
     options: {
@@ -113,6 +115,11 @@ async function runTechLead(p: {
       model: p.model,
       cwd: p.workDir,
       permissionMode: "bypassPermissions",
+      // Belt over the SDK's suspenders: even though agents["tech-lead"]
+      // carries disallowedTools, the SDK doesn't always enforce them on
+      // the main-thread agent — observed TL invoking Write directly.
+      // canUseTool here is a hard runtime block.
+      canUseTool: buildCanUseTool(tlCfg.scope.denied, tlCfg.toolsDeny ?? []),
       mcpServers: Object.fromEntries(
         Object.entries(p.mcpServers).map(([name, s]) => [
           name,
@@ -127,11 +134,14 @@ async function runTechLead(p: {
 
   try {
     for await (const message of stream) {
-      const text = textFromMessage(message);
-      if (text) {
-        reply += (reply ? "\n" : "") + text;
-        appendLog(p.projectId, p.sessionId, "tech-lead", "stdout", text);
-      }
+      if (message.type !== "assistant") continue;
+      // Logs see the full step-by-step (text + [tool:Name] markers) so
+      // the operator can audit what TL did. The chat reply only gets
+      // actual prose — tool markers are noise for the user.
+      const logText = extractText(message.message.content);
+      if (logText) appendLog(p.projectId, p.sessionId, "tech-lead", "stdout", logText);
+      const chatText = extractAssistantText(message.message.content);
+      if (chatText) reply += (reply ? "\n" : "") + chatText;
     }
     await updateSession(p.sessionId, { status: "terminated", finishedAt: new Date() });
   } catch (err) {
@@ -152,10 +162,6 @@ async function runTechLead(p: {
   }
 }
 
-function textFromMessage(m: SDKMessage): string {
-  if (m.type === "assistant") return extractText(m.message.content);
-  return "";
-}
 
 /** Cancel an in-flight tech-lead conversation if one exists. */
 export async function interruptTechLead(projectId: string): Promise<boolean> {

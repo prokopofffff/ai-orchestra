@@ -31,7 +31,17 @@ export const agentConfigs: Record<AgentRole, AgentConfig> = {
     scope: { allowed: ["**/*"], denied: [] },
     permissions: { allow: BASE_ALLOW, deny: BASE_DENY },
     toolsDeny: [
+      // No file writes — TL is a planner, not an implementer.
       "Edit", "Write", "MultiEdit", "NotebookEdit",
+      // No shell — TL can Read/Glob/Grep files to understand the codebase.
+      // Bash would let it scaffold projects (mkdir, touch, curl …) which is
+      // exactly the failure we keep seeing: instead of writing tasks, TL
+      // does the work itself.
+      "Bash",
+      // No Task subagent — orchestra has its own delegation flow via the
+      // signal-tool MCP. Using the SDK's Task tool would create a parallel
+      // in-process agent we have no visibility or control over.
+      "Task",
       // The pencil MCP is loaded globally (Claude Code plugin) — it's the
       // designer's surface. TL writing designs directly bypasses the flow.
       "mcp__pencil__*",

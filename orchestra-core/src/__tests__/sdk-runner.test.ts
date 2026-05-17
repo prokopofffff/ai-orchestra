@@ -48,9 +48,27 @@ describe("sdk-runner — buildCanUseTool", () => {
     expect(result.behavior).toBe("allow");
   });
 
-  // Tool-name deny used to live here as a second layer; it's now native
-  // via AgentDefinition.disallowedTools and tested by the SDK itself.
-  // canUseTool's remaining job is file-path scope only.
+  it("tool-name deny: exact match blocks the call regardless of args", async () => {
+    const guard = buildCanUseTool([], ["Bash"])!;
+    const r = await guard("Bash", { command: "ls" }, {} as never);
+    expect(r.behavior).toBe("deny");
+    if (r.behavior === "deny") expect(r.message).toMatch(/not available to this role/);
+  });
+
+  it("tool-name deny: wildcard prefix matches MCP-style names", async () => {
+    const guard = buildCanUseTool([], ["mcp__pencil__*"])!;
+    const a = await guard("mcp__pencil__batch_design", {}, {} as never);
+    const b = await guard("mcp__pencil__get_editor_state", {}, {} as never);
+    const c = await guard("mcp__signal-tool__send", {}, {} as never);
+    expect(a.behavior).toBe("deny");
+    expect(b.behavior).toBe("deny");
+    expect(c.behavior).toBe("allow");
+  });
+
+  it("returns undefined when both deny lists are empty", () => {
+    expect(buildCanUseTool([])).toBeUndefined();
+    expect(buildCanUseTool([], [])).toBeUndefined();
+  });
 });
 
 describe("sdk-runner — extractText", () => {

@@ -93,6 +93,36 @@ describe("dependency-engine", () => {
       expect(unblocked).toEqual([]);
     });
 
+    it("does NOT unblock when blocker is only 'approved' (PR not merged yet)", async () => {
+      const pool = getPool();
+      const { rows: [blocker] } = await pool.query(
+        "INSERT INTO tasks (project_id, title, state) VALUES ($1, 'PR-Approved Blocker', 'approved') RETURNING id",
+        [projectId],
+      );
+      await pool.query(
+        "INSERT INTO tasks (project_id, title, state, blocked_by) VALUES ($1, 'Blocked', 'new', $2)",
+        [projectId, [blocker.id]],
+      );
+
+      const unblocked = await checkUnblocked(blocker.id, projectId);
+      expect(unblocked).toEqual([]);
+    });
+
+    it("does NOT unblock when blocker is only 'tested' (PR not merged yet)", async () => {
+      const pool = getPool();
+      const { rows: [blocker] } = await pool.query(
+        "INSERT INTO tasks (project_id, title, state) VALUES ($1, 'Tested Blocker', 'tested') RETURNING id",
+        [projectId],
+      );
+      await pool.query(
+        "INSERT INTO tasks (project_id, title, state, blocked_by) VALUES ($1, 'Blocked', 'new', $2)",
+        [projectId, [blocker.id]],
+      );
+
+      const unblocked = await checkUnblocked(blocker.id, projectId);
+      expect(unblocked).toEqual([]);
+    });
+
     it("unblocks multiple tasks at once", async () => {
       const pool = getPool();
 

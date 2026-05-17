@@ -18,7 +18,9 @@ import { PreflightError } from "./error-handler";
 import { installScopeHook } from "./scope-enforcer";
 import { runAgentSdk } from "./agents/sdk-runner";
 import { providerFor } from "./providers";
+import { mintAgentJwt } from "./agent-jwt";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
+import { DONE_STATES } from "./dependency-engine";
 import { resolveDailyCostCap } from "./limits";
 import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
@@ -84,9 +86,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const { rows: taskRows } = await pool.query("SELECT blocked_by FROM tasks WHERE id = $1", [taskId]);
   if (taskRows.length && (taskRows[0].blocked_by as string[]).length > 0) {
     const blockers = taskRows[0].blocked_by as string[];
+    const placeholders = DONE_STATES.map((_, i) => `$${i + 2}`).join(", ");
     const { rows: blockerRows } = await pool.query(
-      "SELECT id FROM tasks WHERE id = ANY($1) AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')",
-      [blockers],
+      `SELECT id FROM tasks WHERE id = ANY($1) AND state NOT IN (${placeholders})`,
+      [blockers, ...DONE_STATES],
     );
     if (blockerRows.length > 0) {
       throw new Error(`Task ${taskId} is blocked by ${blockerRows.length} unfinished task(s)`);
@@ -152,7 +155,8 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
 
   // ── 4. Session row + MCP servers (passed inline to SDK) ─────────────
   const session = await createSession({ projectId, role, taskId, model, worktreePath: worktreeDir });
-  const { mcpServers } = generateMcpConfig(role, config, projectId);
+  const agentJwt = await mintAgentJwt(projectId);
+  const { mcpServers } = generateMcpConfig(role, config, projectId, agentJwt);
   appendLog(projectId, session.id, role, "system", `agent run: model=${model} worktree=${worktreeDir}`);
 
   // ── 5. SDK run (awaits the full agent) ──────────────────────────────

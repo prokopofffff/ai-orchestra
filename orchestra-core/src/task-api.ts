@@ -5,7 +5,7 @@ import { ProjectSchema, TaskSchema, TaskCommentSchema } from "@ai-orchestra/shar
 import { getDb, getPool } from "./db";
 import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
-import { checkUnblocked } from "./dependency-engine";
+import { checkUnblocked, DONE_STATES } from "./dependency-engine";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import { currentUserId } from "./auth";
 import {
@@ -431,8 +431,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (!row) return reply.code(404).send({ error: "Task not found" });
 
     const parsed = parseRow(taskSchema, row);
-    const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
-    if (body.state && doneStates.includes(body.state)) {
+    if (body.state && (DONE_STATES as readonly string[]).includes(body.state)) {
       const unblocked = await checkUnblocked(parsed.id, parsed.projectId);
       if (unblocked.length > 0) {
         (parsed as Record<string, unknown>).unblockedTasks = unblocked;

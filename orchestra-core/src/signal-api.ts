@@ -11,11 +11,12 @@ import {
   logAudit,
   type SignalPayload,
 } from "./flow-guard";
-import { checkUnblocked } from "./dependency-engine";
+import { checkUnblocked, DONE_STATES } from "./dependency-engine";
 import { dispatchSignal } from "./dispatcher";
 import { loadConfig } from "./config";
 import { notify, escalate } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
+import { tryAutoMerge } from "./auto-merger";
 import { validateSignalSender } from "./agent-auth";
 import { currentUserId } from "./auth";
 import { userCanAccessProject, userCanEditProject, visibleProjectIds } from "./project-access";
@@ -247,11 +248,12 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // 6. Check if state change unblocks other tasks
+    // 6. Check if state change unblocks other tasks. DONE_STATES is the
+    // single source of truth — approved/tested don't count, only merged
+    // (and closed / design_ready). See dependency-engine.ts for the why.
     if (signal.taskId) {
       const targetState = getTargetState(signal.action);
-      const doneStates = ["tested", "approved", "merged", "closed", "design_ready"];
-      if (targetState && doneStates.includes(targetState)) {
+      if (targetState && (DONE_STATES as readonly string[]).includes(targetState)) {
         background(checkUnblocked(signal.taskId, signal.projectId), "checkUnblocked", signal.projectId);
         // If this is the project's intro task, promote TL's last comment
         // into project_notes so it sticks around as the project's
@@ -270,6 +272,15 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
         priority: signal.action === "escalate" ? "high" : "normal",
         fromRole: signal.from === "tech-lead" ? "tech-lead" : "system",
       }).catch((err) => logBackgroundError("signal:notify", err, signal.projectId));
+    }
+
+    // 7b. Auto-merge (opt-in per project). The actual merge happens in a
+    // background promise so the signal endpoint stays snappy and a slow
+    // provider doesn't 504 the request. tryAutoMerge no-ops when settings
+    // don't have it enabled, when the task lacks a pr_url, or when the
+    // project has no remote (local-path-only).
+    if (signal.action === "pr_approved" && signal.from === "tech-lead" && signal.taskId) {
+      background(tryAutoMerge(signal.projectId, signal.taskId), "signal:auto-merge", signal.projectId);
     }
 
     // 8. Dispatch agent

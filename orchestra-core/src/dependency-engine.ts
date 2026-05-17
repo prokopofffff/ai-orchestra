@@ -2,8 +2,30 @@ import { getPool } from "./db";
 import { logAudit } from "./flow-guard";
 
 /**
+ * Task states that count as "done enough to unblock dependents."
+ *
+ * NOT included: `approved`, `tested`. Both mark PR quality milestones
+ * (TL approved the PR / QA's tests pass) but the code is NOT in `main`
+ * yet — the PR is waiting on a human (or auto-merge) to merge. A
+ * downstream task that starts at this point checks out an empty `main`
+ * and tries to build against nothing. We saw exactly that: TL approved
+ * the design task, signaled `design_ready` to frontend, frontend
+ * started, no design system existed in main.
+ *
+ * Included:
+ *   - `merged`  — PR merged into main, code is live.
+ *   - `closed`  — task abandoned / won't-fix; dependents shouldn't wait.
+ *   - `design_ready` — designer's done-marker (design files in repo
+ *     OR design system extracted; treated as available).
+ */
+export const DONE_STATES = ["merged", "closed", "design_ready"] as const;
+
+/** SQL-safe list for use inside `state NOT IN (…)` clauses. */
+const DONE_STATES_SQL = DONE_STATES.map((s) => `'${s}'`).join(", ");
+
+/**
  * Check if a task state change unblocks other tasks.
- * Called after task transitions to 'merged' or 'closed'.
+ * Called after task transitions to a DONE_STATES value.
  */
 export async function checkUnblocked(taskId: string, projectId: string): Promise<string[]> {
   const pool = getPool();
@@ -12,7 +34,7 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
   const { rows: dependents } = await pool.query(
     `SELECT id, title, blocked_by FROM tasks
      WHERE project_id = $1 AND $2 = ANY(blocked_by)
-     AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')`,
+     AND state NOT IN (${DONE_STATES_SQL})`,
     [projectId, taskId],
   );
 
@@ -25,7 +47,7 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
     if (blockedBy.length > 0) {
       const { rows: remaining } = await pool.query(
         `SELECT id FROM tasks
-         WHERE id = ANY($1) AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')`,
+         WHERE id = ANY($1) AND state NOT IN (${DONE_STATES_SQL})`,
         [blockedBy],
       );
 
@@ -70,7 +92,7 @@ export async function getBlockers(taskId: string): Promise<Array<{ id: string; t
 
   const { rows } = await pool.query(
     `SELECT id, title, state FROM tasks
-     WHERE id = ANY($1) AND state NOT IN ('tested', 'approved', 'merged', 'closed', 'design_ready')`,
+     WHERE id = ANY($1) AND state NOT IN (${DONE_STATES_SQL})`,
     [blockedBy],
   );
 

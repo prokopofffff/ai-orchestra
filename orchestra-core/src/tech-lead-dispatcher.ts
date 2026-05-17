@@ -142,19 +142,37 @@ async function runTechLead(p: {
 
   techLeadQueries.set(p.projectId, stream);
   let reply = "";
+  // Mid-stream code-block guard. Tracks whether we're inside a fenced
+  // block and how many body lines have streamed since the opening fence.
+  // Crossing MAX_CODE_BLOCK_LINES counts as TL trying to implement the
+  // feature in chat (the failure mode we keep seeing); we abort the run
+  // immediately and replace the partial reply with a system note.
+  const guard = { open: false, lines: 0 };
+  let violation: string | null = null;
 
   try {
     for await (const message of stream) {
       if (message.type !== "assistant") continue;
-      // Logs see the full step-by-step (text + [tool:Name] markers) so
-      // the operator can audit what TL did. The chat reply only gets
-      // actual prose — tool markers are noise for the user.
       const logText = extractText(message.message.content);
       if (logText) appendLog(p.projectId, p.sessionId, "tech-lead", "stdout", logText);
       const chatText = extractAssistantText(message.message.content);
-      if (chatText) reply += (reply ? "\n" : "") + chatText;
+      if (chatText) {
+        reply += (reply ? "\n" : "") + chatText;
+        if (!violation) {
+          violation = scanForCodeBlockViolation(chatText, guard);
+          if (violation) {
+            appendLog(p.projectId, p.sessionId, "tech-lead", "error",
+              `RUN ABORTED: ${violation}. Chat reply was pasting implementation instead of creating tasks.`);
+            await stream.interrupt().catch(() => { /* already over */ });
+            break;
+          }
+        }
+      }
     }
-    await updateSession(p.sessionId, { status: "terminated", finishedAt: new Date() });
+    await updateSession(p.sessionId, {
+      status: violation ? "crashed" : "terminated",
+      finishedAt: new Date(),
+    });
   } catch (err) {
     await updateSession(p.sessionId, { status: "crashed", finishedAt: new Date() });
     log.error({ err, projectId: p.projectId, sessionId: p.sessionId }, "tech-lead run failed");
@@ -162,7 +180,28 @@ async function runTechLead(p: {
     techLeadQueries.delete(p.projectId);
   }
 
-  const trimmed = reply.trim();
+  if (violation) {
+    // Don't post TL's partial implementation to the user. Replace with a
+    // system message describing what happened — gives the user a chance
+    // to re-ask in a way that nudges TL toward tasks, and the next TL
+    // turn will see this in its conversation history as feedback.
+    await notify({
+      projectId: p.projectId,
+      text:
+        "⚠️ Tech Lead started writing code in chat (forbidden) — the run was aborted. " +
+        "Tech Lead's job is to create tasks via `task_create` and delegate to the frontend / backend / designer agents, not to paste implementations. " +
+        "Try re-asking with: \"create tasks for the dev team — don't write code yourself.\"",
+      priority: "high",
+      fromRole: "system",
+    }).catch((err) => log.error({ err, projectId: p.projectId }, "violation notify failed"));
+    return;
+  }
+
+  // Defense in depth: even if no single block crossed the streaming
+  // threshold, sanitize the assembled reply once more. A leak-through
+  // (e.g. ten 8-line blocks) still violates the spirit of the rule.
+  const sanitized = stripLongCodeBlocks(reply);
+  const trimmed = sanitized.trim();
   if (trimmed) {
     await notify({
       projectId: p.projectId,
@@ -171,6 +210,59 @@ async function runTechLead(p: {
       fromRole: "tech-lead",
     }).catch((err) => log.error({ err, projectId: p.projectId }, "tech-lead notify failed"));
   }
+}
+
+const MAX_CODE_BLOCK_LINES = 10;
+
+/**
+ * Walk a chunk of newly-streamed text and update the multi-call guard
+ * tracking whether the model is currently inside a fenced code block
+ * and how many body lines have streamed. Returns a violation reason if
+ * the current block crosses MAX_CODE_BLOCK_LINES, null otherwise.
+ *
+ * Exported for tests.
+ */
+export function scanForCodeBlockViolation(
+  chunk: string,
+  state: { open: boolean; lines: number },
+): string | null {
+  for (const line of chunk.split("\n")) {
+    if (line.trim().startsWith("```")) {
+      if (state.open) {
+        state.open = false;
+        state.lines = 0;
+      } else {
+        state.open = true;
+        state.lines = 0;
+      }
+      continue;
+    }
+    if (state.open) {
+      state.lines++;
+      if (state.lines > MAX_CODE_BLOCK_LINES) {
+        return `code block exceeded ${MAX_CODE_BLOCK_LINES} lines`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Post-hoc sanitizer for TL's final chat reply. Replaces any fenced
+ * code block longer than MAX_CODE_BLOCK_LINES with a one-line marker
+ * so the user sees the prose around it but not the implementation.
+ * Short illustrative snippets (≤ MAX) are preserved — they're useful
+ * for explaining a single decision (a function signature, a config
+ * field). Whole-file dumps are not.
+ *
+ * Exported for tests.
+ */
+export function stripLongCodeBlocks(text: string): string {
+  return text.replace(/```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```/g, (match, body: string) => {
+    const lines = body.split("\n").length;
+    if (lines <= MAX_CODE_BLOCK_LINES) return match;
+    return `_(removed: ${lines}-line code block — implementation belongs in a task, not chat)_`;
+  });
 }
 
 

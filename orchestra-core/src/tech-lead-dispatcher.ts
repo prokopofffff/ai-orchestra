@@ -40,17 +40,24 @@ export async function dispatchTechLead(
 
     const pool = getPool();
     const { rows: projRows } = await pool.query(
-      "SELECT slug, repo_url, settings FROM projects WHERE id = $1",
+      "SELECT slug, repo_url, local_path, settings FROM projects WHERE id = $1",
       [projectId],
     );
     if (!projRows.length) return { action: "error", error: "Project not found" };
 
-    const { slug, repo_url: repoUrl, settings } = projRows[0];
+    const { slug, repo_url: repoUrl, local_path: localPath, settings } = projRows[0];
     const model = getModelForRole(config, "tech-lead", settings as Record<string, unknown>);
 
+    // Workspace resolution mirrors agent-spawner — local_path wins, then
+    // repo_url (cloned), then a per-project temp dir. Without this branch,
+    // a project that the user created via the folder picker (no repo URL)
+    // would land in /Users/.../orchestra-workspaces/project-<slug>/workspace
+    // as a sibling of every other project's temp dir, and TL would walk
+    // up `..` to read code from unrelated projects.
     let workDir: string;
-    if (repoUrl) {
-      // Tokenize the clone URL for the project's provider.
+    if (localPath) {
+      workDir = localPath as string;
+    } else if (repoUrl) {
       const provider = providerFor(repoUrl, settings as ProjectSettings | null);
       workDir = await ensureRepo(provider.tokenizeCloneUrl(), slug);
     } else {
@@ -114,12 +121,15 @@ async function runTechLead(p: {
       agents,
       model: p.model,
       cwd: p.workDir,
-      permissionMode: "bypassPermissions",
-      // Belt over the SDK's suspenders: even though agents["tech-lead"]
-      // carries disallowedTools, the SDK doesn't always enforce them on
-      // the main-thread agent — observed TL invoking Write directly.
-      // canUseTool here is a hard runtime block.
-      canUseTool: buildCanUseTool(tlCfg.scope.denied, tlCfg.toolsDeny ?? []),
+      // permissionMode: "default" — NOT "bypassPermissions". The bypass mode
+      // skips the SDK's permission flow entirely, which includes our
+      // canUseTool callback AND AgentDefinition.disallowedTools. With
+      // "default", canUseTool becomes the authoritative approver: when it
+      // returns allow no operator prompt is shown, when it returns deny
+      // the tool call is rejected immediately. This is the gate that
+      // actually keeps TL from invoking Write/Bash/Edit.
+      permissionMode: "default",
+      canUseTool: buildCanUseTool(tlCfg.scope.denied, tlCfg.toolsDeny ?? [], p.workDir),
       mcpServers: Object.fromEntries(
         Object.entries(p.mcpServers).map(([name, s]) => [
           name,

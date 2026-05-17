@@ -6,6 +6,7 @@ import {
   type PostToolUseHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
 import { minimatch } from "minimatch";
+import path from "node:path";
 import { appendLog } from "../logger";
 import { updateSession, registerSessionController, unregisterSessionController } from "../session-manager";
 import { enqueue } from "../scheduler";
@@ -91,12 +92,17 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
     effort: p.effort,
     cwd: p.worktree,
     resume: p.resumeSessionId,
-    permissionMode: "bypassPermissions",
+    // permissionMode: "default" — see tech-lead-dispatcher for the rationale.
+    // bypassPermissions silently disables canUseTool AND disallowedTools, so
+    // a role's file-path scope (e.g. frontend can't touch src/backend) was
+    // never being enforced. With "default", canUseTool is the authoritative
+    // gate: returning allow short-circuits the operator prompt, returning
+    // deny rejects the call. Devs see no prompts in their normal flow
+    // because canUseTool returns allow for in-scope writes.
+    permissionMode: "default",
     abortController,
     maxBudgetUsd,
-    // canUseTool now only enforces file-path scope (out-of-zone Edit/Write).
-    // Tool-name deny is native via agent.disallowedTools.
-    canUseTool: buildCanUseTool(cfg.scope.denied, cfg.toolsDeny ?? []),
+    canUseTool: buildCanUseTool(cfg.scope.denied, cfg.toolsDeny ?? [], p.worktree),
     mcpServers: Object.fromEntries(
       Object.entries(p.mcpServers).map(([name, s]) => [
         name,
@@ -295,24 +301,33 @@ export function extractAssistantText(content: unknown): string {
 }
 
 /**
- * Two-layer runtime guard:
+ * Three-layer runtime guard:
  *
  *   1. **Tool-name deny** ("Edit", "mcp__pencil__*", "Bash") — blocked
  *      regardless of arguments. We *also* pass these in
  *      `AgentDefinition.disallowedTools`, but the SDK's enforcement
  *      isn't always reliable when an agent is selected via `agent: ...`
- *      on the main thread — observed Tech Lead invoking Write despite
- *      disallowedTools. canUseTool is the belt over the SDK's
+ *      on the main thread — canUseTool is the belt over the SDK's
  *      suspenders.
  *
- *   2. **File-path scope** — reject Edit/Write/MultiEdit when the
- *      target lands in a denied directory.
+ *   2. **Path confinement** — any tool that references a filesystem
+ *      path must stay inside `projectRoot`. Read/Write/Edit/Glob/Grep
+ *      inspect `file_path` / `path` / `pattern`; Bash gets its command
+ *      string scanned for absolute paths that escape the root. Stops
+ *      agents from `find /Users/jonya_ko/...` walking the whole home
+ *      directory looking for "examples".
+ *
+ *   3. **File-path scope** — reject Edit/Write/MultiEdit when the
+ *      target lands in a role's denied directory (e.g. frontend
+ *      trying to edit src/backend/**).
  */
 export function buildCanUseTool(
   deniedGlobs: string[],
   toolsDeny: string[] = [],
+  projectRoot?: string,
 ): CanUseTool | undefined {
-  if (deniedGlobs.length === 0 && toolsDeny.length === 0) return undefined;
+  if (deniedGlobs.length === 0 && toolsDeny.length === 0 && !projectRoot) return undefined;
+  const root = projectRoot ? path.resolve(projectRoot) : null;
 
   return async (toolName, input) => {
     for (const pattern of toolsDeny) {
@@ -320,6 +335,16 @@ export function buildCanUseTool(
         return {
           behavior: "deny",
           message: `Tool ${toolName} is not available to this role. Use signal-tool / task-tool to delegate to a specialist instead.`,
+        };
+      }
+    }
+
+    if (root) {
+      const escape = findPathEscape(toolName, input, root);
+      if (escape) {
+        return {
+          behavior: "deny",
+          message: `Path "${escape}" is outside the project root (${root}). Agents must stay within the project's working directory.`,
         };
       }
     }
@@ -345,4 +370,59 @@ export function buildCanUseTool(
 function matchesToolName(toolName: string, pattern: string): boolean {
   if (pattern.endsWith("*")) return toolName.startsWith(pattern.slice(0, -1));
   return toolName === pattern;
+}
+
+/**
+ * Inspect a tool call for any path argument that resolves outside the
+ * project root. Returns the offending path if found, null if everything
+ * is inside the sandbox. Heuristic for Bash — the command string can
+ * mention any number of absolute paths, we reject if any of them
+ * escapes. False positives (e.g. agent referencing `/etc/hosts` in
+ * a comment) are fine — agents shouldn't be quoting those anyway.
+ */
+function findPathEscape(toolName: string, input: unknown, root: string): string | null {
+  if (!input || typeof input !== "object") return null;
+  const v = input as Record<string, unknown>;
+
+  const candidates: string[] = [];
+  for (const k of ["file_path", "filePath", "path", "cwd", "directory"]) {
+    if (typeof v[k] === "string") candidates.push(v[k] as string);
+  }
+  // Glob/Grep patterns can be relative, but an absolute-path pattern
+  // means "look at this directory" — confine it.
+  if (toolName === "Glob" || toolName === "Grep") {
+    const p = v.pattern ?? v.path;
+    if (typeof p === "string" && p.startsWith("/")) candidates.push(p);
+  }
+  if (toolName === "Bash" && typeof v.command === "string") {
+    candidates.push(...extractAbsolutePaths(v.command));
+  }
+
+  for (const c of candidates) {
+    if (!isInsideRoot(c, root)) return c;
+  }
+  return null;
+}
+
+function isInsideRoot(target: string, root: string): boolean {
+  const abs = path.isAbsolute(target) ? path.resolve(target) : path.resolve(root, target);
+  return abs === root || abs.startsWith(root + path.sep);
+}
+
+/**
+ * Pull absolute paths out of a shell command. Catches `find /foo`,
+ * `ls -la /Users/...`, `cat /etc/passwd`. Quoted paths included.
+ * Bare `/` alone (the root) doesn't count — too many false positives
+ * in shell syntax (`s/x/y/`, etc).
+ */
+function extractAbsolutePaths(command: string): string[] {
+  const out: string[] = [];
+  // Match `/something-with-non-shell-special-chars` after whitespace,
+  // start-of-string, `=`, `:`, or a quote.
+  const re = /(?:^|[\s=:"'`])(\/(?:[^\s"'`)|;&<>]+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(command)) !== null) {
+    out.push(m[1]);
+  }
+  return out;
 }

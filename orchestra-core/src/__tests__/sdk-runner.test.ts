@@ -69,6 +69,45 @@ describe("sdk-runner — buildCanUseTool", () => {
     expect(buildCanUseTool([])).toBeUndefined();
     expect(buildCanUseTool([], [])).toBeUndefined();
   });
+
+  it("path-confinement: Read inside root is allowed", async () => {
+    const guard = buildCanUseTool([], [], "/proj/root")!;
+    const r = await guard("Read", { file_path: "/proj/root/src/app.ts" }, {} as never);
+    expect(r.behavior).toBe("allow");
+  });
+
+  it("path-confinement: Read outside root is denied", async () => {
+    const guard = buildCanUseTool([], [], "/proj/root")!;
+    const r = await guard("Read", { file_path: "/Users/jonya/secrets.env" }, {} as never);
+    expect(r.behavior).toBe("deny");
+    if (r.behavior === "deny") expect(r.message).toMatch(/outside the project root/);
+  });
+
+  it("path-confinement: relative paths are resolved against root", async () => {
+    const guard = buildCanUseTool([], [], "/proj/root")!;
+    const ok = await guard("Read", { file_path: "src/app.ts" }, {} as never);
+    expect(ok.behavior).toBe("allow");
+    const bad = await guard("Read", { file_path: "../escape/file" }, {} as never);
+    expect(bad.behavior).toBe("deny");
+  });
+
+  it("path-confinement: Bash command with `find /Users/...` is denied", async () => {
+    const guard = buildCanUseTool([], [], "/proj/root")!;
+    const r = await guard("Bash", { command: "find /Users/jonya -name package.json" }, {} as never);
+    expect(r.behavior).toBe("deny");
+  });
+
+  it("path-confinement: Bash command staying inside root is allowed", async () => {
+    const guard = buildCanUseTool([], [], "/proj/root")!;
+    const r = await guard("Bash", { command: "ls -la /proj/root/src && cat /proj/root/README.md" }, {} as never);
+    expect(r.behavior).toBe("allow");
+  });
+
+  it("path-confinement: Glob with absolute pattern outside root is denied", async () => {
+    const guard = buildCanUseTool([], [], "/proj/root")!;
+    const r = await guard("Glob", { pattern: "/etc/**" }, {} as never);
+    expect(r.behavior).toBe("deny");
+  });
 });
 
 describe("sdk-runner — extractText", () => {

@@ -44,6 +44,24 @@ export const agentConfigs: Record<AgentRole, AgentConfig> = {
       // both. (Observed: TL invoked [tool:Agent] then the subagent
       // spawned Bash/Write outside our canUseTool scope.)
       "Task", "Agent",
+      // ToolSearch is the SDK's deferred-tool loader. With Bash/Edit/etc
+      // disallowed, TL noticed they were missing and started spamming
+      // ToolSearch calls trying to re-discover their schemas. Schemas
+      // wouldn't help (the calls would still be denied) but it burns
+      // budget and confuses the chat log. Just remove the search.
+      "ToolSearch",
+      // TL has no business using Claude Code's internal todo list —
+      // orchestra has its own task system via the task-tool MCP. Having
+      // both around makes the model bounce between them.
+      "TodoWrite",
+      // Plan-mode is a Claude Code UX concept for the CLI; we're driving
+      // a non-interactive run and don't read plan-mode state. Letting TL
+      // toggle it just produces noise like [tool:EnterPlanMode].
+      "EnterPlanMode", "ExitPlanMode",
+      // AskUserQuestion routes through the CLI's interactive prompt UI.
+      // In our runtime there's no operator at the other end — TL should
+      // ask the user via its normal chat reply, not a separate tool.
+      "AskUserQuestion",
       // The pencil MCP is loaded globally (Claude Code plugin) — it's the
       // designer's surface. TL writing designs directly bypasses the flow.
       "mcp__pencil__*",

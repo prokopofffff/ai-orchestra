@@ -90,13 +90,26 @@ describe("sdk-runner — extractText", () => {
     expect(extractText(content)).toBe("First line\nSecond line");
   });
 
-  it("formats tool_use blocks as [tool:name] markers", () => {
+  it("formats tool_use blocks with an input summary", () => {
     const content = [
       { type: "text", text: "Reading the file..." },
       { type: "tool_use", name: "Read", input: { file_path: "x.ts" } },
       { type: "text", text: "Done." },
     ];
-    expect(extractText(content)).toBe("Reading the file...\n[tool:Read]\nDone.");
+    expect(extractText(content)).toBe("Reading the file...\n[tool:Read] x.ts\nDone.");
+  });
+
+  it("summarizes Bash by its command", () => {
+    const content = [{ type: "tool_use", name: "Bash", input: { command: "git status -s" } }];
+    expect(extractText(content)).toBe("[tool:Bash] git status -s");
+  });
+
+  it("summarizes Task/Agent by subagent_type + description", () => {
+    const content = [{
+      type: "tool_use", name: "Agent",
+      input: { subagent_type: "Explore", description: "look for the build script" },
+    }];
+    expect(extractText(content)).toBe("[tool:Agent] Explore — look for the build script");
   });
 
   it("skips blocks of unknown types", () => {

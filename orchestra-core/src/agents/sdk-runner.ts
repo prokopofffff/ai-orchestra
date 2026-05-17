@@ -223,7 +223,9 @@ function logMessage(p: SdkRunInput, m: SDKMessage): void {
 /**
  * Full extractor — text blocks + `[tool:Name]` markers for tool_use.
  * Used by the agent_logs stream where the operator wants to see what
- * the model is doing step by step.
+ * the model is doing step by step. Includes a short summary of the
+ * tool's input so a stream of `[tool:Bash]` lines is actually useful
+ * for debugging — operator sees the command, not just "ran Bash".
  */
 export function extractText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -233,10 +235,45 @@ export function extractText(content: unknown): string {
     if (typeof block === "object" && block && "type" in block) {
       const b = block as { type: string; text?: string; name?: string; input?: unknown };
       if (b.type === "text" && b.text) parts.push(b.text);
-      else if (b.type === "tool_use" && b.name) parts.push(`[tool:${b.name}]`);
+      else if (b.type === "tool_use" && b.name) {
+        const summary = summarizeToolInput(b.name, b.input);
+        parts.push(summary ? `[tool:${b.name}] ${summary}` : `[tool:${b.name}]`);
+      }
     }
   }
   return parts.join("\n");
+}
+
+/**
+ * Pull the operator-relevant field out of a tool_use input. Per-tool
+ * because the "interesting" key varies — Bash has `command`, Edit/Write
+ * have `file_path`, Task/Agent have `description` + `subagent_type`.
+ * Falls back to a compact JSON snippet for unknown tools.
+ */
+function summarizeToolInput(name: string, input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const v = input as Record<string, unknown>;
+  const trim = (s: unknown, max = 160): string => {
+    const str = typeof s === "string" ? s : JSON.stringify(s);
+    if (!str) return "";
+    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  };
+
+  if (name === "Bash") return trim(v.command);
+  if (name === "Read") return trim(v.file_path ?? v.filePath, 200);
+  if (name === "Write" || name === "Edit" || name === "MultiEdit" || name === "NotebookEdit") {
+    return trim(v.file_path ?? v.filePath, 200);
+  }
+  if (name === "Glob" || name === "Grep") return trim(v.pattern ?? v.query);
+  if (name === "Task" || name === "Agent") {
+    const subtype = v.subagent_type ?? v.subagentType;
+    const desc = v.description;
+    return [subtype, desc].filter(Boolean).map((s) => trim(s, 120)).join(" — ");
+  }
+  if (name === "WebFetch") return trim(v.url, 200);
+
+  // Generic fallback: stringified input, capped.
+  return trim(v, 160);
 }
 
 /**

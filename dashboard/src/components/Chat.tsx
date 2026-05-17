@@ -48,7 +48,15 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
 
       <div className="chat-messages flex-1 min-h-0 overflow-y-auto px-8 py-6 flex flex-col gap-5 justify-end">
         {messages?.map((m) => <ChatMessage key={m.id} message={m} />)}
-        {activity?.active && <ThinkingIndicator label={activity.latestActivity} />}
+        {activity?.active && (
+          <ThinkingIndicator
+            label={activity.latestActivity}
+            onStop={async () => {
+              await api.stopChatRun(projectId);
+              await queryClient.invalidateQueries({ queryKey: ["chat-activity", projectId] });
+            }}
+          />
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -83,9 +91,10 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
  * Animated "TL is thinking" bubble that appears below the message list
  * whenever a Tech Lead session is running for the current project.
  * Shows the latest action (tool call or assistant text fragment) so the
- * user knows the agent is actively working — not stuck.
+ * user knows the agent is actively working — and lets them stop it if
+ * it's clearly off the rails (looping, scaffolding the wrong thing).
  */
-function ThinkingIndicator({ label }: { label: string | null }) {
+function ThinkingIndicator({ label, onStop }: { label: string | null; onStop: () => void | Promise<void> }) {
   return (
     <div className="chat-thinking self-start flex max-w-[70%] flex-col gap-1">
       <div className="msg-header flex items-center gap-2 text-[11px] text-text-tertiary font-mono">
@@ -99,7 +108,16 @@ function ThinkingIndicator({ label }: { label: string | null }) {
           <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" style={{ animationDelay: "150ms" }} />
           <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" style={{ animationDelay: "300ms" }} />
         </span>
-        <span className="text-[13px] truncate">{label ?? "thinking…"}</span>
+        <span className="text-[13px] truncate flex-1">{label ?? "thinking…"}</span>
+        <button
+          type="button"
+          onClick={() => { void onStop(); }}
+          className="text-[11px] font-medium text-accent-red hover:text-accent-red/80 px-2 py-0.5 border border-accent-red/40 hover:border-accent-red transition-colors shrink-0"
+          aria-label="Stop the Tech Lead run"
+          title="Stop the Tech Lead run"
+        >
+          Stop
+        </button>
       </div>
     </div>
   );

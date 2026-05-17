@@ -206,6 +206,10 @@ export type ChatActivity = z.infer<typeof ChatActivitySchema>;
 export const fetchChatActivity = (projectId: string): Promise<ChatActivity> =>
   getValidated(`/conversations/${projectId}/activity`, ChatActivitySchema);
 
+const StopSchema = z.object({ stopped: z.boolean() });
+export const stopChatRun = (projectId: string) =>
+  postValidated(`/conversations/${projectId}/stop`, {}, StopSchema);
+
 // Queue
 export const fetchQueueStatus = (): Promise<QueueStatus> =>
   getValidated("/queue/status", QueueStatusSchema);

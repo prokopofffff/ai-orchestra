@@ -38,10 +38,12 @@ export const agentConfigs: Record<AgentRole, AgentConfig> = {
       // exactly the failure we keep seeing: instead of writing tasks, TL
       // does the work itself.
       "Bash",
-      // No Task subagent — orchestra has its own delegation flow via the
-      // signal-tool MCP. Using the SDK's Task tool would create a parallel
-      // in-process agent we have no visibility or control over.
-      "Task",
+      // No subagent spawning. Orchestra has its own delegation flow via
+      // the signal-tool MCP. The SDK exposes the same capability under
+      // *both* "Task" and "Agent" depending on plugin/version — block
+      // both. (Observed: TL invoked [tool:Agent] then the subagent
+      // spawned Bash/Write outside our canUseTool scope.)
+      "Task", "Agent",
       // The pencil MCP is loaded globally (Claude Code plugin) — it's the
       // designer's surface. TL writing designs directly bypasses the flow.
       "mcp__pencil__*",

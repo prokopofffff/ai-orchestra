@@ -4,7 +4,7 @@ import { and, desc, eq, lt } from "drizzle-orm";
 import { getDb } from "./db";
 import { conversations, messages, sessions, agentLogs } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
-import { dispatchTechLead } from "./tech-lead-dispatcher";
+import { dispatchTechLead, interruptTechLead } from "./tech-lead-dispatcher";
 import { loadConfig } from "./config";
 import { background } from "./error-handler";
 import { MessageSchema, type Message as SharedMessage } from "@ai-orchestra/shared";
@@ -20,12 +20,15 @@ export type Message = SharedMessage;
  * indicator stays tidy.
  */
 function humanizeActivity(raw: string): string {
-  const m = raw.match(/^\[tool:([^\]]+)\]/);
+  // New log format is `[tool:Name] short summary` (e.g. `[tool:Bash] ls -la`).
+  // Surface both so the chat indicator hints at the actual operation,
+  // not just the tool name.
+  const m = raw.match(/^\[tool:([^\]]+)\]\s*(.*)$/);
   if (m) {
-    const tool = m[1];
-    // Drop the `mcp__server__` prefix to surface just the action.
-    const pretty = tool.replace(/^mcp__[^_]+__/, "");
-    return `Using ${pretty}`;
+    const tool = m[1].replace(/^mcp__[^_]+__/, "");
+    const summary = m[2].trim();
+    const text = summary ? `${tool} · ${summary}` : tool;
+    return `Using ${text}`.length > 100 ? `Using ${text}`.slice(0, 97) + "…" : `Using ${text}`;
   }
   const trimmed = raw.replace(/\s+/g, " ").trim();
   return trimmed.length > 100 ? trimmed.slice(0, 97) + "…" : trimmed;
@@ -122,6 +125,22 @@ export const conversationPlugin: FastifyPluginAsync = async (app) => {
       latestActivity,
       sinceMs: Date.now() - session.startedAt.getTime(),
     };
+  });
+
+  /**
+   * Interrupt the active Tech Lead conversation. Edit-permission gated
+   * because it spends budget to be running and the user is making a
+   * decision about the project. Returns whether an interrupt actually
+   * happened — false means there was nothing in flight.
+   */
+  app.post<{ Params: { projectId: string } }>("/conversations/:projectId/stop", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.projectId;
+    if (!(await userCanEditProject(userId, projectId))) {
+      return reply.code(403).send({ error: "Insufficient permissions on project" });
+    }
+    const stopped = await interruptTechLead(projectId);
+    return { stopped };
   });
 
   // ─── Send message from Dashboard ───

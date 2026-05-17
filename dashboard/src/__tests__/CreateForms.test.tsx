@@ -1,13 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CreateForms } from "../components/CreateForms";
+import { ProjectProvider } from "../contexts/ProjectContext";
 import * as api from "../api";
 import type { Project, Task } from "../types";
+import type { ReactNode } from "react";
 
 vi.mock("../api");
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  // ProjectProvider mounts a useQuery on /projects — give it a stable
+  // empty list so tests don't see a hanging "loading" or hit the
+  // unmocked api.fetchProjects.
+  vi.mocked(api.fetchProjects).mockResolvedValue([]);
+});
+
+/** Wrap CreateForms in the context plumbing it now requires (ProjectContext
+ *  → QueryClient). Each test gets a fresh QueryClient so cache state doesn't
+ *  bleed across cases. */
+function wrap(ui: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ProjectProvider>{ui}</ProjectProvider>
+    </QueryClientProvider>,
+  );
+}
 
 const fakeProject: Project = {
   id: "p1", name: "P", slug: "p", repoUrl: null, localPath: null, description: null,
@@ -23,20 +44,20 @@ const fakeTask: Task = {
 
 describe("CreateForms", () => {
   it("renders only + Project when no projectId is provided", () => {
-    render(<CreateForms projectId="" onCreated={() => {}} />);
+    wrap(<CreateForms projectId="" onCreated={() => {}} />);
     expect(screen.getByRole("button", { name: "+ Project" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Task" })).toBeNull();
   });
 
   it("renders + Task when projectId is provided", () => {
-    render(<CreateForms projectId="p1" onCreated={() => {}} />);
+    wrap(<CreateForms projectId="p1" onCreated={() => {}} />);
     expect(screen.getByRole("button", { name: "+ Task" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "+ Project" })).toBeInTheDocument();
   });
 
   it("toggles the project form on + Project click", async () => {
     const user = userEvent.setup();
-    render(<CreateForms projectId="p1" onCreated={() => {}} />);
+    wrap(<CreateForms projectId="p1" onCreated={() => {}} />);
     expect(screen.queryByPlaceholderText("Project name")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "+ Project" }));
@@ -50,7 +71,7 @@ describe("CreateForms", () => {
     vi.mocked(api.createProject).mockResolvedValue(fakeProject);
     const onCreated = vi.fn();
     const user = userEvent.setup();
-    render(<CreateForms projectId="" onCreated={onCreated} />);
+    wrap(<CreateForms projectId="" onCreated={onCreated} />);
 
     await user.click(screen.getByRole("button", { name: "+ Project" }));
     await user.type(screen.getByPlaceholderText("Project name"), "My Project");
@@ -67,7 +88,7 @@ describe("CreateForms", () => {
   it("omits localPath when left empty", async () => {
     vi.mocked(api.createProject).mockResolvedValue(fakeProject);
     const user = userEvent.setup();
-    render(<CreateForms projectId="" onCreated={() => {}} />);
+    wrap(<CreateForms projectId="" onCreated={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: "+ Project" }));
     await user.type(screen.getByPlaceholderText("Project name"), "Bare");
@@ -83,7 +104,7 @@ describe("CreateForms", () => {
     vi.mocked(api.createTask).mockResolvedValue(fakeTask);
     const onCreated = vi.fn();
     const user = userEvent.setup();
-    render(<CreateForms projectId="p1" onCreated={onCreated} />);
+    wrap(<CreateForms projectId="p1" onCreated={onCreated} />);
 
     await user.click(screen.getByRole("button", { name: "+ Task" }));
     await user.type(screen.getByPlaceholderText("Task title"), "Fix bug");
@@ -108,7 +129,7 @@ describe("CreateForms", () => {
 
   it("does not submit an empty task title", async () => {
     const user = userEvent.setup();
-    render(<CreateForms projectId="p1" onCreated={() => {}} />);
+    wrap(<CreateForms projectId="p1" onCreated={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: "+ Task" }));
     await user.click(screen.getByRole("button", { name: "Create Task" }));

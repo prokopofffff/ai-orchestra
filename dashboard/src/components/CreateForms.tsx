@@ -1,5 +1,6 @@
 import { useState } from "react";
 import * as api from "../api";
+import { useProjectContext } from "../contexts/ProjectContext";
 import { Button } from "./ui/Button";
 import { PlusIcon } from "./ui/Icon";
 import { FolderPicker } from "./FolderPicker";
@@ -58,6 +59,7 @@ export function CreateForms({ projectId, onCreated }: Props) {
 }
 
 function ProjectForm({ onCreated }: { onCreated: () => void }) {
+  const { createProject } = useProjectContext();
   const [name, setName] = useState("");
   const [localPath, setLocalPath] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -65,7 +67,11 @@ function ProjectForm({ onCreated }: { onCreated: () => void }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    await api.createProject({ name, localPath: localPath || undefined });
+    // Goes through ProjectContext.createProject so the new project lands
+    // in the cache AND becomes the selected project before this handler
+    // returns. Routes gated on `project` (Kanban / Chat / Logs / Settings)
+    // flip from EmptyProjects to the project view on the very next paint.
+    await createProject({ name, localPath: localPath || undefined });
     setName("");
     setLocalPath("");
     onCreated();

@@ -12,7 +12,7 @@ import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir } from "./repo-manager";
-import { extractText, extractAssistantText, buildCanUseTool } from "./agents/sdk-runner";
+import { extractText, extractAssistantText, buildCanUseTool, type DenyStreak } from "./agents/sdk-runner";
 import { getAgentConfig } from "./agents/configs";
 import { buildAgentDefinitions } from "./agents/role-definitions";
 import { providerFor } from "./providers";
@@ -114,6 +114,13 @@ async function runTechLead(p: {
 
   const agents = buildAgentDefinitions({ pencilEnabled: p.pencilEnabled });
   const tlCfg = getAgentConfig("tech-lead");
+  // Deny-streak abort: when canUseTool denies the same kind of tool
+  // call 3 times in a row, TL is clearly stuck in a "find another way
+  // to write" loop. Pull the cord and stop burning budget. We can't
+  // pass an AbortController to the SDK from this dispatcher (the
+  // stream object doesn't expose one), so we capture the deny event
+  // and call stream.interrupt() at the next message boundary.
+  let tooManyDenies: DenyStreak | null = null;
   const stream = query({
     prompt: p.userTurn,
     options: {
@@ -130,7 +137,10 @@ async function runTechLead(p: {
       // canUseTool then catches anything that somehow slips through and
       // enforces the path-confinement sandbox.
       disallowedTools: tlCfg.toolsDeny ?? [],
-      canUseTool: buildCanUseTool(tlCfg.scope.denied, tlCfg.toolsDeny ?? [], p.workDir),
+      canUseTool: buildCanUseTool(
+        tlCfg.scope.denied, tlCfg.toolsDeny ?? [], p.workDir,
+        (streak) => { tooManyDenies = streak; },
+      ),
       mcpServers: Object.fromEntries(
         Object.entries(p.mcpServers).map(([name, s]) => [
           name,
@@ -167,6 +177,22 @@ async function runTechLead(p: {
             break;
           }
         }
+      }
+      // canUseTool flagged a deny streak — TL is hammering denied tools.
+      // Pull the cord and surface what it tried so the operator can see.
+      // Cast away the closure-mutated narrowing — TS thinks tooManyDenies
+      // is always null because only the assignment from canUseTool's
+      // callback mutates it, and the analyzer can't see across that boundary.
+      const denies = tooManyDenies as DenyStreak | null;
+      if (denies && !violation) {
+        const breakdown = Array.from(denies.byTool.entries())
+          .map(([t, n]) => `${t}×${n}`)
+          .join(", ");
+        violation = `${denies.total} denied tool calls in a row (${breakdown})`;
+        appendLog(p.projectId, p.sessionId, "tech-lead", "error",
+          `RUN ABORTED: ${violation}. TL was looping on denied tools instead of using task-tool / signal-tool.`);
+        await stream.interrupt().catch(() => { /* already over */ });
+        break;
       }
     }
     await updateSession(p.sessionId, {

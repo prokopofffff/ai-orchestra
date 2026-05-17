@@ -62,6 +62,25 @@ export const agentConfigs: Record<AgentRole, AgentConfig> = {
       // In our runtime there's no operator at the other end — TL should
       // ask the user via its normal chat reply, not a separate tool.
       "AskUserQuestion",
+      // Skill is the slash-command runner — `/commit`, `/test`, etc.
+      // Observed: TL invoked `[tool:Skill] {"skill":"commit","args":"--allow-empty -m ..."}`
+      // to slip past the Bash deny. Any skill that mutates state needs
+      // the underlying tool we already denied, so this is just a wrapper
+      // escape hatch.
+      "Skill",
+      // Sibling Bash tools — separate names in newer SDK versions. If
+      // KillBash and BashOutput live, they let the model peek into and
+      // terminate Bash processes (which it shouldn't be running anyway).
+      "BashOutput", "KillBash",
+      // The model doesn't need to browse the web for orchestrator work;
+      // WebFetch (whitelisted in the prompt) covers reference lookups.
+      "WebSearch",
+      // Background-process monitor / external triggers / push notifs —
+      // surface area we don't want exposed to a planning agent.
+      "Monitor", "RemoteTrigger", "PushNotification",
+      // IDE diagnostics & Claude.ai mail/calendar are clearly off-mission
+      // and load through cluster-wide MCP plugins.
+      "mcp__ide__*", "mcp__claude_ai_*",
       // The pencil MCP is loaded globally (Claude Code plugin) — it's the
       // designer's surface. TL writing designs directly bypasses the flow.
       "mcp__pencil__*",

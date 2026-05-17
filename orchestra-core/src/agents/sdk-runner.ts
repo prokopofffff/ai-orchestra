@@ -320,17 +320,36 @@ export function extractAssistantText(content: unknown): string {
  *      target lands in a role's denied directory (e.g. frontend
  *      trying to edit src/backend/**).
  */
+export type DenyStreak = {
+  /** Total denials issued by this run's canUseTool so far. */
+  total: number;
+  /** Per-tool counts — surfaced in the abort message for diagnostics. */
+  byTool: Map<string, number>;
+};
+
 export function buildCanUseTool(
   deniedGlobs: string[],
   toolsDeny: string[] = [],
   projectRoot?: string,
+  onTooManyDenies?: (streak: DenyStreak) => void,
+  maxDenies = 3,
 ): CanUseTool | undefined {
   if (deniedGlobs.length === 0 && toolsDeny.length === 0 && !projectRoot) return undefined;
   const root = projectRoot ? path.resolve(projectRoot) : null;
+  const streak: DenyStreak = { total: 0, byTool: new Map() };
+
+  const recordDeny = (toolName: string): void => {
+    streak.total++;
+    streak.byTool.set(toolName, (streak.byTool.get(toolName) ?? 0) + 1);
+    // Fire once on crossing the threshold — caller (the run loop) will
+    // call abortController.abort and the SDK loop unwinds.
+    if (streak.total === maxDenies && onTooManyDenies) onTooManyDenies(streak);
+  };
 
   return async (toolName, input) => {
     for (const pattern of toolsDeny) {
       if (matchesToolName(toolName, pattern)) {
+        recordDeny(toolName);
         return {
           behavior: "deny",
           message: `Tool ${toolName} is not available to this role. Use signal-tool / task-tool to delegate to a specialist instead.`,
@@ -341,6 +360,7 @@ export function buildCanUseTool(
     if (root) {
       const escape = findPathEscape(toolName, input, root);
       if (escape) {
+        recordDeny(toolName);
         return {
           behavior: "deny",
           message: `Path "${escape}" is outside the project root (${root}). Agents must stay within the project's working directory.`,
@@ -356,6 +376,7 @@ export function buildCanUseTool(
 
     for (const pattern of deniedGlobs) {
       if (minimatch(filePath, pattern) || minimatch(filePath, `**/${pattern}`)) {
+        recordDeny(toolName);
         return {
           behavior: "deny",
           message: `Path ${filePath} is outside this role's scope (denied: ${pattern})`,

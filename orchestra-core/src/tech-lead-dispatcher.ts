@@ -121,14 +121,15 @@ async function runTechLead(p: {
       agents,
       model: p.model,
       cwd: p.workDir,
-      // permissionMode: "default" — NOT "bypassPermissions". The bypass mode
-      // skips the SDK's permission flow entirely, which includes our
-      // canUseTool callback AND AgentDefinition.disallowedTools. With
-      // "default", canUseTool becomes the authoritative approver: when it
-      // returns allow no operator prompt is shown, when it returns deny
-      // the tool call is rejected immediately. This is the gate that
-      // actually keeps TL from invoking Write/Bash/Edit.
       permissionMode: "default",
+      // Options-level disallowedTools STRIPS these names from the model's
+      // available tool set — the LLM never sees "Bash" or "Write" as
+      // callable. Per the SDK docs this is stronger than the agent-level
+      // AgentDefinition.disallowedTools (which proved unreliable for the
+      // main-thread agent — model still emitted [tool:Bash] calls).
+      // canUseTool then catches anything that somehow slips through and
+      // enforces the path-confinement sandbox.
+      disallowedTools: tlCfg.toolsDeny ?? [],
       canUseTool: buildCanUseTool(tlCfg.scope.denied, tlCfg.toolsDeny ?? [], p.workDir),
       mcpServers: Object.fromEntries(
         Object.entries(p.mcpServers).map(([name, s]) => [

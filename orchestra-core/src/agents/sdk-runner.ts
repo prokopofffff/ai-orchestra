@@ -92,16 +92,15 @@ export async function runAgentSdk(p: SdkRunInput): Promise<SdkRunOutcome> {
     effort: p.effort,
     cwd: p.worktree,
     resume: p.resumeSessionId,
-    // permissionMode: "default" — see tech-lead-dispatcher for the rationale.
-    // bypassPermissions silently disables canUseTool AND disallowedTools, so
-    // a role's file-path scope (e.g. frontend can't touch src/backend) was
-    // never being enforced. With "default", canUseTool is the authoritative
-    // gate: returning allow short-circuits the operator prompt, returning
-    // deny rejects the call. Devs see no prompts in their normal flow
-    // because canUseTool returns allow for in-scope writes.
     permissionMode: "default",
     abortController,
     maxBudgetUsd,
+    // Options-level deny strips these names from the model's tool set
+    // before generation — strictly stronger than AgentDefinition-level
+    // deny (which the SDK enforces inconsistently for the selected agent).
+    // For dev roles toolsDeny is currently empty, but plumbing it here
+    // makes role-specific deny lists actually load-bearing if we add any.
+    disallowedTools: cfg.toolsDeny ?? [],
     canUseTool: buildCanUseTool(cfg.scope.denied, cfg.toolsDeny ?? [], p.worktree),
     mcpServers: Object.fromEntries(
       Object.entries(p.mcpServers).map(([name, s]) => [

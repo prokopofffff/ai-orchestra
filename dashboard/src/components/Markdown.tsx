@@ -69,8 +69,10 @@ const components: Components = {
 
 export function Markdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-      {children}
-    </ReactMarkdown>
+    <div className="markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {children}
+      </ReactMarkdown>
+    </div>
   );
 }

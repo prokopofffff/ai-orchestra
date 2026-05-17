@@ -53,3 +53,38 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* Markdown rendering inside chat bubbles. Tailwind 4 + react-markdown
+ * needs explicit cascade rules here because the Tailwind `prose` plugin
+ * isn't loaded and we don't want to pull it in just for this. The
+ * .markdown-body wrapper scopes all the structural defaults; bubble-
+ * specific overrides (e.g. white-on-blue user bubble) live further down. */
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0.375rem 0; }
+.markdown-body p:first-child { margin-top: 0; }
+.markdown-body p:last-child { margin-bottom: 0; }
+
+/* User bubble: white text on accent-blue. Inline code and links need
+ * lighter chrome so they read against the blue background. */
+.user-bubble .markdown-body code {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+.user-bubble .markdown-body a {
+  color: #ffffff;
+  text-decoration: underline;
+}
+.user-bubble .markdown-body pre {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.user-bubble .markdown-body blockquote {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.85);
+}
+.user-bubble .markdown-body table th,
+.user-bubble .markdown-body table td {
+  border-color: rgba(255, 255, 255, 0.25);
+}

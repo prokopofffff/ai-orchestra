@@ -172,11 +172,6 @@ function ChatMessage({ message }: { message: Message }) {
   }
 
   const align = role === "user" ? "self-end items-end" : "self-start items-start";
-  // User bubbles stay flat text — markdown rendering inside a blue bubble
-  // looks weird with default styles (white-on-blue underlines etc), and
-  // users rarely write markdown anyway. Agent replies get the full
-  // Markdown treatment since that's where headings/lists/tables come from.
-  const useMarkdown = role !== "user";
 
   return (
     <div className={`chat-msg msg-${role} flex max-w-[70%] flex-col gap-1 ${align}`}>
@@ -190,13 +185,12 @@ function ChatMessage({ message }: { message: Message }) {
       <div
         className={[
           "msg-text text-sm px-3.5 py-2.5",
-          useMarkdown ? "" : "whitespace-pre-wrap",
           role === "user"
-            ? "bg-accent-blue text-white"
+            ? "bg-accent-blue text-white user-bubble"
             : "bg-bg-input text-text-primary border border-border-subtle",
         ].join(" ")}
       >
-        {useMarkdown ? <Markdown>{message.text}</Markdown> : message.text}
+        <Markdown>{message.text}</Markdown>
       </div>
     </div>
   );

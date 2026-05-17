@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
 import type { Message } from "../types";
 import { MoreVerticalIcon, SendIcon } from "./ui/Icon";
+import { Markdown } from "./Markdown";
 
 interface Props {
   projectId: string;
@@ -163,14 +164,19 @@ function ChatMessage({ message }: { message: Message }) {
           <span>·</span>
           <span>{time}</span>
         </div>
-        <div className="msg-text text-xs italic text-text-tertiary whitespace-pre-wrap">
-          {message.text}
+        <div className="msg-text text-xs italic text-text-tertiary">
+          <Markdown>{message.text}</Markdown>
         </div>
       </div>
     );
   }
 
   const align = role === "user" ? "self-end items-end" : "self-start items-start";
+  // User bubbles stay flat text — markdown rendering inside a blue bubble
+  // looks weird with default styles (white-on-blue underlines etc), and
+  // users rarely write markdown anyway. Agent replies get the full
+  // Markdown treatment since that's where headings/lists/tables come from.
+  const useMarkdown = role !== "user";
 
   return (
     <div className={`chat-msg msg-${role} flex max-w-[70%] flex-col gap-1 ${align}`}>
@@ -183,13 +189,14 @@ function ChatMessage({ message }: { message: Message }) {
       </div>
       <div
         className={[
-          "msg-text text-sm whitespace-pre-wrap px-3.5 py-2.5",
+          "msg-text text-sm px-3.5 py-2.5",
+          useMarkdown ? "" : "whitespace-pre-wrap",
           role === "user"
             ? "bg-accent-blue text-white"
             : "bg-bg-input text-text-primary border border-border-subtle",
         ].join(" ")}
       >
-        {message.text}
+        {useMarkdown ? <Markdown>{message.text}</Markdown> : message.text}
       </div>
     </div>
   );

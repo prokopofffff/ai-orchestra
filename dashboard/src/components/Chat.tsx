@@ -13,7 +13,7 @@ interface Props {
   title?: string;
 }
 
-export function Chat({ projectId, title = "Conversation" }: Props) {
+export function Chat({ projectId, title = "Диалог" }: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -64,7 +64,7 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
 
       <div data-tour="chat.input" className="chat-input h-[72px] shrink-0 bg-bg-surface border-t border-border px-6 flex items-center gap-3">
         <select
-          aria-label="Agent"
+          aria-label="Агент"
           className="h-10 bg-bg-input border border-border px-3 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-blue"
           defaultValue="tech-lead"
         >
@@ -75,10 +75,10 @@ export function Chat({ projectId, title = "Conversation" }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSend()}
-          placeholder="Message Tech Lead..."
+          placeholder="Сообщение для Tech Lead..."
         />
         <button
-          aria-label="Send"
+          aria-label="Отправить"
           onClick={handleSend}
           className="h-10 w-10 grid place-items-center bg-accent-blue text-white hover:bg-accent-blue/90 transition-colors"
         >
@@ -102,7 +102,7 @@ function ThinkingIndicator({ label, onStop }: { label: string | null; onStop: ()
       <div className="msg-header flex items-center gap-2 text-[11px] text-text-tertiary font-mono">
         <span className="msg-author font-semibold text-text-secondary">Tech Lead</span>
         <span>·</span>
-        <span>thinking</span>
+        <span>думает</span>
       </div>
       <div className="thinking-bubble flex items-center gap-2 bg-bg-input text-text-secondary border border-border-subtle px-3.5 py-2.5 text-sm">
         <span className="thinking-dots inline-flex gap-1" aria-hidden="true">
@@ -110,15 +110,15 @@ function ThinkingIndicator({ label, onStop }: { label: string | null; onStop: ()
           <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" style={{ animationDelay: "150ms" }} />
           <span className="dot h-1.5 w-1.5 rounded-full bg-text-tertiary animate-pulse" style={{ animationDelay: "300ms" }} />
         </span>
-        <span className="text-[13px] truncate flex-1">{label ?? "thinking…"}</span>
+        <span className="text-[13px] truncate flex-1">{label ?? "думает…"}</span>
         <button
           type="button"
           onClick={() => { void onStop(); }}
           className="text-[11px] font-medium text-accent-red hover:text-accent-red/80 px-2 py-0.5 border border-accent-red/40 hover:border-accent-red transition-colors shrink-0"
-          aria-label="Stop the Tech Lead run"
-          title="Stop the Tech Lead run"
+          aria-label="Остановить запуск Tech Lead"
+          title="Остановить запуск Tech Lead"
         >
-          Stop
+          Остановить
         </button>
       </div>
     </div>
@@ -133,11 +133,11 @@ function ChatHeader({ title }: { title: string }) {
       </div>
       <div className="flex flex-col min-w-0">
         <span className="text-[13px] font-medium text-text-primary truncate">{title}</span>
-        <span className="font-mono text-[11px] text-accent-green">running</span>
+        <span className="font-mono text-[11px] text-accent-green">работает</span>
       </div>
       <AutoMergeToggle />
       <button
-        aria-label="More"
+        aria-label="Ещё"
         className="text-text-tertiary hover:text-text-primary"
       >
         <MoreVerticalIcon size={18} />
@@ -188,10 +188,10 @@ function AutoMergeToggle() {
     }
   }
 
-  const label = enabled ? "Auto-merge: ON" : "Auto-merge: OFF";
+  const label = enabled ? "Авто-мерж: ВКЛ" : "Авто-мерж: ВЫКЛ";
   const help = enabled
-    ? "Approved PRs merge automatically. Toggle off if you want to review and merge manually."
-    : "Approved PRs wait for you to merge manually in GitHub/GitLab. Toggle on to let orchestra merge them for you.";
+    ? "Одобренные PR мерджатся автоматически. Отключите, если хотите проверять и мерджить вручную."
+    : "Одобренные PR ждут, пока вы смерджите их вручную в GitHub/GitLab. Включите, чтобы orchestra мерджила за вас.";
 
   return (
     <button
@@ -228,7 +228,7 @@ function ChatMessage({ message }: { message: Message }) {
       ? "agent"
       : "system";
 
-  const label = role === "user" ? "You" : role === "agent" ? "Tech Lead" : "System";
+  const label = role === "user" ? "Вы" : role === "agent" ? "Tech Lead" : "Система";
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   if (role === "system") {

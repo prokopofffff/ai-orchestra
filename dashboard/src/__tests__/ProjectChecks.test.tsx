@@ -29,8 +29,8 @@ describe("ProjectChecks", () => {
 
     render(<ProjectChecks projectId="p1" />);
 
-    await screen.findByText(/Project Checks/);
-    const usingDefault = await screen.findAllByText("Using role default.");
+    await screen.findByText(/Проверки проекта/);
+    const usingDefault = await screen.findAllByText("Используются значения роли по умолчанию.");
     // Six roles, all empty → six "default" placeholders
     expect(usingDefault).toHaveLength(6);
   });
@@ -49,10 +49,10 @@ describe("ProjectChecks", () => {
 
     render(<ProjectChecks projectId="p1" />);
 
-    await screen.findByText("override");
+    await screen.findByText("переопределено");
     expect(screen.getByDisplayValue("ci")).toBeInTheDocument();
     expect(screen.getByDisplayValue("pnpm ci")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("alert")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("тревога")).toBeInTheDocument();
   });
 
   it("Add check appends a row scoped to that role", async () => {
@@ -60,14 +60,14 @@ describe("ProjectChecks", () => {
     const user = userEvent.setup();
 
     render(<ProjectChecks projectId="p1" />);
-    await screen.findByText(/Project Checks/);
+    await screen.findByText(/Проверки проекта/);
 
     // Each role has its own "+ Add check" button — pick the first (tech-lead).
-    const addButtons = screen.getAllByRole("button", { name: "+ Add check" });
+    const addButtons = screen.getAllByRole("button", { name: "+ Добавить проверку" });
     await user.click(addButtons[0]);
 
     // A name input appears for the new row
-    expect(screen.getByPlaceholderText("e.g. tsc")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("напр. tsc")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("glob")).toBeInTheDocument();
   });
 
@@ -77,11 +77,11 @@ describe("ProjectChecks", () => {
     const user = userEvent.setup();
 
     render(<ProjectChecks projectId="p1" />);
-    await screen.findByText(/Project Checks/);
+    await screen.findByText(/Проверки проекта/);
 
     // Add a row to the first role then leave it empty (no name/command).
-    await user.click(screen.getAllByRole("button", { name: "+ Add check" })[0]);
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getAllByRole("button", { name: "+ Добавить проверку" })[0]);
+    await user.click(screen.getByRole("button", { name: "Сохранить" }));
 
     await waitFor(() => {
       expect(api.updateProject).toHaveBeenCalledWith("p1", {
@@ -89,7 +89,7 @@ describe("ProjectChecks", () => {
         settings: { checks: {} },
       });
     });
-    await screen.findByText("Saved");
+    await screen.findByText("Сохранено");
   });
 
   it("Save passes complete rows through and preserves other settings keys", async () => {
@@ -101,14 +101,14 @@ describe("ProjectChecks", () => {
     const user = userEvent.setup();
 
     render(<ProjectChecks projectId="p1" />);
-    await screen.findByText(/Project Checks/);
+    await screen.findByText(/Проверки проекта/);
 
     // Add a row and fill it in for the first role (tech-lead).
-    await user.click(screen.getAllByRole("button", { name: "+ Add check" })[0]);
-    await user.type(screen.getByPlaceholderText("e.g. tsc"), "tsc");
+    await user.click(screen.getAllByRole("button", { name: "+ Добавить проверку" })[0]);
+    await user.type(screen.getByPlaceholderText("напр. tsc"), "tsc");
     await user.type(screen.getByPlaceholderText("pnpm exec tsc --noEmit"), "pnpm tsc");
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Сохранить" }));
 
     await waitFor(() => {
       expect(api.updateProject).toHaveBeenCalledWith("p1", {
@@ -139,10 +139,10 @@ describe("ProjectChecks", () => {
     const user = userEvent.setup();
 
     render(<ProjectChecks projectId="p1" />);
-    await screen.findByText("override");
+    await screen.findByText("переопределено");
 
-    await user.click(screen.getByRole("button", { name: "Reset" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Сбросить" }));
+    await user.click(screen.getByRole("button", { name: "Сохранить" }));
 
     await waitFor(() => {
       expect(api.updateProject).toHaveBeenCalledWith("p1", {

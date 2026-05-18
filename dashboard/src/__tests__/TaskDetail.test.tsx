@@ -97,7 +97,7 @@ describe("TaskDetail", () => {
 
     expect(await screen.findByText("TL note")).toBeInTheDocument();
     expect(screen.getByText("dev question")).toBeInTheDocument();
-    expect(screen.getByText("Comments (2)")).toBeInTheDocument();
+    expect(screen.getByText("Комментарии (2)")).toBeInTheDocument();
   });
 
   it("adds a comment and clears the input", async () => {
@@ -109,9 +109,9 @@ describe("TaskDetail", () => {
     renderWithQuery(<TaskDetail taskId="t1" onClose={() => {}} />);
     await screen.findByText("Implement login");
 
-    const input = screen.getByPlaceholderText(/Add comment/);
+    const input = screen.getByPlaceholderText(/Добавить комментарий/);
     await user.type(input, "new one");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Отправить" }));
 
     await waitFor(() => expect(api.addComment).toHaveBeenCalledWith("t1", "user", "new one"));
     expect((input as HTMLInputElement).value).toBe("");
@@ -126,7 +126,7 @@ describe("TaskDetail", () => {
     renderWithQuery(<TaskDetail taskId="t1" onClose={() => {}} />);
     await screen.findByText("Implement login");
 
-    await user.click(screen.getByRole("button", { name: "Delete Task" }));
+    await user.click(screen.getByRole("button", { name: "Удалить задачу" }));
     expect(api.deleteTask).not.toHaveBeenCalled();
   });
 
@@ -141,7 +141,7 @@ describe("TaskDetail", () => {
     renderWithQuery(<TaskDetail taskId="t1" onClose={onClose} />);
     await screen.findByText("Implement login");
 
-    await user.click(screen.getByRole("button", { name: "Delete Task" }));
+    await user.click(screen.getByRole("button", { name: "Удалить задачу" }));
     await waitFor(() => expect(api.deleteTask).toHaveBeenCalledWith("t1"));
     expect(onClose).toHaveBeenCalled();
   });

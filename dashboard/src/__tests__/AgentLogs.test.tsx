@@ -54,7 +54,7 @@ describe("AgentLogs", () => {
   it("renders an empty-state when no logs are returned", async () => {
     mockFetchLogs([]);
     renderWithQuery(<AgentLogs projectId="p1" />);
-    await screen.findByText(/No logs yet/);
+    await screen.findByText(/Логов пока нет/);
   });
 
   it("tags each entry with level-* class for stderr/error highlighting", async () => {
@@ -103,7 +103,7 @@ describe("AgentLogs", () => {
     mockFetchLogs([]);
     const user = userEvent.setup();
     renderWithQuery(<AgentLogs projectId="p1" />);
-    await screen.findByText(/Auto-scroll/);
+    await screen.findByText(/Автопрокрутка/);
     const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     await user.click(checkbox);

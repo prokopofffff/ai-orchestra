@@ -62,10 +62,10 @@ export function AgentLogs({ projectId }: Props) {
     <div className="agent-logs flex flex-col gap-5 px-10 py-7 h-full min-h-0">
       <header className="logs-header flex items-center justify-between">
         <h2 className="text-[22px] font-semibold tracking-tight text-text-primary">
-          Agent Logs
+          Логи агентов
         </h2>
         <Button variant="secondary" leadingIcon={<DownloadIcon size={14} />}>
-          Export
+          Экспорт
         </Button>
       </header>
 
@@ -79,7 +79,7 @@ export function AgentLogs({ projectId }: Props) {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search logs…"
+            placeholder="Поиск по логам…"
             className="h-9 w-[280px] pl-9 pr-3 bg-bg-input border border-border text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue"
           />
         </div>
@@ -87,7 +87,7 @@ export function AgentLogs({ projectId }: Props) {
         <PillSelect
           value={roleFilter}
           onChange={setRoleFilter}
-          placeholder="All roles"
+          placeholder="Все роли"
           options={ROLES}
           activeStyle="blue"
         />
@@ -95,7 +95,7 @@ export function AgentLogs({ projectId }: Props) {
         <PillSelect
           value={levelFilter}
           onChange={setLevelFilter}
-          placeholder="All levels"
+          placeholder="Все уровни"
           options={LEVELS}
           activeStyle="border"
         />
@@ -108,17 +108,17 @@ export function AgentLogs({ projectId }: Props) {
             className="accent-accent-green"
           />
           <RefreshIcon size={12} className="text-accent-green" />
-          Auto-scroll
+          Автопрокрутка
         </label>
       </div>
 
       <div className="logs-container flex-1 min-h-0 bg-bg-surface border border-border-subtle flex flex-col overflow-hidden">
         <div className="grid shrink-0 bg-bg-card border-b border-border h-10 items-center px-5 gap-4 font-mono text-[11px] uppercase tracking-wider text-text-tertiary"
              style={{ gridTemplateColumns: "140px 120px 80px 1fr" }}>
-          <span>Time</span>
-          <span>Role</span>
-          <span>Level</span>
-          <span>Message</span>
+          <span>Время</span>
+          <span>Роль</span>
+          <span>Уровень</span>
+          <span>Сообщение</span>
         </div>
         <div className="flex-1 overflow-y-auto">
           {filtered.map((log) => (
@@ -154,7 +154,7 @@ export function AgentLogs({ projectId }: Props) {
             </div>
           ))}
           {filtered.length === 0 && (
-            <div className="empty text-text-tertiary italic p-4">No logs yet</div>
+            <div className="empty text-text-tertiary italic p-4">Логов пока нет</div>
           )}
           <div ref={bottomRef} />
         </div>

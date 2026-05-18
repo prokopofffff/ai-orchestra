@@ -13,6 +13,16 @@ const PHASE_ACCENT: Record<string, string> = {
   Blocked: "text-accent-red",
 };
 
+const PHASE_LABELS: Record<string, string> = {
+  Backlog: "Бэклог",
+  Design: "Дизайн",
+  Development: "Разработка",
+  Testing: "Тестирование",
+  Review: "Ревью",
+  Done: "Готово",
+  Blocked: "Заблокировано",
+};
+
 export function KanbanBoard({ projectId, onTaskClick }: Props) {
   const { data: tasks } = useQuery({
     queryKey: ["tasks", projectId],
@@ -21,7 +31,7 @@ export function KanbanBoard({ projectId, onTaskClick }: Props) {
   });
 
   if (!tasks) {
-    return <div className="loading p-5 text-text-secondary">Loading tasks…</div>;
+    return <div className="loading p-5 text-text-secondary">Загрузка задач…</div>;
   }
 
   return (
@@ -41,7 +51,7 @@ export function KanbanBoard({ projectId, onTaskClick }: Props) {
                 accent,
               ].join(" ")}
             >
-              <span>{phase}</span>
+              <span>{PHASE_LABELS[phase] ?? phase}</span>
               <span className="count bg-bg-hover text-text-secondary px-2 py-0.5 text-[11px]">
                 {phaseTasks.length}
               </span>
@@ -95,8 +105,8 @@ function TaskCard({ task, tasks, onClick }: { task: Task; tasks: Task[]; onClick
           </span>
         )}
         {isBlocked && (
-          <span className="card-blocked text-[10px] font-semibold text-accent-yellow" title="Blocked by dependencies">
-            blocked
+          <span className="card-blocked text-[10px] font-semibold text-accent-yellow" title="Заблокировано зависимостями">
+            заблокировано
           </span>
         )}
         <span className="card-state ml-auto font-mono text-[10px] text-text-tertiary">

@@ -23,17 +23,17 @@ describe("TaskQueue", () => {
     });
     renderWithQuery(<TaskQueue />);
 
-    await screen.findByText("Queue Status");
+    await screen.findByText("Состояние очереди");
     // Each stat appears with its label next to the value.
     const expect_pair = (value: string, label: string) => {
       const node = screen.getByText(label);
       const stat = node.closest(".stat")!;
       expect(stat.textContent).toContain(value);
     };
-    expect_pair("3",  "Queued");
-    expect_pair("1",  "Running");
-    expect_pair("42", "Completed");
-    expect_pair("2",  "Failed");
+    expect_pair("3",  "В очереди");
+    expect_pair("1",  "Выполняется");
+    expect_pair("42", "Завершено");
+    expect_pair("2",  "Ошибки");
   });
 
   it("renders the rate-limited banner when rateLimited = true", async () => {
@@ -43,7 +43,7 @@ describe("TaskQueue", () => {
       queued: 0, running: 0, completed: 0, failed: 0,
     });
     renderWithQuery(<TaskQueue />);
-    await screen.findByText(/Rate limited/);
+    await screen.findByText(/Лимит запросов/);
   });
 
   it("hides the rate-limited banner when rateLimited = false", async () => {
@@ -53,7 +53,7 @@ describe("TaskQueue", () => {
       queued: 0, running: 0, completed: 0, failed: 0,
     });
     renderWithQuery(<TaskQueue />);
-    await screen.findByText("Queue Status");
-    expect(screen.queryByText(/Rate limited/)).toBeNull();
+    await screen.findByText("Состояние очереди");
+    expect(screen.queryByText(/Лимит запросов/)).toBeNull();
   });
 });

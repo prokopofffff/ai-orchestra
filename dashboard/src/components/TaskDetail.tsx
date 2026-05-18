@@ -56,7 +56,7 @@ export function TaskDetail({ taskId, onClose }: Props) {
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${task.title}"?`)) return;
+    if (!confirm(`Удалить «${task.title}»?`)) return;
     await api.deleteTask(taskId);
     onClose();
   };
@@ -75,7 +75,7 @@ export function TaskDetail({ taskId, onClose }: Props) {
           <button
             className="close-btn text-text-tertiary hover:text-text-primary text-xl leading-none"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="Закрыть"
           >
             ×
           </button>
@@ -87,35 +87,35 @@ export function TaskDetail({ taskId, onClose }: Props) {
           )}
           {(task.revisionsCount || task.failedCount || task.signalsCount) ? (
             <div className="flex flex-wrap gap-3 text-[11px] font-mono text-text-tertiary">
-              {!!task.revisionsCount && <span>revisions: {task.revisionsCount}</span>}
-              {!!task.failedCount && <span>failed: {task.failedCount}</span>}
-              {!!task.signalsCount && <span>signals: {task.signalsCount}</span>}
+              {!!task.revisionsCount && <span>правок: {task.revisionsCount}</span>}
+              {!!task.failedCount && <span>ошибок: {task.failedCount}</span>}
+              {!!task.signalsCount && <span>сигналов: {task.signalsCount}</span>}
             </div>
           ) : null}
-          <Row label="State">
+          <Row label="Статус">
             <select className={FIELD_INPUT} value={task.state} onChange={(e) => handleUpdate({ state: e.target.value as TaskState })}>
               {ALL_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </Row>
-          <Row label="Priority">
+          <Row label="Приоритет">
             <select className={FIELD_INPUT} value={task.priority} onChange={(e) => handleUpdate({ priority: e.target.value as Task["priority"] })}>
               {["low", "normal", "high", "immediate"].map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </Row>
-          <Row label="Assignee">
+          <Row label="Исполнитель">
             <select className={FIELD_INPUT} value={task.assigneeRole ?? ""} onChange={(e) => handleUpdate({ assigneeRole: e.target.value || null })}>
-              <option value="">Unassigned</option>
+              <option value="">Не назначен</option>
               {ALL_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </Row>
-          <Row label="Type">
+          <Row label="Тип">
             <select className={FIELD_INPUT} value={task.type} onChange={(e) => handleUpdate({ type: e.target.value as Task["type"] })}>
               {["epic", "task", "subtask", "bug", "feature"].map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </Row>
 
           {task.branchName && (
-            <Row label="Branch">
+            <Row label="Ветка">
               <code className="font-mono text-xs bg-bg-input px-2 py-1 text-text-primary">{task.branchName}</code>
             </Row>
           )}
@@ -132,13 +132,13 @@ export function TaskDetail({ taskId, onClose }: Props) {
           )}
 
           {task.blockedBy.length > 0 && (
-            <Row label="Blocked by">
-              <span className="text-xs text-accent-yellow">{task.blockedBy.length} task(s)</span>
+            <Row label="Блокируют">
+              <span className="text-xs text-accent-yellow">задач: {task.blockedBy.length}</span>
             </Row>
           )}
 
           <div className="description flex flex-col gap-1.5 mt-2">
-            <label className="text-xs font-medium text-text-secondary">Description</label>
+            <label className="text-xs font-medium text-text-secondary">Описание</label>
             <textarea
               className="w-full bg-bg-input border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent-blue resize-y"
               value={task.description ?? ""}
@@ -149,7 +149,7 @@ export function TaskDetail({ taskId, onClose }: Props) {
 
           <div className="comments flex flex-col gap-2 mt-2">
             <h3 className="text-sm font-semibold text-text-primary">
-              Comments ({comments?.length ?? 0})
+              Комментарии ({comments?.length ?? 0})
             </h3>
             {comments?.map((c) => (
               <div key={c.id} className="comment bg-bg-input px-3 py-2 flex flex-col gap-1">
@@ -167,17 +167,17 @@ export function TaskDetail({ taskId, onClose }: Props) {
                 className="flex-1 h-9 px-3 bg-bg-input border border-border text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue"
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
-                placeholder="Add comment…"
+                placeholder="Добавить комментарий…"
                 onKeyDown={(e) => e.key === "Enter" && handleAddComment()}
               />
-              <Button variant="primary-blue" onClick={handleAddComment}>Send</Button>
+              <Button variant="primary-blue" onClick={handleAddComment}>Отправить</Button>
             </div>
           </div>
         </div>
 
         <div className="modal-footer flex items-center justify-end p-4 border-t border-border">
           <Button variant="primary-red" className="delete-btn" onClick={handleDelete}>
-            Delete Task
+            Удалить задачу
           </Button>
         </div>
       </div>
@@ -212,12 +212,12 @@ function MergeButton({ taskId, state }: { taskId: string; state: TaskState }) {
   if (state === "merged" || state === "closed") return null;
 
   async function merge() {
-    if (!confirm("Merge this PR to main now? Squash merge via the provider; no rollback.")) return;
+    if (!confirm("Смерджить этот PR в main сейчас? Squash-мердж через провайдера; откат невозможен.")) return;
     setBusy(true);
     setStatus(null);
     try {
       const r = await api.mergeTask(taskId);
-      setStatus({ kind: "ok", message: `Merged · sha ${r.sha.slice(0, 7)}` });
+      setStatus({ kind: "ok", message: `Смерджено · sha ${r.sha.slice(0, 7)}` });
       await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -230,7 +230,7 @@ function MergeButton({ taskId, state }: { taskId: string; state: TaskState }) {
   return (
     <div className="flex items-center gap-2">
       <Button variant="primary-green" size="sm" onClick={merge} disabled={busy}>
-        {busy ? "Merging…" : "Merge to main"}
+        {busy ? "Мердж…" : "Смерджить в main"}
       </Button>
       {status && (
         <span
@@ -251,7 +251,7 @@ function FrozenBanner({ taskId, reason }: { taskId: string; reason: string }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   async function unfreeze() {
-    if (!confirm("Unfreeze this task? Counters reset to 0; agents resume on the next signal.")) return;
+    if (!confirm("Разморозить эту задачу? Счётчики обнулятся; агенты продолжат работу на следующем сигнале.")) return;
     setBusy(true);
     try {
       await api.unfreezeTask(taskId);
@@ -261,11 +261,11 @@ function FrozenBanner({ taskId, reason }: { taskId: string; reason: string }) {
   return (
     <div className="flex items-start justify-between gap-3 px-3 py-2 border border-accent-yellow/40 bg-[color:var(--color-accent-yellow,#f59e0b)]/10">
       <div className="flex items-start gap-2 text-xs">
-        <span className="font-semibold text-accent-yellow">Frozen</span>
+        <span className="font-semibold text-accent-yellow">Заморожено</span>
         <span className="text-text-secondary">{reason}</span>
       </div>
       <Button variant="primary-blue" size="sm" onClick={unfreeze} disabled={busy}>
-        {busy ? "…" : "Unfreeze"}
+        {busy ? "…" : "Разморозить"}
       </Button>
     </div>
   );

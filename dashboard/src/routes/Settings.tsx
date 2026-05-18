@@ -34,12 +34,12 @@ export default function Settings() {
                 : "border-transparent text-text-secondary hover:text-text-primary",
             ].join(" ")}
           >
-            {t === "project" ? "Project"
-              : t === "agents" ? "Agents"
-              : t === "checks" ? "Agent Checks"
-              : t === "members" ? "Members"
-              : t === "limits" ? "Limits"
-              : "System"}
+            {t === "project" ? "Проект"
+              : t === "agents" ? "Агенты"
+              : t === "checks" ? "Проверки агентов"
+              : t === "members" ? "Участники"
+              : t === "limits" ? "Лимиты"
+              : "Система"}
           </button>
         ))}
       </nav>
@@ -92,10 +92,10 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
         repoUrl: repoUrl.trim() || null,
         localPath: localPath.trim() || null,
       });
-      setStatus("Saved");
+      setStatus("Сохранено");
       onSaved();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -106,16 +106,16 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
       <header className="flex items-start justify-between gap-8">
         <div className="flex flex-col gap-1">
           <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">
-            Project Settings
+            Настройки проекта
           </h2>
           <p className="text-sm text-text-secondary">
-            Configure the repository or local directory agents will work in.
+            Укажите репозиторий или локальный каталог, в котором будут работать агенты.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0 pt-1">
           {status && <span className="text-xs text-text-tertiary">{status}</span>}
           <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
       </header>
@@ -123,28 +123,28 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
       {!hasRepo && (
         <div className="flex items-start gap-3 px-4 py-3 bg-[color:var(--color-accent-red,#e74c3c)]/10 border border-[color:var(--color-accent-red,#e74c3c)]/30 text-xs text-text-secondary">
           <span className="shrink-0 font-semibold text-accent-red mt-0.5">!</span>
-          Agents cannot run until you set a repo URL or local path below.
+          Агенты не смогут запуститься, пока ниже не указан URL репозитория или локальный путь.
         </div>
       )}
 
       <RepoStatusBanner projectId={project.id} />
 
       <section className="flex flex-col gap-5">
-        <Field label="Project name">
+        <Field label="Название проекта">
           <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} placeholder="my-project" />
         </Field>
 
-        <Field label="Description" optional>
-          <input className={INPUT} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short description" />
+        <Field label="Описание" optional>
+          <input className={INPUT} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Краткое описание" />
         </Field>
 
         <div className="border-t border-border pt-5 flex flex-col gap-5">
           <p className="text-xs text-text-secondary">
-            Set either a remote repository URL <em>or</em> a local directory path. The local path
-            is preferred — agents create git worktrees directly from it without cloning.
+            Укажите либо URL удалённого репозитория, <em>либо</em> путь к локальному каталогу. Локальный путь
+            предпочтительнее — агенты создают git worktree-ы напрямую из него без клонирования.
           </p>
 
-          <Field label="Local directory" hint="Absolute path to a git repo on this machine (e.g. /Users/you/myapp)">
+          <Field label="Локальный каталог" hint="Абсолютный путь к git-репозиторию на этой машине (например, /Users/you/myapp)">
             <div className="flex items-center gap-2">
               <input
                 className={INPUT}
@@ -153,7 +153,7 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
                 placeholder="/Users/you/projects/myapp"
               />
               <Button variant="secondary" size="md" type="button" onClick={() => setPickerOpen(true)}>
-                Browse…
+                Обзор…
               </Button>
             </div>
           </Field>
@@ -165,7 +165,7 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
             />
           )}
 
-          <Field label="Remote repo URL" hint="Used when no local path is set — agents clone and work in worktrees">
+          <Field label="URL удалённого репозитория" hint="Используется, если не задан локальный путь — агенты клонируют репозиторий и работают в worktree-ах">
             <input
               className={INPUT}
               value={repoUrl}
@@ -195,10 +195,10 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
     setBusy(true); setMsg(null);
     try {
       await api.initProjectGit(projectId);
-      setMsg(`✓ Initialized at ${data?.localPath}. Agents can run now.`);
+      setMsg(`✓ Инициализирован в ${data?.localPath}. Агенты могут запускаться.`);
       await queryClient.invalidateQueries({ queryKey: ["repo-status", projectId] });
     } catch (e) {
-      setMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -209,14 +209,14 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
       <span className="shrink-0 font-semibold text-accent-yellow mt-0.5">!</span>
       <div className="flex-1 flex flex-col gap-2">
         <div>
-          <code className="text-text-primary">{data.localPath}</code> is not a git
-          repository. Agents create branches via <code>git worktree</code>, so the
-          path has to be initialized first.
+          <code className="text-text-primary">{data.localPath}</code> не является
+          git-репозиторием. Агенты создают ветки через <code>git worktree</code>, поэтому
+          путь нужно сначала инициализировать.
         </div>
         {msg && <span className="text-[11px] text-text-tertiary">{msg}</span>}
       </div>
       <Button variant="primary-blue" size="sm" onClick={init} disabled={busy} type="button">
-        {busy ? "Initializing…" : "Initialize git here"}
+        {busy ? "Инициализация…" : "Инициализировать git здесь"}
       </Button>
     </div>
   );
@@ -253,12 +253,12 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
       await api.updateProject(project.id, { settings: { claude: payload } } as never);
       setStatus(
         Object.keys(claude).length
-          ? "Saved — agents for this project will use these credentials on the next run."
-          : "Cleared — falling back to orchestra-wide System settings.",
+          ? "Сохранено — агенты этого проекта при следующем запуске будут использовать эти учётные данные."
+          : "Очищено — используются настройки уровня Orchestra из вкладки Система.",
       );
       onSaved();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -267,30 +267,30 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
   return (
     <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
       <div className="border-t border-border pt-6 flex flex-col gap-1">
-        <h3 className="text-sm font-semibold text-text-primary">Claude credentials</h3>
+        <h3 className="text-sm font-semibold text-text-primary">Учётные данные Claude</h3>
         <p className="text-xs text-text-secondary">
-          Optional. Per-project overrides for Claude auth. Empty values fall back to{" "}
-          <strong>System</strong> tab, then <code>.env</code>. Use this when one project
-          should run on a Max subscription and another on a pay-per-token API key.
+          Необязательно. Переопределение авторизации Claude для проекта. Пустые значения наследуются из{" "}
+          вкладки <strong>Система</strong>, затем из <code>.env</code>. Используйте это, если один проект
+          должен работать на подписке Max, а другой — на API-ключе с оплатой по токенам.
         </p>
       </div>
 
-      <Field label="Authentication" optional hint="Leave blank to inherit from System tab.">
+      <Field label="Аутентификация" optional hint="Оставьте пустым, чтобы наследовать из вкладки Система.">
         <select
           value={auth}
           onChange={(e) => setAuth(e.target.value as "" | "max" | "api")}
           className={INPUT}
         >
-          <option value="">(inherit)</option>
-          <option value="max">Max subscription — uses local `claude` CLI login</option>
-          <option value="api">API key — pay-per-token</option>
+          <option value="">(наследовать)</option>
+          <option value="max">Подписка Max — использует локальный логин в CLI `claude`</option>
+          <option value="api">API-ключ — оплата по токенам</option>
         </select>
       </Field>
 
       {auth === "api" && (
         <Field
-          label="API key"
-          hint="From console.anthropic.com. Starts with sk-ant-. Stored as project setting; visible only to project members."
+          label="API-ключ"
+          hint="С console.anthropic.com. Начинается с sk-ant-. Хранится в настройках проекта; виден только участникам проекта."
         >
           <div className="flex items-center gap-2">
             <input
@@ -307,7 +307,7 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
               type="button"
               onClick={() => setRevealed((v) => !v)}
             >
-              {revealed ? "Hide" : "Show"}
+              {revealed ? "Скрыть" : "Показать"}
             </Button>
           </div>
         </Field>
@@ -315,7 +315,7 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
 
       <div className="flex items-center gap-3">
         <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Сохранение…" : "Сохранить"}
         </Button>
         {status && <p className="text-xs text-text-tertiary">{status}</p>}
       </div>
@@ -356,12 +356,12 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
       await api.updateProject(project.id, { settings: { provider: payload } } as never);
       setStatus(
         token.trim()
-          ? "Saved — clones / pushes for this project will use this token."
-          : "Cleared — falling back to orchestra-wide GITHUB_TOKEN.",
+          ? "Сохранено — клоны и пуши для этого проекта будут использовать этот токен."
+          : "Очищено — используется общий GITHUB_TOKEN уровня Orchestra.",
       );
       onSaved();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -370,30 +370,30 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
   return (
     <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
       <div className="border-t border-border pt-6 flex flex-col gap-1">
-        <h3 className="text-sm font-semibold text-text-primary">Git provider token</h3>
+        <h3 className="text-sm font-semibold text-text-primary">Токен Git-провайдера</h3>
         <p className="text-xs text-text-secondary">
-          Optional. Per-project override for the GitHub / GitLab token used to
-          clone, push, and open PRs for this project. Empty falls back to the{" "}
-          <strong>System</strong> tab value. Provider type is auto-detected from
-          the repo URL — set it explicitly only for self-hosted instances.
+          Необязательно. Переопределение токена GitHub / GitLab для клонирования, пуша
+          и открытия PR для этого проекта. Если пусто, используется значение из вкладки{" "}
+          <strong>Система</strong>. Тип провайдера определяется автоматически по
+          URL репозитория — указывайте его явно только для self-hosted инстансов.
         </p>
       </div>
 
-      <Field label="Provider" optional hint="Auto-detected from the repo URL when blank.">
+      <Field label="Провайдер" optional hint="Определяется автоматически по URL репозитория, если поле пустое.">
         <select
           value={type}
           onChange={(e) => setType(e.target.value as "" | "github" | "gitlab")}
           className={INPUT}
         >
-          <option value="">(auto-detect)</option>
+          <option value="">(автоопределение)</option>
           <option value="github">GitHub</option>
           <option value="gitlab">GitLab</option>
         </select>
       </Field>
 
       <Field
-        label="Access token"
-        hint="GitHub: a fine-grained PAT with repo + pull-request scope on this repo. GitLab: a project access token."
+        label="Токен доступа"
+        hint="GitHub: fine-grained PAT с правами repo + pull-request на этот репозиторий. GitLab: project access token."
       >
         <div className="flex items-center gap-2">
           <input
@@ -401,7 +401,7 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
             type={revealed ? "text" : "password"}
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="ghp_… or glpat-…"
+            placeholder="ghp_… или glpat-…"
             autoComplete="off"
           />
           <Button
@@ -410,14 +410,14 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
             type="button"
             onClick={() => setRevealed((v) => !v)}
           >
-            {revealed ? "Hide" : "Show"}
+            {revealed ? "Скрыть" : "Показать"}
           </Button>
         </div>
       </Field>
 
       <div className="flex items-center gap-3">
         <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Сохранение…" : "Сохранить"}
         </Button>
         {status && <p className="text-xs text-text-tertiary">{status}</p>}
       </div>
@@ -455,25 +455,25 @@ function ProjectTelegramSection({ project, onSaved }: { project: Project; onSave
       await api.updateProject(project.id, { settings: { telegram: tg } } as never);
       setSavedToken(token.trim());
       setSavedChatId(""); // wiping the token unbinds the chat
-      setStatus(token.trim() ? "Saved — open the bot in Telegram and send /start to bind a chat." : "Telegram disabled for this project.");
+      setStatus(token.trim() ? "Сохранено — откройте бота в Telegram и отправьте /start, чтобы привязать чат." : "Telegram отключён для этого проекта.");
       onSaved();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setStatus(`Error: ${msg}`);
+      setStatus(`Ошибка: ${msg}`);
     } finally {
       setSaving(false);
     }
   }
 
   async function disconnect() {
-    if (!confirm("Disconnect Telegram from this project?")) return;
+    if (!confirm("Отключить Telegram от этого проекта?")) return;
     setSaving(true);
     try {
       await api.updateProject(project.id, { settings: { telegram: { botToken: undefined, chatId: undefined } } } as never);
       setToken("");
       setSavedToken("");
       setSavedChatId("");
-      setStatus("Disconnected.");
+      setStatus("Отключено.");
       onSaved();
     } finally {
       setSaving(false);
@@ -486,19 +486,19 @@ function ProjectTelegramSection({ project, onSaved }: { project: Project; onSave
         <div className="flex flex-col gap-1">
           <h3 className="text-sm font-semibold text-text-primary">Telegram</h3>
           <p className="text-xs text-text-secondary">
-            Optional. Each project gets its own bot — create one via{" "}
+            Необязательно. Для каждого проекта используется отдельный бот — создайте его через{" "}
             <a href="https://t.me/BotFather" target="_blank" rel="noopener" className="text-accent-blue hover:underline">@BotFather</a>{" "}
-            in Telegram, paste the token below, then send <code>/start</code> to the bot. A single bot can't be shared between projects.
+            в Telegram, вставьте токен ниже и отправьте <code>/start</code> боту. Один бот нельзя использовать в нескольких проектах.
           </p>
         </div>
         {savedToken && (
           <Button variant="secondary" size="sm" onClick={disconnect} disabled={saving} type="button">
-            Disconnect
+            Отключить
           </Button>
         )}
       </div>
 
-      <Field label="Bot token" hint="From @BotFather. Looks like 1234567890:AAH…">
+      <Field label="Токен бота" hint="Получен у @BotFather. Выглядит как 1234567890:AAH…">
         <div className="flex items-center gap-2">
           <input
             className={INPUT}
@@ -509,7 +509,7 @@ function ProjectTelegramSection({ project, onSaved }: { project: Project; onSave
             autoComplete="off"
           />
           <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
       </Field>
@@ -520,14 +520,14 @@ function ProjectTelegramSection({ project, onSaved }: { project: Project; onSave
             <>
               <span className="font-mono text-accent-green">✓</span>
               <span className="text-text-secondary">
-                Connected · chat <code className="text-text-primary">{savedChatId}</code> · agent notifications go to Telegram.
+                Подключено · чат <code className="text-text-primary">{savedChatId}</code> · уведомления агентов идут в Telegram.
               </span>
             </>
           ) : (
             <>
               <span className="font-mono text-accent-yellow">…</span>
               <span className="text-text-secondary">
-                Token saved. Send <code className="text-text-primary">/start</code> to the bot in Telegram to bind a chat.
+                Токен сохранён. Отправьте <code className="text-text-primary">/start</code> боту в Telegram, чтобы привязать чат.
               </span>
             </>
           )}
@@ -557,7 +557,7 @@ function ProjectIntroSection({ project }: { project: Project }) {
   const inProgress = !intro && !!introTaskId;
 
   async function rescan() {
-    if (!confirm("Run a fresh codebase scan? This spawns a Tech Lead session.")) return;
+    if (!confirm("Запустить новое сканирование кодовой базы? Это создаст сессию Tech Lead.")) return;
     setRescanning(true);
     try {
       await api.rescanProject(project.id);
@@ -572,22 +572,22 @@ function ProjectIntroSection({ project }: { project: Project }) {
     <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
       <div className="border-t border-border pt-6 flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-semibold text-text-primary">Codebase intro</h3>
+          <h3 className="text-sm font-semibold text-text-primary">Обзор кодовой базы</h3>
           <p className="text-xs text-text-secondary">
-            Tech Lead's first-pass scan of this repository — stack, layout,
-            suggested check commands, anything to flag. Updates whenever you
-            re-scan.
+            Первичное сканирование репозитория от Tech Lead — стек, структура,
+            рекомендованные команды проверок, всё, на что стоит обратить внимание. Обновляется при
+            повторном сканировании.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={rescan} disabled={rescanning} type="button">
-          {rescanning ? "Queuing…" : intro ? "Re-scan" : "Scan now"}
+          {rescanning ? "В очереди…" : intro ? "Пересканировать" : "Сканировать"}
         </Button>
       </div>
 
       {inProgress && (
         <div className="px-3 py-2 border border-border-subtle bg-bg-input text-xs text-text-secondary font-mono">
-          Tech Lead is exploring the codebase. The summary will appear here
-          when finished.
+          Tech Lead изучает кодовую базу. Сводка появится здесь
+          по завершении.
         </div>
       )}
 
@@ -599,8 +599,8 @@ function ProjectIntroSection({ project }: { project: Project }) {
 
       {!intro && !inProgress && (
         <div className="text-xs text-text-tertiary">
-          No scan run yet. Click <code>Scan now</code> to have Tech Lead
-          take a look around.
+          Сканирование ещё не запускалось. Нажмите <code>Сканировать</code>, чтобы Tech Lead
+          осмотрел репозиторий.
         </div>
       )}
     </section>
@@ -647,10 +647,10 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
       await api.updateProject(project.id, {
         settings: { models: modelsPatch, effort: effortPatch },
       } as never);
-      setStatus("Saved — takes effect on the next agent run");
+      setStatus("Сохранено — применится при следующем запуске агента");
       onSaved();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -660,26 +660,26 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
     <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
       <header className="flex items-start justify-between gap-8">
         <div className="flex flex-col gap-1">
-          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Agents</h2>
+          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Агенты</h2>
           <p className="text-sm text-text-secondary">
-            Pick a model and effort level per role. Empty = inherit the global
-            default. Effort `max` only works on Opus. Higher effort = slower,
-            more thorough, more expensive.
+            Выберите модель и уровень усилий для каждой роли. Пусто = используется
+            глобальное значение по умолчанию. Уровень `max` работает только на Opus. Чем выше уровень,
+            тем медленнее, тщательнее и дороже.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0 pt-1">
           {status && <span className="text-xs text-text-tertiary">{status}</span>}
           <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
       </header>
 
       <section className="flex flex-col gap-2">
         <div className="grid grid-cols-[120px_1fr_1fr] gap-3 px-3 pb-2 border-b border-border text-[10px] font-mono uppercase tracking-wider text-text-tertiary">
-          <span>Role</span>
-          <span>Model</span>
-          <span>Effort</span>
+          <span>Роль</span>
+          <span>Модель</span>
+          <span>Усилия</span>
         </div>
         {ROLES.map((role) => (
           <div key={role} className="grid grid-cols-[120px_1fr_1fr] gap-3 items-center px-3 py-2 border-b border-border-subtle">
@@ -689,7 +689,7 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
               value={models[role]}
               onChange={(e) => setModels((m) => ({ ...m, [role]: e.target.value }))}
             >
-              <option value="">(global default)</option>
+              <option value="">(глобальное по умолчанию)</option>
               {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             <select
@@ -697,10 +697,10 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
               value={efforts[role]}
               onChange={(e) => setEfforts((m) => ({ ...m, [role]: e.target.value }))}
             >
-              <option value="">(SDK default)</option>
+              <option value="">(по умолчанию SDK)</option>
               {EFFORTS.map((eff) => (
                 <option key={eff} value={eff} disabled={eff === "max" && models[role] !== "opus"}>
-                  {eff}{eff === "max" ? " (Opus only)" : ""}
+                  {eff}{eff === "max" ? " (только Opus)" : ""}
                 </option>
               ))}
             </select>
@@ -731,17 +731,17 @@ function MembersTab({ projectId }: { projectId: string }) {
     try {
       await api.inviteProjectMember(projectId, identifier.trim(), role);
       setIdentifier("");
-      setStatus("Member added");
+      setStatus("Участник добавлен");
       refresh();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(userId: string) {
-    if (!confirm("Remove this member from the project?")) return;
+    if (!confirm("Удалить этого участника из проекта?")) return;
     await api.removeProjectMember(projectId, userId);
     refresh();
   }
@@ -754,42 +754,42 @@ function MembersTab({ projectId }: { projectId: string }) {
   return (
     <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
       <header className="flex flex-col gap-1">
-        <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Members</h2>
+        <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Участники</h2>
         <p className="text-sm text-text-secondary">
-          People with access to this project. Owner has full control.
-          Admins can invite and remove. Editors can act on the project.
-          Viewers see everything but can't change anything.
+          Пользователи с доступом к этому проекту. Владелец имеет полный контроль.
+          Администраторы могут приглашать и удалять. Редакторы могут вносить изменения в проект.
+          Зрители видят всё, но ничего не могут менять.
         </p>
       </header>
 
       <form onSubmit={invite} className="flex flex-col gap-3 border border-border bg-bg-surface p-4">
-        <h3 className="text-xs font-mono uppercase tracking-wider text-text-tertiary">Invite by username or email</h3>
+        <h3 className="text-xs font-mono uppercase tracking-wider text-text-tertiary">Пригласить по имени пользователя или email</h3>
         <div className="flex gap-2">
           <input
             className={INPUT}
             value={identifier}
             onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="alice@example.com or alice"
+            placeholder="alice@example.com или alice"
           />
           <select
             className={`${INPUT} w-32`}
             value={role}
             onChange={(e) => setRole(e.target.value as "viewer" | "editor" | "admin")}
           >
-            <option value="viewer">Viewer</option>
-            <option value="editor">Editor</option>
-            <option value="admin">Admin</option>
+            <option value="viewer">Зритель</option>
+            <option value="editor">Редактор</option>
+            <option value="admin">Администратор</option>
           </select>
           <Button variant="primary-blue" size="md" type="submit" disabled={busy}>
-            {busy ? "…" : "Invite"}
+            {busy ? "…" : "Пригласить"}
           </Button>
         </div>
         {status && <span className="text-xs text-text-tertiary">{status}</span>}
       </form>
 
       <section className="flex flex-col gap-2">
-        {isLoading && <p className="text-sm text-text-tertiary">Loading…</p>}
-        {error && <p className="text-sm text-accent-red">Failed to load members.</p>}
+        {isLoading && <p className="text-sm text-text-tertiary">Загрузка…</p>}
+        {error && <p className="text-sm text-accent-red">Не удалось загрузить участников.</p>}
         {data?.owner && (
           <MemberRow
             email={data.owner.email}
@@ -839,13 +839,13 @@ function MemberRow({
             value={role}
             onChange={(e) => onRoleChange(e.target.value as "viewer" | "editor" | "admin")}
           >
-            <option value="viewer">Viewer</option>
-            <option value="editor">Editor</option>
-            <option value="admin">Admin</option>
+            <option value="viewer">Зритель</option>
+            <option value="editor">Редактор</option>
+            <option value="admin">Администратор</option>
           </select>
         )}
         {onRemove && (
-          <Button variant="primary-red" size="sm" onClick={onRemove}>Remove</Button>
+          <Button variant="primary-red" size="sm" onClick={onRemove}>Удалить</Button>
         )}
       </div>
     </div>
@@ -890,10 +890,10 @@ function LimitsTab({ project, onSaved }: { project: Project; onSaved: () => void
         if (n !== undefined) limits[k] = n;
       }
       await api.updateProject(project.id, { settings: { limits } } as never);
-      setStatus("Saved");
+      setStatus("Сохранено");
       onSaved();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -903,50 +903,50 @@ function LimitsTab({ project, onSaved }: { project: Project; onSaved: () => void
     <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
       <header className="flex items-start justify-between gap-8">
         <div className="flex flex-col gap-1">
-          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Safety Limits</h2>
+          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">Лимиты безопасности</h2>
           <p className="text-sm text-text-secondary">
-            Per-project caps on cost and loop depth. Empty fields use the in-code default.
-            Tasks tripping a cap get <code className="font-mono">frozen_reason</code> and an escalation —
-            unfreeze from the task panel.
+            Ограничения по стоимости и глубине циклов для проекта. Пустые поля используют значения по умолчанию из кода.
+            Задачи, превысившие лимит, получают <code className="font-mono">frozen_reason</code> и эскалацию —
+            разморозить можно из панели задачи.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0 pt-1">
           {status && <span className="text-xs text-text-tertiary">{status}</span>}
           <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
       </header>
 
       <section className="flex flex-col gap-5">
         <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Cost
+          Стоимость
         </p>
-        <Field label="Daily cost cap (USD)" hint="0 = unlimited. Default: 20.">
+        <Field label="Дневной лимит стоимости (USD)" hint="0 = без ограничений. По умолчанию: 20.">
           <input className={INPUT} value={dailyCostUsd} onChange={(e) => setDailyCostUsd(e.target.value)} placeholder="20" />
         </Field>
-        <Field label="Per-task hourly cap (USD)" hint="Cost-velocity watcher freezes tasks above this. Default: 5.">
+        <Field label="Часовой лимит на задачу (USD)" hint="Наблюдатель за скоростью затрат замораживает задачи выше этого порога. По умолчанию: 5.">
           <input className={INPUT} value={taskHourlyCostUsd} onChange={(e) => setTaskHourlyCostUsd(e.target.value)} placeholder="5" />
         </Field>
       </section>
 
       <section className="flex flex-col gap-5">
         <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Loop guards
+          Защита от циклов
         </p>
-        <Field label="Max revisions" hint="Default: 5. PR-changes-requested past this freezes the task.">
+        <Field label="Макс. число правок" hint="По умолчанию: 5. PR-changes-requested сверх этого замораживает задачу.">
           <input className={INPUT} value={maxRevisions} onChange={(e) => setMaxRevisions(e.target.value)} placeholder="5" />
         </Field>
-        <Field label="Max QA fails" hint="Default: 3. tests_failed past this freezes the task.">
+        <Field label="Макс. число провалов QA" hint="По умолчанию: 3. tests_failed сверх этого замораживает задачу.">
           <input className={INPUT} value={maxFails} onChange={(e) => setMaxFails(e.target.value)} placeholder="3" />
         </Field>
-        <Field label="Max Q&A depth" hint="Default: 5. Caps agent ↔ TL question chains.">
+        <Field label="Макс. глубина Q&A" hint="По умолчанию: 5. Ограничивает цепочки вопросов между агентом и TL.">
           <input className={INPUT} value={maxQaDepth} onChange={(e) => setMaxQaDepth(e.target.value)} placeholder="5" />
         </Field>
-        <Field label="Max signals per task" hint="Default: 200. Hard cap before silent reject.">
+        <Field label="Макс. сигналов на задачу" hint="По умолчанию: 200. Жёсткий лимит перед молчаливым отклонением.">
           <input className={INPUT} value={maxSignalsPerTask} onChange={(e) => setMaxSignalsPerTask(e.target.value)} placeholder="200" />
         </Field>
-        <Field label="Max concurrent sessions" hint="Default: 4 (six roles total — leaves headroom).">
+        <Field label="Макс. число одновременных сессий" hint="По умолчанию: 4 (всего шесть ролей — оставляет запас).">
           <input className={INPUT} value={maxConcurrentSessions} onChange={(e) => setMaxConcurrentSessions(e.target.value)} placeholder="4" />
         </Field>
       </section>
@@ -981,10 +981,10 @@ function SystemTab() {
       const patch: SystemConfig = { claude_auth: claudeAuth };
       if (orgDailyCap.trim()) patch.orchestra_daily_cost_cap_usd = orgDailyCap.trim();
       await api.updateSystemConfig(patch);
-      setStatus("Saved — takes effect on the next agent run");
+      setStatus("Сохранено — применится при следующем запуске агента");
       setConfig({ ...config, ...patch });
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -995,29 +995,29 @@ function SystemTab() {
       <header className="flex items-start justify-between gap-8">
         <div className="flex flex-col gap-1">
           <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">
-            System Settings
+            Системные настройки
           </h2>
           <p className="text-sm text-text-secondary">
-            Orchestra-wide defaults. Credentials (Claude API key, GitHub / GitLab token)
-            live on each project under <strong>Project Settings</strong> — those values
-            are not shared across projects or users.
+            Значения по умолчанию для всей Orchestra. Учётные данные (API-ключ Claude, токен GitHub / GitLab)
+            хранятся в каждом проекте в <strong>Настройках проекта</strong> — эти значения
+            не общие между проектами и пользователями.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0 pt-1">
           {status && <span className="text-xs text-text-tertiary">{status}</span>}
           <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
       </header>
 
       <section className="flex flex-col gap-5">
         <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Default Claude mode
+          Режим Claude по умолчанию
         </p>
 
         <p className="text-xs text-text-secondary -mt-2">
-          Used when a project doesn't override it under Project Settings → Claude credentials.
+          Используется, если проект не переопределяет его в Настройках проекта → Учётные данные Claude.
         </p>
 
         <div className="flex flex-col gap-3">
@@ -1031,8 +1031,8 @@ function SystemTab() {
               className="accent-accent-blue"
             />
             <div>
-              <span className="text-sm font-medium text-text-primary">Max subscription</span>
-              <p className="text-xs text-text-secondary">Uses your local Claude Code login — no API key needed.</p>
+              <span className="text-sm font-medium text-text-primary">Подписка Max</span>
+              <p className="text-xs text-text-secondary">Использует локальный логин Claude Code — API-ключ не требуется.</p>
             </div>
           </label>
 
@@ -1046,10 +1046,10 @@ function SystemTab() {
               className="accent-accent-blue"
             />
             <div>
-              <span className="text-sm font-medium text-text-primary">API key</span>
+              <span className="text-sm font-medium text-text-primary">API-ключ</span>
               <p className="text-xs text-text-secondary">
-                Pay-per-token. Each project must paste its own key under Project Settings →
-                Claude credentials — there's no shared key.
+                Оплата по токенам. Каждый проект должен вставить свой ключ в Настройках проекта →
+                Учётные данные Claude — общего ключа нет.
               </p>
             </div>
           </label>
@@ -1058,11 +1058,11 @@ function SystemTab() {
 
       <section className="flex flex-col gap-5">
         <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Orchestra-wide cost cap
+          Лимит стоимости для всей Orchestra
         </p>
         <Field
-          label="Daily cap (USD)"
-          hint="Sum across every project. Empty / 0 = disabled. ORCHESTRA_DAILY_COST_CAP_USD env var overrides this if set."
+          label="Дневной лимит (USD)"
+          hint="Сумма по всем проектам. Пусто / 0 = отключено. Переменная окружения ORCHESTRA_DAILY_COST_CAP_USD переопределяет это, если задана."
         >
           <input
             className={INPUT}
@@ -1086,7 +1086,7 @@ function Field({ label, hint, optional, children }: {
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
         <span className="text-xs font-medium text-text-primary">{label}</span>
-        {optional && <span className="text-[10px] text-text-tertiary uppercase tracking-wider">optional</span>}
+        {optional && <span className="text-[10px] text-text-tertiary uppercase tracking-wider">необязательно</span>}
       </div>
       {children}
       {hint && <p className="text-[11px] text-text-tertiary">{hint}</p>}

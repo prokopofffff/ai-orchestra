@@ -50,9 +50,9 @@ describe("Chat", () => {
       msg({ fromRole: "system" }),
     ]);
     renderWithQuery(<Chat projectId="p1" />);
-    await screen.findByText("You");
+    await screen.findByText("Вы");
     expect(screen.getByText("Tech Lead")).toBeInTheDocument();
-    expect(screen.getByText("System")).toBeInTheDocument();
+    expect(screen.getByText("Система")).toBeInTheDocument();
   });
 
   it("sends the input on Send click and clears it", async () => {
@@ -61,9 +61,9 @@ describe("Chat", () => {
     const user = userEvent.setup();
     renderWithQuery(<Chat projectId="p1" />);
 
-    const input = await screen.findByPlaceholderText(/Message Tech Lead/);
+    const input = await screen.findByPlaceholderText(/Сообщение для Tech Lead/);
     await user.type(input, "new msg");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Отправить" }));
 
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith("p1", "new msg"));
     await waitFor(() => expect((input as HTMLInputElement).value).toBe(""));
@@ -75,7 +75,7 @@ describe("Chat", () => {
     const user = userEvent.setup();
     renderWithQuery(<Chat projectId="p1" />);
 
-    const input = await screen.findByPlaceholderText(/Message Tech Lead/);
+    const input = await screen.findByPlaceholderText(/Сообщение для Tech Lead/);
     await user.type(input, "via enter{Enter}");
 
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith("p1", "via enter"));
@@ -86,9 +86,9 @@ describe("Chat", () => {
     const user = userEvent.setup();
     renderWithQuery(<Chat projectId="p1" />);
 
-    const input = await screen.findByPlaceholderText(/Message Tech Lead/);
+    const input = await screen.findByPlaceholderText(/Сообщение для Tech Lead/);
     await user.type(input, "   ");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Отправить" }));
 
     expect(api.sendMessage).not.toHaveBeenCalled();
   });

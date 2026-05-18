@@ -29,13 +29,13 @@ describe("SignalFeed", () => {
   it("shows the loading state pre-data", () => {
     vi.mocked(api.fetchAudit).mockImplementation(() => new Promise(() => {}));
     renderWithQuery(<SignalFeed projectId="p1" />);
-    expect(screen.getByText(/Loading signals/)).toBeInTheDocument();
+    expect(screen.getByText(/Загрузка сигналов/)).toBeInTheDocument();
   });
 
   it("renders the empty state when no audit entries exist", async () => {
     vi.mocked(api.fetchAudit).mockResolvedValue([]);
     renderWithQuery(<SignalFeed projectId="p1" />);
-    await screen.findByText(/No signals yet/);
+    await screen.findByText(/Сигналов пока нет/);
   });
 
   it("renders one row per audit entry with action + from/to", async () => {
@@ -44,7 +44,7 @@ describe("SignalFeed", () => {
       entry({ fromRole: "qa", toRole: "tech-lead", action: "tests_passed" }),
     ]);
     renderWithQuery(<SignalFeed projectId="p1" />);
-    await screen.findByText("Signal Feed");
+    await screen.findByText("Лента сигналов");
 
     expect(screen.getByText("assign_dev")).toBeInTheDocument();
     expect(screen.getByText("tests_passed")).toBeInTheDocument();

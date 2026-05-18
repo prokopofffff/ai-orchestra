@@ -11,16 +11,16 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState(0);
   const slides = [
     {
-      title: "Welcome to AI Orchestra",
-      body: "An autonomous dev team that runs in your repo. You describe what you want — Tech Lead breaks it down and coordinates a crew of specialized AI agents to ship it.",
+      title: "Добро пожаловать в AI Orchestra",
+      body: "Автономная команда разработки, работающая в Вашем репозитории. Вы описываете, что хотите, — Tech Lead разбивает задачу на части и координирует команду специализированных AI-агентов, чтобы её выполнить.",
     },
     {
-      title: "How it works",
-      body: "You chat with Tech Lead. They plan, hand parts off to Frontend, Backend, QA, DevOps, or Designer agents, and bring you back PRs to review. Every action is observable in real time.",
+      title: "Как это работает",
+      body: "Вы общаетесь с Tech Lead. Он планирует, передаёт части работы агентам Frontend, Backend, QA, DevOps или Designer и возвращает Вам PR на ревью. Каждое действие наблюдаемо в реальном времени.",
     },
     {
-      title: "Three steps to get started",
-      body: "Configure how Claude is billed (Max subscription or API key), point us at a repo or local directory, and add a GitHub/GitLab token if you're using a remote. Then send Tech Lead your first message.",
+      title: "Три шага, чтобы начать",
+      body: "Настройте, как оплачивается Claude (подписка Max или API-ключ), укажите репозиторий или локальную директорию и добавьте токен GitHub/GitLab, если используете удалённый репозиторий. Затем отправьте первое сообщение Tech Lead.",
     },
   ];
   const isLast = step === slides.length - 1;
@@ -38,7 +38,7 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <button
-          aria-label="Close"
+          aria-label="Закрыть"
           onClick={onClose}
           className="absolute top-3 right-3 text-text-tertiary hover:text-text-primary text-xl leading-none"
         >
@@ -47,7 +47,7 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
 
         <div className="px-8 pt-10 pb-6 flex flex-col gap-3 min-h-[220px]">
           <span className="font-mono text-[11px] uppercase tracking-wider text-text-tertiary">
-            Step {step + 1} of {slides.length}
+            Шаг {step + 1} из {slides.length}
           </span>
           <h2 className="text-2xl font-semibold tracking-tight text-text-primary">
             {slide.title}
@@ -76,7 +76,7 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
               onClick={() => (step === 0 ? onClose() : setStep((s) => s - 1))}
               type="button"
             >
-              {step === 0 ? "Skip" : "Back"}
+              {step === 0 ? "Пропустить" : "Назад"}
             </Button>
             <Button
               variant="primary-red"
@@ -84,7 +84,7 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
               onClick={() => (isLast ? onClose() : setStep((s) => s + 1))}
               type="button"
             >
-              {isLast ? "Get started" : "Next"}
+              {isLast ? "Начать" : "Далее"}
             </Button>
           </div>
         </div>

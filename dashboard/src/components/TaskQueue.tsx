@@ -12,18 +12,18 @@ export function TaskQueue() {
 
   return (
     <section className="task-queue flex flex-col gap-3">
-      <h3 className="text-sm font-semibold text-text-primary">Queue Status</h3>
+      <h3 className="text-sm font-semibold text-text-primary">Состояние очереди</h3>
       <div className="queue-stats grid grid-cols-4 gap-3">
-        <StatCard label="Queued"    value={status.queued} />
-        <StatCard label="Running"   value={status.running}   accent="text-accent-green" />
-        <StatCard label="Completed" value={status.completed} />
-        <StatCard label="Failed"    value={status.failed}    accent="text-accent-red" />
+        <StatCard label="В очереди"  value={status.queued} />
+        <StatCard label="Выполняется" value={status.running}   accent="text-accent-green" />
+        <StatCard label="Завершено"  value={status.completed} />
+        <StatCard label="Ошибки"     value={status.failed}    accent="text-accent-red" />
       </div>
       {status.rateLimited && (
         <div className="queue-rate-limited bg-accent-red text-white text-xs px-3 py-2">
-          Rate limited until {status.rateLimitResetTime
+          Лимит запросов до {status.rateLimitResetTime
             ? new Date(status.rateLimitResetTime).toLocaleTimeString()
-            : "unknown"}
+            : "неизвестно"}
         </div>
       )}
     </section>

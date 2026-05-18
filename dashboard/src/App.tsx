@@ -44,7 +44,7 @@ function RequireAuth() {
   if (loading) {
     return (
       <div className="grid h-dvh place-items-center bg-bg-page text-text-tertiary text-sm">
-        Loading…
+        Загрузка…
       </div>
     );
   }

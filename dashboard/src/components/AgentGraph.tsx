@@ -17,12 +17,12 @@ interface Edge {
 }
 
 const NODES: GraphNode[] = [
-  { role: "tech-lead", label: "Tech Lead", x: 100, y: 40  },
-  { role: "designer",  label: "Designer",  x: 500, y: 40  },
-  { role: "backend",   label: "Backend",   x: 900, y: 40  },
-  { role: "frontend",  label: "Frontend",  x: 100, y: 310 },
-  { role: "qa",        label: "QA",        x: 500, y: 310 },
-  { role: "devops",    label: "DevOps",    x: 900, y: 310 },
+  { role: "tech-lead", label: "Тимлид",      x: 100, y: 40  },
+  { role: "designer",  label: "Дизайнер",    x: 500, y: 40  },
+  { role: "backend",   label: "Бэкенд",      x: 900, y: 40  },
+  { role: "frontend",  label: "Фронтенд",    x: 100, y: 310 },
+  { role: "qa",        label: "QA",          x: 500, y: 310 },
+  { role: "devops",    label: "DevOps",      x: 900, y: 310 },
 ];
 
 const EDGES: Edge[] = [
@@ -77,7 +77,7 @@ export function AgentGraph({ projectId }: { projectId: string }) {
 
   return (
     <section className="agent-graph flex flex-col gap-6">
-      <h2 className="text-2xl font-semibold tracking-tight text-text-primary">Agent Graph</h2>
+      <h2 className="text-2xl font-semibold tracking-tight text-text-primary">Граф агентов</h2>
 
       <div className="bg-bg-surface border border-border h-[480px] overflow-auto">
         <div className="relative" style={{ width: CANVAS_W, height: CANVAS_H }}>
@@ -160,7 +160,7 @@ function GraphNodeView({ node, isRunning }: { node: GraphNode; isRunning: boolea
           color: isRunning ? "var(--color-accent-green)" : "var(--color-text-tertiary)",
         }}
       >
-        {isRunning ? "running" : "idle"}
+        {isRunning ? "работает" : "простаивает"}
       </span>
     </div>
   );

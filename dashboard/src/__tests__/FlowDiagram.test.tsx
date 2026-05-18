@@ -20,29 +20,29 @@ beforeEach(() => vi.clearAllMocks());
 describe("FlowDiagram", () => {
   it("renders the heading + toggle + canvas", () => {
     render(<FlowDiagram />);
-    expect(screen.getByText("Flow")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "State Machine" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Role Graph" })).toBeInTheDocument();
+    expect(screen.getByText("Поток")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Машина состояний" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Граф ролей" })).toBeInTheDocument();
   });
 
   it("defaults to the state-machine view (State Machine button active)", () => {
     render(<FlowDiagram />);
-    const btn = screen.getByRole("button", { name: "State Machine" });
+    const btn = screen.getByRole("button", { name: "Машина состояний" });
     expect(btn.classList.contains("active")).toBe(true);
   });
 
   it("toggles to the role graph when Role Graph is clicked", async () => {
     const user = userEvent.setup();
     render(<FlowDiagram />);
-    await user.click(screen.getByRole("button", { name: "Role Graph" }));
-    const active = screen.getByRole("button", { name: "Role Graph" });
+    await user.click(screen.getByRole("button", { name: "Граф ролей" }));
+    const active = screen.getByRole("button", { name: "Граф ролей" });
     expect(active.classList.contains("active")).toBe(true);
   });
 
   it("renders one row per edge in the edges table", async () => {
     render(<FlowDiagram />);
     // Find the disclosure summary — it shows edge count.
-    const summary = await screen.findByText(new RegExp(`Edges \\(${flow.length}\\)`));
+    const summary = await screen.findByText(new RegExp(`Рёбра \\(${flow.length}\\)`));
     // Expand it so the table is in the DOM
     await act(async () => {
       (summary.parentElement as HTMLDetailsElement).open = true;
@@ -54,7 +54,7 @@ describe("FlowDiagram", () => {
 
   it("renders specific known edges in the table (e.g. assign_dev)", async () => {
     render(<FlowDiagram />);
-    const summary = await screen.findByText(/^Edges/);
+    const summary = await screen.findByText(/^Рёбра/);
     await act(async () => {
       (summary.parentElement as HTMLDetailsElement).open = true;
     });
@@ -81,7 +81,7 @@ describe("FlowDiagram", () => {
     await waitFor(() => expect(mermaid.render).toHaveBeenCalled());
 
     (mermaid.render as ReturnType<typeof vi.fn>).mockClear();
-    await user.click(screen.getByRole("button", { name: "Role Graph" }));
+    await user.click(screen.getByRole("button", { name: "Граф ролей" }));
 
     await waitFor(() => expect(mermaid.render).toHaveBeenCalled());
     const [, source] = (mermaid.render as ReturnType<typeof vi.fn>).mock.calls[0];

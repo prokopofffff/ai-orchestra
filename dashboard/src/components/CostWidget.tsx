@@ -27,9 +27,9 @@ export function CostWidget() {
   return (
     <section className="cost-widget flex flex-col gap-3 bg-bg-surface border border-border p-4">
       <header className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-text-primary">Cost · 24h</h3>
+        <h3 className="text-sm font-semibold text-text-primary">Стоимость · 24ч</h3>
         <span className="font-mono text-[11px] text-text-tertiary">
-          {cap > 0 ? `cap $${cap.toFixed(2)}` : "no cap"}
+          {cap > 0 ? `лимит $${cap.toFixed(2)}` : "без лимита"}
         </span>
       </header>
 
@@ -56,7 +56,7 @@ export function CostWidget() {
 
       {Object.keys(data.byRole).length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">By Role</h4>
+          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">По ролям</h4>
           {Object.entries(data.byRole)
             .sort((a, b) => b[1] - a[1])
             .map(([role, cost]) => {
@@ -73,7 +73,7 @@ export function CostWidget() {
 
       {Object.keys(data.byModel).length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">By Model</h4>
+          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">По моделям</h4>
           {Object.entries(data.byModel)
             .sort((a, b) => b[1] - a[1])
             .map(([model, cost]) => (

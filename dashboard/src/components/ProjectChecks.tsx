@@ -72,33 +72,33 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
       }
       const nextSettings = { ...(project.settings ?? {}), checks: clean };
       await api.updateProject(project.id, { settings: nextSettings } as Partial<Project>);
-      setStatus("Saved");
+      setStatus("Сохранено");
       await load();
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
   }
 
-  if (!project) return <div className="loading p-6 text-text-secondary">Loading…</div>;
+  if (!project) return <div className="loading p-6 text-text-secondary">Загрузка...</div>;
 
   return (
     <div className="project-checks flex flex-col gap-8 px-16 py-12">
       <header className="checks-header flex items-start justify-between gap-8">
         <div className="flex flex-col gap-2 max-w-[700px]">
           <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">
-            Project Checks — {project.name}
+Проверки проекта — {project.name}
           </h2>
           <p className="checks-help text-sm text-text-secondary leading-relaxed">
-            Override the role&apos;s default observe checks for this project. Empty rows are
-            discarded on save. When a role is absent from this list, its built-in defaults apply.
+Переопределите проверки роли по умолчанию для этого проекта. Пустые строки
+отбрасываются при сохранении. Если роль отсутствует в этом списке, применяются её встроенные значения по умолчанию.
           </p>
         </div>
         <div className="checks-actions flex items-center gap-3 shrink-0">
           {status && <span className="checks-status text-xs text-text-tertiary">{status}</span>}
           <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Сохранение..." : "Сохранить"}
           </Button>
         </div>
       </header>
@@ -117,13 +117,13 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
                   {role}
                   {overridden && (
                     <span className="checks-badge font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-accent-blue text-white">
-                      override
+                      переопределено
                     </span>
                   )}
                 </h3>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="secondary" onClick={() => addCheck(role)}>
-                    + Add check
+                    + Добавить проверку
                   </Button>
                   {overridden && (
                     <Button
@@ -131,9 +131,9 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
                       variant="ghost"
                       className="ghost"
                       onClick={() => resetRole(role)}
-                      title="Revert to role default"
+                      title="Вернуть значения роли по умолчанию"
                     >
-                      Reset
+                      Сбросить
                     </Button>
                   )}
                 </div>
@@ -141,7 +141,7 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
 
               {list.length === 0 && (
                 <div className="empty text-xs text-text-tertiary italic">
-                  Using role default.
+                  Используются значения роли по умолчанию.
                 </div>
               )}
 
@@ -149,10 +149,10 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
                 <table className="checks-table w-full border-collapse text-xs">
                   <thead>
                     <tr className="text-left font-mono text-[11px] uppercase tracking-wider text-text-tertiary">
-                      <th className="pb-2 pr-3 border-b border-border font-medium">Name</th>
-                      <th className="pb-2 pr-3 border-b border-border font-medium">Pattern</th>
-                      <th className="pb-2 pr-3 border-b border-border font-medium">Command</th>
-                      <th className="pb-2 pr-3 border-b border-border font-medium w-[120px]">On Fail</th>
+                      <th className="pb-2 pr-3 border-b border-border font-medium">Название</th>
+                      <th className="pb-2 pr-3 border-b border-border font-medium">Шаблон</th>
+                      <th className="pb-2 pr-3 border-b border-border font-medium">Команда</th>
+                      <th className="pb-2 pr-3 border-b border-border font-medium w-[120px]">При ошибке</th>
                       <th className="pb-2 border-b border-border w-8"></th>
                     </tr>
                   </thead>
@@ -164,7 +164,7 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
                             className={FIELD}
                             value={c.name}
                             onChange={(e) => updateCheck(role, i, { name: e.target.value })}
-                            placeholder="e.g. tsc"
+                            placeholder="напр. tsc"
                           />
                         </td>
                         <td className="py-1.5 pr-3">
@@ -189,8 +189,8 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
                             value={c.onFail}
                             onChange={(e) => updateCheck(role, i, { onFail: e.target.value as "warn" | "alert" })}
                           >
-                            <option value="warn">warn</option>
-                            <option value="alert">alert</option>
+                            <option value="warn">предупреждение</option>
+                            <option value="alert">тревога</option>
                           </select>
                         </td>
                         <td className="py-1.5 text-right">
@@ -198,7 +198,7 @@ export function ProjectChecks({ projectId }: { projectId: string }) {
                             type="button"
                             className="ghost danger h-7 w-7 grid place-items-center text-text-tertiary hover:text-accent-red border border-border hover:border-accent-red transition-colors"
                             onClick={() => removeCheck(role, i)}
-                            aria-label={`Remove ${role} check ${i + 1}`}
+                            aria-label={`Удалить проверку ${role} ${i + 1}`}
                           >
                             ×
                           </button>

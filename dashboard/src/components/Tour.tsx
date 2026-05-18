@@ -143,16 +143,16 @@ export function Tour({ open, steps, onClose }: Props) {
             onClick={onClose}
             className="text-[11px] text-text-tertiary hover:text-text-primary"
           >
-            Skip tour
+            Пропустить тур
           </button>
           <div className="flex items-center gap-2">
             {index > 0 && (
               <Button variant="secondary" size="sm" onClick={() => setIndex((i) => i - 1)}>
-                Back
+                Назад
               </Button>
             )}
             <Button variant="primary-red" size="sm" onClick={next}>
-              {isLast ? "Done" : "Next"}
+              {isLast ? "Готово" : "Далее"}
             </Button>
           </div>
         </div>

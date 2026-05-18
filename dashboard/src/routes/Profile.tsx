@@ -17,19 +17,19 @@ export default function Profile() {
       <div className="w-px bg-border shrink-0" />
       <main className="flex-1 flex flex-col gap-8 min-w-0">
         <section className="flex flex-col gap-4">
-          <h2 className="text-xl font-semibold text-text-primary">Profile Details</h2>
+          <h2 className="text-xl font-semibold text-text-primary">Сведения о профиле</h2>
           <Card className="p-6 flex flex-col gap-4">
-            <DetailRow label="Username" value={user.username} mono />
+            <DetailRow label="Имя пользователя" value={user.username} mono />
             <DetailRow label="Email"    value={user.email} />
-            <DetailRow label="Joined"   value={joined} mono />
+            <DetailRow label="Дата регистрации"   value={joined} mono />
           </Card>
         </section>
 
         <section className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-text-primary">My Projects</h2>
+            <h2 className="text-xl font-semibold text-text-primary">Мои проекты</h2>
             <span className="font-mono text-[11px] uppercase tracking-wider text-text-tertiary">
-              {projects?.length ?? 0} total
+              всего {projects?.length ?? 0}
             </span>
           </div>
           <ul className="flex flex-col gap-3">
@@ -50,7 +50,7 @@ export default function Profile() {
               </li>
             ))}
             {(!projects || projects.length === 0) && (
-              <li className="text-text-tertiary italic text-sm">No projects yet.</li>
+              <li className="text-text-tertiary italic text-sm">Пока нет проектов.</li>
             )}
           </ul>
         </section>
@@ -83,9 +83,9 @@ function ProfileSidebar() {
       </div>
 
       <nav className="w-full flex flex-col">
-        <SidebarAction label="Account settings" divider />
-        <SidebarAction label="Notifications" divider />
-        <SidebarAction label="Sign out" danger onClick={handleSignOut} />
+        <SidebarAction label="Настройки аккаунта" divider />
+        <SidebarAction label="Уведомления" divider />
+        <SidebarAction label="Выйти" danger onClick={handleSignOut} />
       </nav>
     </aside>
   );

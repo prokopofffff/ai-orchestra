@@ -7,10 +7,10 @@ import { ArrowRightIcon } from "./ui/Icon";
 
 type Filter = "all" | "webhook" | "task" | "agent";
 const FILTERS: { id: Filter; label: string }[] = [
-  { id: "all",     label: "All"     },
+  { id: "all",     label: "Все"     },
   { id: "webhook", label: "Webhook" },
-  { id: "task",    label: "Task"    },
-  { id: "agent",   label: "Agent"   },
+  { id: "task",    label: "Задача"  },
+  { id: "agent",   label: "Агент"   },
 ];
 
 interface Props {
@@ -25,7 +25,7 @@ export function SignalFeed({ projectId }: Props) {
     refetchInterval: 5_000,
   });
 
-  if (!entries) return <div className="loading p-5 text-text-secondary">Loading signals…</div>;
+  if (!entries) return <div className="loading p-5 text-text-secondary">Загрузка сигналов…</div>;
 
   const filtered = entries.filter((e) => matchesFilter(e, filter));
 
@@ -33,7 +33,7 @@ export function SignalFeed({ projectId }: Props) {
     <div className="signal-feed flex flex-col gap-5 p-10">
       <header className="flex items-center justify-between">
         <h2 className="text-[22px] font-semibold tracking-tight text-text-primary">
-          Signal Feed
+          Лента сигналов
         </h2>
         <LiveChip />
       </header>
@@ -52,7 +52,7 @@ export function SignalFeed({ projectId }: Props) {
       <ul className="signal-list flex flex-col gap-3">
         {filtered.map((e) => <SignalEntry key={e.id} entry={e} />)}
         {filtered.length === 0 && (
-          <li className="empty text-text-tertiary italic">No signals yet</li>
+          <li className="empty text-text-tertiary italic">Сигналов пока нет</li>
         )}
       </ul>
     </div>
@@ -79,7 +79,7 @@ function LiveChip() {
     >
       <span className="h-2 w-2 rounded-full bg-accent-green" />
       <span className="font-mono text-[11px] text-accent-green uppercase tracking-wider">
-        Live
+        Онлайн
       </span>
     </span>
   );

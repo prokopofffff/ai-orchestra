@@ -22,14 +22,14 @@ export function AgentCards({ projectId }: Props) {
   if (!sessions?.length) {
     return (
       <div className="agent-cards empty text-sm text-text-tertiary italic">
-        No active agents
+        Нет активных агентов
       </div>
     );
   }
 
   return (
     <section className="agent-cards flex flex-col gap-3">
-      <h3 className="text-sm font-semibold text-text-primary">Active Agents</h3>
+      <h3 className="text-sm font-semibold text-text-primary">Активные агенты</h3>
       <div className="cards-grid flex gap-3 flex-wrap">
         {sessions.map((s) => {
           const roleColor = ROLE_COLORS[s.role] ?? ROLE_FALLBACK;

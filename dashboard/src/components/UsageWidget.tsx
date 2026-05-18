@@ -16,20 +16,20 @@ export function UsageWidget() {
 
   return (
     <section className="usage-widget flex flex-col gap-4 bg-bg-surface border border-border p-4">
-      <h3 className="text-sm font-semibold text-text-primary">Usage</h3>
+      <h3 className="text-sm font-semibold text-text-primary">Использование</h3>
 
       <div className="usage-sessions grid grid-cols-4 gap-2">
-        <MiniStat label="Total"     value={sessions.total} />
-        <MiniStat label="Running"   value={sessions.running}   accent="text-accent-green" className="running" />
-        <MiniStat label="Completed" value={sessions.completed} />
+        <MiniStat label="Всего"      value={sessions.total} />
+        <MiniStat label="Работает"   value={sessions.running}   accent="text-accent-green" className="running" />
+        <MiniStat label="Завершено"  value={sessions.completed} />
         {sessions.crashed > 0
-          ? <MiniStat label="Crashed" value={sessions.crashed} accent="text-accent-red" className="crashed" />
+          ? <MiniStat label="Сбой" value={sessions.crashed} accent="text-accent-red" className="crashed" />
           : <div />}
       </div>
 
       {Object.keys(byRole).length > 0 && (
         <div className="flex flex-col gap-2">
-          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">By Role</h4>
+          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">По ролям</h4>
           <div className="usage-bars flex flex-col gap-2">
             {Object.entries(byRole)
               .sort((a, b) => b[1].sessions - a[1].sessions)
@@ -48,7 +48,7 @@ export function UsageWidget() {
                       />
                     </div>
                     <span className="usage-bar-count text-[11px] font-mono text-text-tertiary min-w-[80px] text-right">
-                      {data.sessions}{data.running > 0 ? ` (${data.running} active)` : ""}
+                      {data.sessions}{data.running > 0 ? ` (${data.running} активно)` : ""}
                     </span>
                   </div>
                 );
@@ -59,14 +59,14 @@ export function UsageWidget() {
 
       {Object.keys(byModel).length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">By Model</h4>
+          <h4 className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">По моделям</h4>
           <div className="usage-model-list flex flex-col">
             {Object.entries(byModel)
               .sort((a, b) => b[1] - a[1])
               .map(([model, count]) => (
                 <div key={model} className="usage-model-row flex items-center justify-between text-xs py-1">
                   <span className="usage-model-name text-text-primary">{model}</span>
-                  <span className="usage-model-count font-mono text-text-tertiary">{count} sessions</span>
+                  <span className="usage-model-count font-mono text-text-tertiary">{count} сессий</span>
                 </div>
               ))}
           </div>
@@ -74,7 +74,7 @@ export function UsageWidget() {
       )}
 
       <div className="usage-updated font-mono text-[10px] text-text-tertiary text-right">
-        Updated: {new Date(usage.lastChecked).toLocaleTimeString()}
+        Обновлено: {new Date(usage.lastChecked).toLocaleTimeString()}
       </div>
     </section>
   );

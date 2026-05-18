@@ -6,7 +6,7 @@ const FlowDiagram = lazy(() =>
 
 export default function Flow() {
   return (
-    <Suspense fallback={<div className="loading">Loading diagram…</div>}>
+    <Suspense fallback={<div className="loading">Загрузка диаграммы…</div>}>
       <FlowDiagram />
     </Suspense>
   );

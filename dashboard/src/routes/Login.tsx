@@ -57,11 +57,11 @@ function BrandingPanel() {
           </span>
         </div>
         <p className="text-lg text-text-secondary max-w-[420px]" style={{ lineHeight: 1.6 }}>
-          Orchestrate your AI development team.
+          Управляйте своей AI-командой разработки.
           <br />
-          Automate tasks, coordinate agents,
+          Автоматизируйте задачи, координируйте агентов
           <br />
-          and ship faster.
+          и выпускайте релизы быстрее.
         </p>
       </div>
 
@@ -80,9 +80,9 @@ function BrandingPanel() {
 }
 
 const FEATURES = [
-  { icon: <BotIcon size={20} />,       label: "6 specialized AI agents working in parallel" },
-  { icon: <GitBranchIcon size={20} />, label: "GitHub & GitLab integration out of the box" },
-  { icon: <ZapIcon size={20} />,       label: "Event-driven task orchestration via n8n" },
+  { icon: <BotIcon size={20} />,       label: "6 специализированных AI-агентов, работающих параллельно" },
+  { icon: <GitBranchIcon size={20} />, label: "Интеграция с GitHub и GitLab из коробки" },
+  { icon: <ZapIcon size={20} />,       label: "Событийная оркестрация задач через n8n" },
 ];
 
 function AgentViz() {
@@ -144,7 +144,7 @@ function FormPanel() {
       }
       navigate(location.state?.from?.pathname ?? "/kanban", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : "Что-то пошло не так");
     } finally {
       setSubmitting(false);
     }
@@ -157,10 +157,10 @@ function FormPanel() {
       <form onSubmit={onSubmit} className="flex w-full max-w-[400px] flex-col gap-8">
         <header className="flex flex-col gap-2">
           <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-            {isSignup ? "Create your workspace" : "Welcome back"}
+            {isSignup ? "Создайте своё рабочее пространство" : "С возвращением"}
           </h1>
           <p className="text-sm text-text-secondary">
-            {isSignup ? "Sign up to get started" : "Sign in to your workspace"}
+            {isSignup ? "Зарегистрируйтесь, чтобы начать" : "Войдите в своё рабочее пространство"}
           </p>
         </header>
 
@@ -177,7 +177,7 @@ function FormPanel() {
             />
           </Field>
           {isSignup && (
-            <Field label="Username">
+            <Field label="Имя пользователя">
               <input
                 type="text"
                 required
@@ -192,7 +192,7 @@ function FormPanel() {
               />
             </Field>
           )}
-          <Field label="Password" hint={isSignup ? "At least 8 characters" : undefined}>
+          <Field label="Пароль" hint={isSignup ? "Не менее 8 символов" : undefined}>
             <input
               type="password"
               required
@@ -217,13 +217,13 @@ function FormPanel() {
           disabled={submitting}
           className="inline-flex h-[46px] w-full items-center justify-center gap-2 bg-accent-blue text-white text-[15px] font-semibold hover:bg-accent-blue/90 transition-colors disabled:opacity-60"
         >
-          {submitting ? (isSignup ? "Creating…" : "Signing in…") : isSignup ? "Create account" : "Sign In"}
+          {submitting ? (isSignup ? "Создание…" : "Вход…") : isSignup ? "Создать аккаунт" : "Войти"}
           {!submitting && <ArrowRightIcon size={16} />}
         </button>
 
         <div className="flex items-center gap-4">
           <div className="h-px flex-1 bg-border" />
-          <span className="text-xs text-text-tertiary">or continue with</span>
+          <span className="text-xs text-text-tertiary">или войдите через</span>
           <div className="h-px flex-1 bg-border" />
         </div>
 
@@ -233,13 +233,13 @@ function FormPanel() {
         </div>
 
         <p className="text-xs text-text-tertiary text-center">
-          {isSignup ? "Already have an account?" : "Don't have an account?"}{" "}
+          {isSignup ? "Уже есть аккаунт?" : "Нет аккаунта?"}{" "}
           <button
             type="button"
             onClick={() => { setMode(isSignup ? "login" : "signup"); setError(null); }}
             className="text-accent-blue hover:underline"
           >
-            {isSignup ? "Sign in" : "Sign up"}
+            {isSignup ? "Войти" : "Зарегистрироваться"}
           </button>
         </p>
       </form>
@@ -264,7 +264,7 @@ function OAuthButton({ icon, label }: { icon: React.ReactNode; label: string }) 
     <button
       type="button"
       disabled
-      title="OAuth not yet wired up"
+      title="OAuth ещё не подключён"
       className="inline-flex h-11 flex-1 items-center justify-center gap-2 bg-bg-surface border border-border text-sm text-text-tertiary cursor-not-allowed"
     >
       {icon}

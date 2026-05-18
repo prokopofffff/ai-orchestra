@@ -39,19 +39,19 @@ export function OnboardingChecklist() {
     <section className="onboarding-checklist flex flex-col gap-3 bg-bg-surface border border-border p-4">
       <header className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <h3 className="text-sm font-semibold text-text-primary">Getting started</h3>
+          <h3 className="text-sm font-semibold text-text-primary">Начало работы</h3>
           <span className="font-mono text-[11px] text-text-tertiary">
-            {completed} of {data.steps.length} done
+            {completed} из {data.steps.length} выполнено
           </span>
         </div>
         <button
           onClick={dismiss}
           disabled={dismissing}
           className="text-[11px] text-text-tertiary hover:text-text-primary"
-          aria-label="Dismiss onboarding"
+          aria-label="Скрыть онбординг"
           type="button"
         >
-          Dismiss
+          Скрыть
         </button>
       </header>
 

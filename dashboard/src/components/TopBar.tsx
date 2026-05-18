@@ -6,13 +6,13 @@ import { ChevronDownIcon } from "./ui/Icon";
 import { useRouteTour } from "./TourHost";
 
 const TABS = [
-  { to: "/kanban",   label: "Kanban"   },
-  { to: "/chat",     label: "Chat"     },
-  { to: "/signals",  label: "Signals"  },
-  { to: "/agents",   label: "Agents"   },
-  { to: "/flow",     label: "Flow"     },
-  { to: "/logs",     label: "Logs"     },
-  { to: "/settings", label: "Settings" },
+  { to: "/kanban",   label: "Канбан"     },
+  { to: "/chat",     label: "Чат"        },
+  { to: "/signals",  label: "Сигналы"    },
+  { to: "/agents",   label: "Агенты"     },
+  { to: "/flow",     label: "Поток"      },
+  { to: "/logs",     label: "Логи"       },
+  { to: "/settings", label: "Настройки"  },
 ] as const;
 
 export function TopBar() {
@@ -66,8 +66,8 @@ function HelpButton() {
     <button
       type="button"
       onClick={open}
-      aria-label="Show tour for this page"
-      title="Show tour"
+      aria-label="Показать тур по этой странице"
+      title="Показать тур"
       className="grid h-7 w-7 place-items-center rounded-full border border-border text-text-tertiary hover:text-text-primary hover:border-text-secondary transition-colors text-xs font-semibold"
     >
       ?
@@ -104,7 +104,7 @@ function UserMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label="User menu"
+        aria-label="Меню пользователя"
         className="inline-flex items-center gap-2 px-2 py-1.5 hover:bg-bg-hover transition-colors"
       >
         <span className="grid h-7 w-7 place-items-center rounded-full bg-accent-blue text-xs font-semibold text-white">
@@ -121,7 +121,7 @@ function UserMenu() {
             onClick={() => { setOpen(false); navigate("/profile"); }}
             className="block w-full text-left px-4 py-2.5 text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
           >
-            Profile
+            Профиль
           </button>
           <div className="border-t border-border-subtle" />
           <button
@@ -129,7 +129,7 @@ function UserMenu() {
             onClick={handleSignOut}
             className="block w-full text-left px-4 py-2.5 text-xs text-accent-red hover:bg-bg-hover transition-colors"
           >
-            Sign out
+            Выйти
           </button>
         </div>
       )}
@@ -151,13 +151,13 @@ function ProjectSelector({
   return (
     <label className="relative inline-flex items-center gap-2 px-3 py-1.5 border border-border cursor-pointer">
       <span className="font-mono text-xs text-text-secondary font-medium">
-        {currentName ?? "No project"}
+        {currentName ?? "Нет проекта"}
       </span>
       <ChevronDownIcon size={14} className="text-text-tertiary" />
       <select
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
-        aria-label="Select project"
+        aria-label="Выбрать проект"
         className="absolute inset-0 w-full cursor-pointer opacity-0"
       >
         {projects?.map((p) => (

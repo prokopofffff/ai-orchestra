@@ -49,9 +49,9 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between gap-3 px-5 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold text-text-primary">Select a project folder</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Выберите папку проекта</h2>
           <button
-            aria-label="Close"
+            aria-label="Закрыть"
             onClick={onClose}
             className="text-text-tertiary hover:text-text-primary text-xl leading-none"
           >
@@ -89,24 +89,24 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
               onClick={() => setPath(data.home)}
               className="ml-auto text-[11px] text-text-tertiary hover:text-text-primary px-2 py-0.5 border border-border-subtle"
             >
-              ~ Home
+~ Домашняя папка
             </button>
           )}
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
           {isLoading && (
-            <div className="p-6 text-sm text-text-tertiary">Loading…</div>
+            <div className="p-6 text-sm text-text-tertiary">Загрузка...</div>
           )}
           {error && (
             <div className="p-6 text-sm text-accent-red">
-              {error instanceof Error ? error.message : "Failed to read directory."}
+              {error instanceof Error ? error.message : "Не удалось прочитать директорию."}
               <button
                 type="button"
                 onClick={() => refetch()}
                 className="ml-2 text-text-tertiary hover:text-text-primary underline"
               >
-                Retry
+                Повторить
               </button>
             </div>
           )}
@@ -126,7 +126,7 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
               )}
               {data.entries.length === 0 ? (
                 <li className="px-5 py-6 text-xs text-text-tertiary">
-                  No subdirectories here.
+                  Здесь нет подпапок.
                 </li>
               ) : data.entries.map((e) => (
                 <li key={e.path}>
@@ -157,7 +157,7 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
               onChange={(e) => setShowHidden(e.target.checked)}
               className="accent-accent-red"
             />
-            Show hidden
+Показывать скрытые
           </label>
           <div className="flex items-center gap-3 min-w-0">
             <code className="font-mono text-[11px] text-text-tertiary truncate max-w-[280px]" title={cwd}>
@@ -169,7 +169,7 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
               disabled={!cwd}
               onClick={() => { onSelect(cwd); onClose(); }}
             >
-              Select this folder
+Выбрать эту папку
             </Button>
           </div>
         </footer>

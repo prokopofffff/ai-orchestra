@@ -45,26 +45,26 @@ const fakeTask: Task = {
 describe("CreateForms", () => {
   it("renders only + Project when no projectId is provided", () => {
     wrap(<CreateForms projectId="" onCreated={() => {}} />);
-    expect(screen.getByRole("button", { name: "+ Project" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "+ Task" })).toBeNull();
+    expect(screen.getByRole("button", { name: "+ Проект" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Задача" })).toBeNull();
   });
 
   it("renders + Task when projectId is provided", () => {
     wrap(<CreateForms projectId="p1" onCreated={() => {}} />);
-    expect(screen.getByRole("button", { name: "+ Task" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "+ Project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ Задача" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ Проект" })).toBeInTheDocument();
   });
 
   it("toggles the project form on + Project click", async () => {
     const user = userEvent.setup();
     wrap(<CreateForms projectId="p1" onCreated={() => {}} />);
-    expect(screen.queryByPlaceholderText("Project name")).toBeNull();
+    expect(screen.queryByPlaceholderText("Название проекта")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "+ Project" }));
-    expect(screen.getByPlaceholderText("Project name")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "+ Проект" }));
+    expect(screen.getByPlaceholderText("Название проекта")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "+ Project" }));
-    expect(screen.queryByPlaceholderText("Project name")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "+ Проект" }));
+    expect(screen.queryByPlaceholderText("Название проекта")).toBeNull();
   });
 
   it("creates a project on submit and calls onCreated", async () => {
@@ -73,10 +73,10 @@ describe("CreateForms", () => {
     const user = userEvent.setup();
     wrap(<CreateForms projectId="" onCreated={onCreated} />);
 
-    await user.click(screen.getByRole("button", { name: "+ Project" }));
-    await user.type(screen.getByPlaceholderText("Project name"), "My Project");
-    await user.type(screen.getByPlaceholderText(/Local path/), "/Users/you/myapp");
-    await user.click(screen.getByRole("button", { name: "Create Project" }));
+    await user.click(screen.getByRole("button", { name: "+ Проект" }));
+    await user.type(screen.getByPlaceholderText("Название проекта"), "My Project");
+    await user.type(screen.getByPlaceholderText(/Локальный путь/), "/Users/you/myapp");
+    await user.click(screen.getByRole("button", { name: "Создать проект" }));
 
     await waitFor(() => expect(api.createProject).toHaveBeenCalledWith({
       name: "My Project",
@@ -90,9 +90,9 @@ describe("CreateForms", () => {
     const user = userEvent.setup();
     wrap(<CreateForms projectId="" onCreated={() => {}} />);
 
-    await user.click(screen.getByRole("button", { name: "+ Project" }));
-    await user.type(screen.getByPlaceholderText("Project name"), "Bare");
-    await user.click(screen.getByRole("button", { name: "Create Project" }));
+    await user.click(screen.getByRole("button", { name: "+ Проект" }));
+    await user.type(screen.getByPlaceholderText("Название проекта"), "Bare");
+    await user.click(screen.getByRole("button", { name: "Создать проект" }));
 
     await waitFor(() => expect(api.createProject).toHaveBeenCalledWith({
       name: "Bare",
@@ -106,8 +106,8 @@ describe("CreateForms", () => {
     const user = userEvent.setup();
     wrap(<CreateForms projectId="p1" onCreated={onCreated} />);
 
-    await user.click(screen.getByRole("button", { name: "+ Task" }));
-    await user.type(screen.getByPlaceholderText("Task title"), "Fix bug");
+    await user.click(screen.getByRole("button", { name: "+ Задача" }));
+    await user.type(screen.getByPlaceholderText("Название задачи"), "Fix bug");
 
     const selects = screen.getAllByRole("combobox");
     // Order: type, priority, assignee
@@ -115,7 +115,7 @@ describe("CreateForms", () => {
     await user.selectOptions(selects[1], "high");
     await user.selectOptions(selects[2], "backend");
 
-    await user.click(screen.getByRole("button", { name: "Create Task" }));
+    await user.click(screen.getByRole("button", { name: "Создать задачу" }));
 
     await waitFor(() => expect(api.createTask).toHaveBeenCalledWith({
       projectId: "p1",
@@ -131,8 +131,8 @@ describe("CreateForms", () => {
     const user = userEvent.setup();
     wrap(<CreateForms projectId="p1" onCreated={() => {}} />);
 
-    await user.click(screen.getByRole("button", { name: "+ Task" }));
-    await user.click(screen.getByRole("button", { name: "Create Task" }));
+    await user.click(screen.getByRole("button", { name: "+ Задача" }));
+    await user.click(screen.getByRole("button", { name: "Создать задачу" }));
 
     expect(api.createTask).not.toHaveBeenCalled();
   });

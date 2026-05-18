@@ -61,21 +61,21 @@ export function FlowDiagram() {
     <div className="flow-diagram flex flex-col gap-8 px-16 py-12 h-full min-h-0">
       <header className="flow-header flex items-end justify-between gap-8">
         <h2 className="text-5xl font-semibold tracking-tight text-text-primary" style={{ letterSpacing: "-2px" }}>
-          Flow
+          Поток
         </h2>
         <div data-tour="flow.toggle" className="flow-view-toggle flex h-9 border border-border">
           <ToggleButton active={view === "state"} onClick={() => setView("state")}>
-            State Machine
+            Машина состояний
           </ToggleButton>
           <ToggleButton active={view === "roles"} onClick={() => setView("roles")}>
-            Role Graph
+            Граф ролей
           </ToggleButton>
         </div>
       </header>
 
       {error && (
         <div className="flow-error text-sm text-accent-red bg-accent-red/10 px-3 py-2">
-          Failed to render: {error}
+          Не удалось отобразить: {error}
         </div>
       )}
 
@@ -90,18 +90,18 @@ export function FlowDiagram() {
 
       <details className="flow-source">
         <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary font-mono py-1">
-          Edges ({json.edges.length})
+          Рёбра ({json.edges.length})
         </summary>
         <div className="overflow-x-auto">
           <table className="flow-edges-table w-full mt-2 text-xs border-collapse">
             <thead>
               <tr className="text-text-tertiary font-mono text-[11px] uppercase tracking-wider">
-                <th className="text-left py-1.5 px-2 border-b border-border">action</th>
-                <th className="text-left py-1.5 px-2 border-b border-border">from</th>
-                <th className="text-left py-1.5 px-2 border-b border-border">→ to</th>
-                <th className="text-left py-1.5 px-2 border-b border-border">state</th>
-                <th className="text-left py-1.5 px-2 border-b border-border">effect</th>
-                <th className="text-left py-1.5 px-2 border-b border-border">description</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">действие</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">от</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">→ к</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">состояние</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">эффект</th>
+                <th className="text-left py-1.5 px-2 border-b border-border">описание</th>
               </tr>
             </thead>
             <tbody>
@@ -128,7 +128,7 @@ export function FlowDiagram() {
 
       <details className="flow-source">
         <summary className="cursor-pointer text-xs text-text-tertiary hover:text-text-secondary font-mono py-1">
-          Mermaid source
+          Исходник Mermaid
         </summary>
         <pre className="mt-2 bg-bg-sidebar border border-border-subtle p-3 text-[11px] text-text-tertiary font-mono overflow-x-auto">
           {src}

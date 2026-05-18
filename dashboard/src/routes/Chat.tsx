@@ -33,13 +33,13 @@ function ChatSidebar({
   return (
     <aside data-tour="chat.sidebar" className="w-[280px] shrink-0 min-h-0 bg-bg-sidebar border-r border-border py-4 flex flex-col">
       <div className="shrink-0 flex items-center justify-between px-4">
-        <span className="text-[14px] font-semibold text-text-primary">Conversations</span>
+        <span className="text-[14px] font-semibold text-text-primary">Беседы</span>
         <button
           className="inline-flex items-center gap-1 bg-accent-blue text-white text-[11px] font-medium px-2.5 py-1.5 hover:bg-accent-blue/90"
-          aria-label="New conversation"
+          aria-label="Новая беседа"
           type="button"
         >
-          <PlusIcon size={12} /> new
+          <PlusIcon size={12} /> новая
         </button>
       </div>
 

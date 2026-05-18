@@ -11,25 +11,25 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   kanban: [
     {
       anchor: '[data-tour="kanban.create-task"]',
-      title: "Create a task",
-      body: "Drop a one-liner here and AI Orchestra spawns the right agent for it. Type, priority, and assignee can all be set inline — leave them at defaults and Tech Lead picks.",
+      title: "Создайте задачу",
+      body: "Введите здесь одну строку, и AI Orchestra назначит подходящего агента. Тип, приоритет и исполнителя можно задать прямо здесь — оставьте значения по умолчанию, и Tech Lead выберет сам.",
       placement: "bottom",
     },
     {
       anchor: '[data-tour="kanban.create-project"]',
-      title: "Switch or add a project",
-      body: "Each project is its own repo / local directory with its own team of agents. New users start with one — add more from here.",
+      title: "Переключите или добавьте проект",
+      body: "Каждый проект — это отдельный репозиторий или локальная директория со своей командой агентов. Новые пользователи начинают с одного — добавьте больше отсюда.",
       placement: "bottom",
     },
     {
       anchor: '[data-tour="kanban.board"]',
-      title: "Live status board",
-      body: "Tasks flow left to right: Backlog → Design → Development → Testing → Review → Done. The Blocked column collects tasks that hit the safety caps or got cancelled.",
+      title: "Доска статусов в реальном времени",
+      body: "Задачи движутся слева направо: Бэклог → Дизайн → Разработка → Тестирование → Ревью → Готово. Колонка Заблокировано собирает задачи, которые упёрлись в лимиты безопасности или были отменены.",
       placement: "top",
     },
     {
-      title: "Click any task to open it",
-      body: "Inside you'll see state, PR link, comments, and the frozen-reason banner if a safety cap tripped. From there you can also unfreeze a stuck task.",
+      title: "Нажмите на любую задачу, чтобы открыть её",
+      body: "Внутри Вы увидите состояние, ссылку на PR, комментарии и баннер с причиной заморозки, если сработал лимит безопасности. Оттуда же можно разморозить застрявшую задачу.",
       placement: "center",
     },
   ],
@@ -37,25 +37,25 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   chat: [
     {
       anchor: '[data-tour="chat.sidebar"]',
-      title: "Conversations per project",
-      body: "Switch between project conversations from the sidebar. Each project gets its own thread with Tech Lead.",
+      title: "Чаты по проектам",
+      body: "Переключайтесь между чатами проектов в боковой панели. Каждый проект имеет свой собственный тред с Tech Lead.",
       placement: "right",
     },
     {
       anchor: '[data-tour="chat.input"]',
-      title: "Talk to Tech Lead",
-      body: "Describe what you want — a feature, a bug fix, a refactor. Tech Lead decomposes the work, picks the right specialist agents, and reports back here as things ship.",
+      title: "Общайтесь с Tech Lead",
+      body: "Опишите, что Вам нужно — фичу, исправление бага, рефакторинг. Tech Lead разобьёт работу на части, выберет подходящих специализированных агентов и будет отчитываться здесь по мере выполнения.",
       placement: "top",
     },
     {
       anchor: '[data-tour="chat.auto-merge"]',
-      title: "Auto-merge approved PRs",
-      body: "Off by default: Tech Lead approves a PR, you get notified, and you click Merge in GitHub/GitLab. Turn this on and orchestra merges approved PRs for you (squash) — useful on personal projects where you trust the review. On merge conflict, branch protection, or failing checks the PR is left open and you get a high-priority notification with the reason.",
+      title: "Автомерж одобренных PR",
+      body: "По умолчанию выключено: Tech Lead одобряет PR, Вы получаете уведомление и нажимаете Merge в GitHub/GitLab. Включите этот режим, и оркестратор сам выполнит мерж одобренных PR (squash) — удобно для личных проектов, где Вы доверяете ревью. При конфликте мержа, защите ветки или провале проверок PR останется открытым, и Вы получите уведомление с высоким приоритетом и причиной.",
       placement: "bottom",
     },
     {
-      title: "System messages",
-      body: "Anything Tech Lead delegates or completes shows up as a system message in this stream. The full audit trail lives on the Signals tab.",
+      title: "Системные сообщения",
+      body: "Всё, что Tech Lead делегирует или завершает, отображается как системное сообщение в этом потоке. Полный аудит-лог доступен на вкладке Сигналы.",
       placement: "center",
     },
   ],
@@ -63,13 +63,13 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   signals: [
     {
       anchor: '[data-tour="signals.feed"]',
-      title: "Every event in one stream",
-      body: "Signals are the language agents speak: `assign_dev`, `pr_created`, `tests_failed`, `escalate`, etc. Each one is gated by flow-guard and stored here as the source of truth.",
+      title: "Все события в одном потоке",
+      body: "Сигналы — это язык, на котором говорят агенты: `assign_dev`, `pr_created`, `tests_failed`, `escalate` и т. д. Каждый проходит через flow-guard и сохраняется здесь как источник истины.",
       placement: "center",
     },
     {
-      title: "Filters by role and project",
-      body: "Use the filters to narrow down to a specific agent or a specific project. Anything tagged `rejected` is something flow-guard refused — often an unsafe transition or a cap-exceeded event.",
+      title: "Фильтры по роли и проекту",
+      body: "Используйте фильтры, чтобы сузить выборку до конкретного агента или проекта. Всё, помеченное `rejected`, — это то, что flow-guard отклонил, обычно из-за небезопасного перехода или превышения лимита.",
       placement: "center",
     },
   ],
@@ -77,20 +77,20 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   agents: [
     {
       anchor: '[data-tour="agents.graph"]',
-      title: "Live agent graph",
-      body: "Active agents and the signals connecting them, updated in real time. Pulsing nodes are currently running; arrows are recent signals between roles.",
+      title: "Граф агентов в реальном времени",
+      body: "Активные агенты и связывающие их сигналы, обновляются в реальном времени. Пульсирующие узлы — это активно работающие агенты; стрелки — недавние сигналы между ролями.",
       placement: "bottom",
     },
     {
       anchor: '[data-tour="agents.cards"]',
-      title: "Per-role status cards",
-      body: "Each agent role with its current session, recent activity, and queued work. Click a card to see logs for that agent.",
+      title: "Карточки статуса по ролям",
+      body: "Каждая роль агента с текущей сессией, недавней активностью и очередью работы. Нажмите на карточку, чтобы увидеть логи этого агента.",
       placement: "top",
     },
     {
       anchor: '[data-tour="agents.cost"]',
-      title: "Today's spend",
-      body: "Cost so far this 24h window with a breakdown by role and model. Goes red when you cross the project's daily cap.",
+      title: "Расходы за сегодня",
+      body: "Стоимость за последние 24 часа с разбивкой по роли и модели. Краснеет, когда Вы превышаете дневной лимит проекта.",
       placement: "left",
     },
   ],
@@ -98,14 +98,14 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   flow: [
     {
       anchor: '[data-tour="flow.toggle"]',
-      title: "Two views of the workflow",
-      body: "State Machine shows the task lifecycle: every state a task can be in and the signals that move it forward. Role Graph shows which agent can talk to which.",
+      title: "Два представления рабочего процесса",
+      body: "State Machine показывает жизненный цикл задачи: все возможные состояния и сигналы, которые их продвигают. Role Graph показывает, какой агент с каким может общаться.",
       placement: "bottom",
     },
     {
       anchor: '[data-tour="flow.canvas"]',
-      title: "The contract agents must follow",
-      body: "Both diagrams come from the same source-of-truth in `shared/flow.ts`. If an agent tries to send a signal not in this graph, flow-guard rejects it — that's how we keep things sane.",
+      title: "Контракт, которому обязаны следовать агенты",
+      body: "Обе диаграммы строятся из единого источника истины в `shared/flow.ts`. Если агент попытается отправить сигнал, отсутствующий в этом графе, flow-guard его отклонит — так мы сохраняем порядок.",
       placement: "top",
     },
   ],
@@ -113,13 +113,13 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   logs: [
     {
       anchor: '[data-tour="logs.list"]',
-      title: "Raw output from agent runs",
-      body: "Every line stdout/stderr, every check result, every SDK message ends up here. Useful when an agent does something surprising — you can replay exactly what it saw and did.",
+      title: "Сырой вывод запусков агентов",
+      body: "Каждая строка stdout/stderr, каждый результат проверки, каждое SDK-сообщение попадает сюда. Полезно, когда агент сделал что-то неожиданное — Вы можете воспроизвести в точности, что он видел и делал.",
       placement: "center",
     },
     {
-      title: "Filter by role and level",
-      body: "`error` for problems, `system` for orchestration events (start/end/timeout/budget), `stdout` for normal output. Narrow down to a specific agent or session as needed.",
+      title: "Фильтр по роли и уровню",
+      body: "`error` — для проблем, `system` — для событий оркестрации (старт/завершение/таймаут/бюджет), `stdout` — для обычного вывода. Сужайте до конкретного агента или сессии по необходимости.",
       placement: "center",
     },
   ],
@@ -127,21 +127,21 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
   settings: [
     {
       anchor: '[data-tour="settings.tabs"]',
-      title: "Project · Agents · Checks · Members · Limits · System",
-      body: "Project basics on the first tab — including the Telegram bot for this project (each project gets its own). Agents tab picks model + effort per role. Checks defines per-file lint/test commands. Members invites people. Limits sets safety caps. System is global Claude / GitHub auth.",
+      title: "Проект · Агенты · Проверки · Участники · Лимиты · Система",
+      body: "На первой вкладке — базовые настройки проекта, включая Telegram-бот для этого проекта (у каждого проекта свой). Вкладка Агенты выбирает модель и уровень усилий для каждой роли. Проверки задают команды линта и тестов для файлов. Участники приглашают людей. Лимиты задают пределы безопасности. Система — глобальная авторизация Claude / GitHub.",
       placement: "bottom",
     },
     {
-      title: "All settings are per-project",
-      body: "Except System — that's orchestra-wide. Every other tab applies to the currently-selected project, including model overrides, member roles, cost caps, and the Telegram bot token.",
+      title: "Все настройки — на уровне проекта",
+      body: "Кроме Системы — она глобальна для оркестратора. Все остальные вкладки применяются к текущему выбранному проекту, включая переопределения модели, роли участников, лимиты расходов и токен Telegram-бота.",
       placement: "center",
     },
   ],
 
   profile: [
     {
-      title: "Your account",
-      body: "Username, email, password. Logout from here too. Project membership invites go to the email registered on this page.",
+      title: "Ваш аккаунт",
+      body: "Имя пользователя, email, пароль. Выход — тоже отсюда. Приглашения в проекты приходят на email, указанный на этой странице.",
       placement: "center",
     },
   ],

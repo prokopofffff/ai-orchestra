@@ -6,9 +6,9 @@ export function EmptyProjects() {
   const qc = useQueryClient();
   return (
     <div className="flex flex-col items-center gap-4 p-16 text-center">
-      <h2 className="text-xl font-semibold text-text-primary">No projects yet</h2>
+      <h2 className="text-xl font-semibold text-text-primary">Пока нет проектов</h2>
       <p className="text-sm text-text-secondary">
-        Create your first project to get started.
+        Создайте свой первый проект, чтобы начать.
       </p>
       <div className="mt-4 w-full max-w-2xl">
         <CreateForms

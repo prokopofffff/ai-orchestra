@@ -23,22 +23,22 @@ export function CreateForms({ projectId, onCreated }: Props) {
           <span data-tour="kanban.create-task">
             <Button
               variant="primary-red"
-              aria-label="+ Task"
+              aria-label="+ Задача"
               onClick={() => setShowTaskForm((v) => !v)}
               leadingIcon={<PlusIcon size={14} />}
             >
-              Task
+              Задача
             </Button>
           </span>
         )}
         <span data-tour="kanban.create-project">
           <Button
             variant="secondary"
-            aria-label="+ Project"
+            aria-label="+ Проект"
             onClick={() => setShowProjectForm((v) => !v)}
             leadingIcon={<PlusIcon size={14} />}
           >
-            Project
+            Проект
           </Button>
         </span>
       </div>
@@ -83,21 +83,21 @@ function ProjectForm({ onCreated }: { onCreated: () => void }) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Project name"
+          placeholder="Название проекта"
           required
           className={INPUT_CLS}
         />
         <input
           value={localPath}
           onChange={(e) => setLocalPath(e.target.value)}
-          placeholder="Local path (or click Browse)"
+          placeholder="Локальный путь (или нажмите «Обзор»)"
           className={INPUT_CLS}
           style={{ minWidth: 260 }}
         />
         <Button variant="secondary" size="md" type="button" onClick={() => setPickerOpen(true)}>
-          Browse…
+          Обзор…
         </Button>
-        <Button variant="primary-red" type="submit">Create Project</Button>
+        <Button variant="primary-red" type="submit">Создать проект</Button>
       </form>
       {pickerOpen && (
         <FolderPicker
@@ -132,7 +132,7 @@ function TaskForm({ projectId, onCreated }: { projectId: string; onCreated: () =
 
   return (
     <form className="inline-form flex items-center gap-2 flex-wrap" onSubmit={handleSubmit}>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title" required className={INPUT_CLS} />
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название задачи" required className={INPUT_CLS} />
       <select value={type} onChange={(e) => setType(e.target.value)} className={INPUT_CLS}>
         {["epic", "task", "subtask", "bug", "feature"].map((t) => <option key={t}>{t}</option>)}
       </select>
@@ -140,10 +140,10 @@ function TaskForm({ projectId, onCreated }: { projectId: string; onCreated: () =
         {["low", "normal", "high", "immediate"].map((p) => <option key={p}>{p}</option>)}
       </select>
       <select value={assigneeRole} onChange={(e) => setAssigneeRole(e.target.value)} className={INPUT_CLS}>
-        <option value="">Unassigned</option>
+        <option value="">Не назначен</option>
         {["tech-lead", "designer", "frontend", "backend", "qa", "devops"].map((r) => <option key={r}>{r}</option>)}
       </select>
-      <Button variant="primary-red" type="submit">Create Task</Button>
+      <Button variant="primary-red" type="submit">Создать задачу</Button>
     </form>
   );
 }

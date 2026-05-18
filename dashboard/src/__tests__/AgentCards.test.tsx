@@ -30,7 +30,7 @@ describe("AgentCards", () => {
   it("renders the empty state when there are no sessions", async () => {
     vi.mocked(api.fetchSessions).mockResolvedValue([]);
     renderWithQuery(<AgentCards projectId="p1" />);
-    await screen.findByText(/No active agents/);
+    await screen.findByText(/Нет активных агентов/);
   });
 
   it("renders one card per session with role, model, status", async () => {
@@ -39,7 +39,7 @@ describe("AgentCards", () => {
       sess({ role: "frontend", model: "opus",   status: "sleeping" }),
     ]);
     renderWithQuery(<AgentCards projectId="p1" />);
-    await screen.findByText("Active Agents");
+    await screen.findByText("Активные агенты");
 
     expect(screen.getByText("backend")).toBeInTheDocument();
     expect(screen.getByText("frontend")).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe("AgentCards", () => {
       sess({ status: "crashed" }),
     ]);
     renderWithQuery(<AgentCards projectId="p1" />);
-    await screen.findByText("Active Agents");
+    await screen.findByText("Активные агенты");
 
     const runCard = screen.getByText("running").closest(".agent-card")!;
     const crashCard = screen.getByText("crashed").closest(".agent-card")!;

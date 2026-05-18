@@ -34,14 +34,14 @@ describe("KanbanBoard", () => {
   it("shows a loading state while the query resolves", async () => {
     vi.mocked(api.fetchTasks).mockImplementation(() => new Promise(() => {})); // never resolves
     renderWithQuery(<KanbanBoard projectId="p1" onTaskClick={() => {}} />);
-    expect(screen.getByText(/Loading tasks/)).toBeInTheDocument();
+    expect(screen.getByText(/Загрузка задач/)).toBeInTheDocument();
   });
 
   it("renders every phase, even empty ones (count = 0)", async () => {
     vi.mocked(api.fetchTasks).mockResolvedValue([]);
     renderWithQuery(<KanbanBoard projectId="p1" onTaskClick={() => {}} />);
-    await screen.findByText("Backlog");
-    for (const phase of ["Backlog", "Design", "Development", "Testing", "Review", "Done", "Blocked"]) {
+    await screen.findByText("Бэклог");
+    for (const phase of ["Бэклог", "Дизайн", "Разработка", "Тестирование", "Ревью", "Готово", "Заблокировано"]) {
       expect(screen.getByText(phase)).toBeInTheDocument();
     }
   });
@@ -58,9 +58,9 @@ describe("KanbanBoard", () => {
     const mergedCard = await screen.findByText("Merged One");
 
     // Each card sits inside a kanban-column — walk up and check the column header.
-    expect(newCard.closest(".kanban-column")!.querySelector("h3")!.textContent).toMatch(/Backlog/);
-    expect(devCard.closest(".kanban-column")!.querySelector("h3")!.textContent).toMatch(/Development/);
-    expect(mergedCard.closest(".kanban-column")!.querySelector("h3")!.textContent).toMatch(/Done/);
+    expect(newCard.closest(".kanban-column")!.querySelector("h3")!.textContent).toMatch(/Бэклог/);
+    expect(devCard.closest(".kanban-column")!.querySelector("h3")!.textContent).toMatch(/Разработка/);
+    expect(mergedCard.closest(".kanban-column")!.querySelector("h3")!.textContent).toMatch(/Готово/);
   });
 
   it("renders assignee role chip when set", async () => {

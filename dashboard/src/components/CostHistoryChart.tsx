@@ -48,7 +48,7 @@ export function CostHistoryChart() {
   return (
     <section className="cost-history flex flex-col gap-3 bg-bg-surface border border-border p-4">
       <header className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-text-primary">Cost history</h3>
+        <h3 className="text-sm font-semibold text-text-primary">История стоимости</h3>
         <div className="flex items-center gap-1">
           {([7, 30] as Range[]).map((r) => (
             <button
@@ -61,7 +61,7 @@ export function CostHistoryChart() {
                   : "border-border text-text-tertiary hover:text-text-primary",
               ].join(" ")}
             >
-              {r}d
+              {r}д
             </button>
           ))}
         </div>
@@ -70,7 +70,7 @@ export function CostHistoryChart() {
       <div className="flex items-baseline justify-between">
         <span className="text-2xl font-semibold text-text-primary">${grandTotal.toFixed(2)}</span>
         <span className="text-[11px] font-mono text-text-tertiary">
-          {hoverEntry ? `${hoverEntry.day} · $${hoverEntry.total.toFixed(2)}` : `${range} days · max $${max.toFixed(2)}/day`}
+          {hoverEntry ? `${hoverEntry.day} · $${hoverEntry.total.toFixed(2)}` : `${range} дн. · макс $${max.toFixed(2)}/день`}
         </span>
       </div>
 

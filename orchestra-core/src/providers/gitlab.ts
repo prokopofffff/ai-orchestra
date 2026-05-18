@@ -1,6 +1,6 @@
 import type {
   GitProvider, CreatePROptions, CreatePRResult, PRInfo, ReviewOptions,
-  SubmitReviewResult, ReviewsPayload, WebhookParser,
+  SubmitReviewResult, ReviewsPayload, WebhookParser, MergePROptions, MergePRResult,
 } from "./types";
 
 export interface GitLabConfig {
@@ -174,6 +174,33 @@ export class GitLabProvider implements GitProvider {
       }));
 
     return { reviews, comments };
+  }
+
+  async mergePR(prUrl: string, opts: MergePROptions = {}): Promise<MergePRResult> {
+    const pid = await this.projectId();
+    const iid = parseMrIid(prUrl);
+    const body: Record<string, unknown> = {};
+    if (opts.method === "squash") body.squash = true;
+    if (opts.commitTitle) body.merge_commit_message = opts.commitTitle;
+    const res = await fetch(`${this.apiBase}/projects/${pid}/merge_requests/${iid}/merge`, {
+      method: "PUT",
+      headers: { "PRIVATE-TOKEN": this.token, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    // 200 → merged, 405/406/409 → not mergeable (WIP, conflicts, pipeline
+    // pending, branch protection). Surface as soft refusal.
+    if (res.ok) {
+      const data = (await res.json()) as { sha?: string; state?: string; merge_commit_sha?: string };
+      const sha = data.merge_commit_sha ?? data.sha;
+      if (data.state === "merged" && sha) return { merged: true, sha };
+      return { merged: false, reason: `state=${data.state ?? "unknown"}` };
+    }
+    if (res.status === 405 || res.status === 406 || res.status === 409 || res.status === 422) {
+      const data = (await res.json().catch(() => ({}))) as { message?: string | string[]; error?: string };
+      const msg = Array.isArray(data.message) ? data.message.join("; ") : (data.message ?? data.error ?? `GitLab ${res.status}`);
+      return { merged: false, reason: msg };
+    }
+    throw new Error(`GitLab ${res.status} on merge`);
   }
 
   tokenizeCloneUrl(): string {

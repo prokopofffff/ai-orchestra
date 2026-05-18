@@ -1,6 +1,6 @@
 import type {
   GitProvider, CreatePROptions, CreatePRResult, PRInfo, ReviewOptions,
-  SubmitReviewResult, ReviewsPayload, WebhookParser,
+  SubmitReviewResult, ReviewsPayload, WebhookParser, MergePROptions, MergePRResult,
 } from "./types";
 
 export interface GitHubConfig {
@@ -108,6 +108,28 @@ export class GitHubProvider implements GitProvider {
         user: c.user?.login ?? "", createdAt: c.created_at,
       })),
     };
+  }
+
+  async mergePR(prUrl: string, opts: MergePROptions = {}): Promise<MergePRResult> {
+    const n = parsePrNumber(prUrl);
+    const method = opts.method ?? "squash";
+    const body: Record<string, unknown> = { merge_method: method };
+    if (opts.commitTitle) body.commit_title = opts.commitTitle;
+    const res = await this.raw("PUT", `/repos/${this.owner}/${this.repo}/pulls/${n}/merge`, body);
+    // GitHub returns 200 on success, 405 when the PR isn't mergeable
+    // (conflict / required checks pending / branch protection), 409 when
+    // SHA has moved, 422 on validation errors. Surface those as soft
+    // refusals so the caller falls back to the manual flow.
+    if (res.ok) {
+      const data = (await res.json()) as { sha?: string; merged?: boolean; message?: string };
+      if (data.merged && data.sha) return { merged: true, sha: data.sha };
+      return { merged: false, reason: data.message ?? "GitHub returned merged=false" };
+    }
+    if (res.status === 405 || res.status === 409 || res.status === 422) {
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      return { merged: false, reason: data.message ?? `GitHub ${res.status}` };
+    }
+    throw new Error(`GitHub ${res.status} on merge`);
   }
 
   tokenizeCloneUrl(): string {

@@ -44,6 +44,23 @@ export interface SubmitReviewResult {
   state?: string;
 }
 
+export interface MergePROptions {
+  /** Merge strategy. "squash" is the most conservative default for auto-merge. */
+  method?: "merge" | "squash" | "rebase";
+  /** Optional commit message override; provider may use the PR title if omitted. */
+  commitTitle?: string;
+}
+
+/**
+ * Result of an auto-merge attempt. We return a discriminated union rather
+ * than throwing for the common "PR isn't mergeable" cases (conflict, branch
+ * protection, failed checks) so callers can take the no-auto-merge fallback
+ * without distinguishing exception types.
+ */
+export type MergePRResult =
+  | { merged: true;  sha: string }
+  | { merged: false; reason: string };
+
 export interface NormalizedReview {
   state: string;
   body: string | null;
@@ -87,6 +104,12 @@ export interface GitProvider {
   getPRDiff(prUrl: string): Promise<string>;
   submitReview(opts: ReviewOptions): Promise<SubmitReviewResult>;
   getReviews(prUrl: string): Promise<ReviewsPayload>;
+  /**
+   * Merge a PR via the provider's API. Returns `{merged:false, reason}` for
+   * expected refusals (conflicts, branch protection, missing required checks);
+   * throws only on transport-level / auth failures.
+   */
+  mergePR(prUrl: string, opts?: MergePROptions): Promise<MergePRResult>;
 
   /**
    * Return a git-clone-friendly URL with auth embedded.

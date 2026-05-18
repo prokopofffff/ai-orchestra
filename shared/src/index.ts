@@ -107,6 +107,12 @@ export const ProjectSettingsSchema = z.object({
   provider: ProjectProviderConfigSchema.optional(),
   limits: LimitsSchema.optional(),
   telegram: TelegramConfigSchema.optional(),
+  /**
+   * If true, an approved PR (signal `pr_approved` from tech-lead) is merged
+   * automatically by orchestra-core. If false (default), the user gets a
+   * notification and merges manually via the provider's UI.
+   */
+  autoMerge: z.boolean().optional(),
 }).catchall(z.unknown());
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

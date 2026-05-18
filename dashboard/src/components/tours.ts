@@ -48,6 +48,12 @@ export const TOURS: Record<OnboardingTabKey, TourStep[]> = {
       placement: "top",
     },
     {
+      anchor: '[data-tour="chat.auto-merge"]',
+      title: "Auto-merge approved PRs",
+      body: "Off by default: Tech Lead approves a PR, you get notified, and you click Merge in GitHub/GitLab. Turn this on and orchestra merges approved PRs for you (squash) — useful on personal projects where you trust the review. On merge conflict, branch protection, or failing checks the PR is left open and you get a high-priority notification with the reason.",
+      placement: "bottom",
+    },
+    {
       title: "System messages",
       body: "Anything Tech Lead delegates or completes shows up as a system message in this stream. The full audit trail lives on the Signals tab.",
       placement: "center",

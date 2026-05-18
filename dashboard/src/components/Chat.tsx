@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
-import type { Message } from "../types";
+import type { Message, Project } from "../types";
 import { MoreVerticalIcon, SendIcon } from "./ui/Icon";
 import { Markdown } from "./Markdown";
+import { useProjectContext } from "../contexts/ProjectContext";
 
 interface Props {
   projectId: string;
@@ -134,13 +135,89 @@ function ChatHeader({ title }: { title: string }) {
         <span className="text-[13px] font-medium text-text-primary truncate">{title}</span>
         <span className="font-mono text-[11px] text-accent-green">running</span>
       </div>
+      <AutoMergeToggle />
       <button
         aria-label="More"
-        className="ml-auto text-text-tertiary hover:text-text-primary"
+        className="text-text-tertiary hover:text-text-primary"
       >
         <MoreVerticalIcon size={18} />
       </button>
     </header>
+  );
+}
+
+/**
+ * Per-project switch shown in the chat header. When ON, an approved PR is
+ * merged automatically by orchestra-core (`signal-api` → `tryAutoMerge`).
+ * When OFF (default), the user gets a high-priority notification and is
+ * expected to merge manually via GitHub/GitLab.
+ *
+ * Optimistic update: flip the cached settings synchronously so the UI
+ * responds in the same paint, then PATCH. On failure, the query refetch
+ * resets it back to server state.
+ */
+function AutoMergeToggle() {
+  const { project } = useProjectContext();
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState(false);
+
+  if (!project) return null;
+  const enabled = (project.settings as { autoMerge?: boolean } | null)?.autoMerge === true;
+
+  async function toggle() {
+    if (!project) return;
+    setPending(true);
+    const next = !enabled;
+    // Optimistic: patch the local cache so the chip flips immediately.
+    queryClient.setQueryData<Project[]>(["projects"], (old) =>
+      (old ?? []).map((p) =>
+        p.id === project.id
+          ? { ...p, settings: { ...(p.settings ?? {}), autoMerge: next } }
+          : p,
+      ),
+    );
+    try {
+      await api.updateProject(project.id, {
+        settings: { ...(project.settings ?? {}), autoMerge: next },
+      } as Partial<Project>);
+    } catch {
+      // Roll back by invalidating; the refetch restores server state.
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const label = enabled ? "Auto-merge: ON" : "Auto-merge: OFF";
+  const help = enabled
+    ? "Approved PRs merge automatically. Toggle off if you want to review and merge manually."
+    : "Approved PRs wait for you to merge manually in GitHub/GitLab. Toggle on to let orchestra merge them for you.";
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={pending}
+      data-tour="chat.auto-merge"
+      aria-pressed={enabled}
+      title={help}
+      className={[
+        "ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono border transition-colors",
+        enabled
+          ? "bg-accent-green/10 border-accent-green/40 text-accent-green hover:bg-accent-green/15"
+          : "bg-bg-input border-border text-text-tertiary hover:text-text-primary hover:border-border-strong",
+        pending && "opacity-60 cursor-wait",
+      ].filter(Boolean).join(" ")}
+    >
+      <span
+        className={[
+          "h-1.5 w-1.5 rounded-full",
+          enabled ? "bg-accent-green" : "bg-text-tertiary",
+        ].join(" ")}
+        aria-hidden="true"
+      />
+      {label}
+    </button>
   );
 }
 

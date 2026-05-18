@@ -49,6 +49,8 @@ export default function Settings() {
           <div className="flex flex-col">
             <ProjectTab project={project} onSaved={refresh} />
             <ProjectIntroSection project={project} />
+            <ProjectClaudeSection project={project} onSaved={refresh} />
+            <ProjectGitTokenSection project={project} onSaved={refresh} />
             <ProjectTelegramSection project={project} onSaved={refresh} />
           </div>
         )}
@@ -217,6 +219,209 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
         {busy ? "Initializing…" : "Initialize git here"}
       </Button>
     </div>
+  );
+}
+
+function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  // Per-project Claude credentials. Empty → fall back to orchestra-wide
+  // System tab values → fall back to .env. Auth = "max" (subscription via
+  // local `claude` CLI) needs no API key; "api" requires one.
+  type ClaudeSettings = { auth?: "max" | "api"; apiKey?: string };
+  const initial = (project.settings as { claude?: ClaudeSettings } | undefined)?.claude;
+  const [auth, setAuth] = useState<"" | "max" | "api">(initial?.auth ?? "");
+  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    setAuth(initial?.auth ?? "");
+    setApiKey(initial?.apiKey ?? "");
+  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      // Build a settings.claude object that only includes set fields. An
+      // empty value here means "delete the per-project override and fall
+      // back to orchestra-wide" — PATCH sends undefined for the key.
+      const claude: ClaudeSettings = {};
+      if (auth) claude.auth = auth;
+      if (apiKey.trim()) claude.apiKey = apiKey.trim();
+      const payload = Object.keys(claude).length ? claude : { auth: undefined, apiKey: undefined };
+      await api.updateProject(project.id, { settings: { claude: payload } } as never);
+      setStatus(
+        Object.keys(claude).length
+          ? "Saved — agents for this project will use these credentials on the next run."
+          : "Cleared — falling back to orchestra-wide System settings.",
+      );
+      onSaved();
+    } catch (e) {
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex flex-col gap-1">
+        <h3 className="text-sm font-semibold text-text-primary">Claude credentials</h3>
+        <p className="text-xs text-text-secondary">
+          Optional. Per-project overrides for Claude auth. Empty values fall back to{" "}
+          <strong>System</strong> tab, then <code>.env</code>. Use this when one project
+          should run on a Max subscription and another on a pay-per-token API key.
+        </p>
+      </div>
+
+      <Field label="Authentication" optional hint="Leave blank to inherit from System tab.">
+        <select
+          value={auth}
+          onChange={(e) => setAuth(e.target.value as "" | "max" | "api")}
+          className={INPUT}
+        >
+          <option value="">(inherit)</option>
+          <option value="max">Max subscription — uses local `claude` CLI login</option>
+          <option value="api">API key — pay-per-token</option>
+        </select>
+      </Field>
+
+      {auth === "api" && (
+        <Field
+          label="API key"
+          hint="From console.anthropic.com. Starts with sk-ant-. Stored as project setting; visible only to project members."
+        >
+          <div className="flex items-center gap-2">
+            <input
+              className={INPUT}
+              type={revealed ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-ant-…"
+              autoComplete="off"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => setRevealed((v) => !v)}
+            >
+              {revealed ? "Hide" : "Show"}
+            </Button>
+          </div>
+        </Field>
+      )}
+
+      <div className="flex items-center gap-3">
+        <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {status && <p className="text-xs text-text-tertiary">{status}</p>}
+      </div>
+    </section>
+  );
+}
+
+function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  // Per-project Git provider token override. Empty → falls back to the
+  // orchestra-wide GITHUB_TOKEN (System tab / .env). The provider type +
+  // baseUrl (for self-hosted) are currently only editable as raw JSON;
+  // 95% of users just need a token, so that's all we surface here.
+  type ProviderSettings = { type?: "github" | "gitlab"; token?: string; baseUrl?: string };
+  const initial = (project.settings as { provider?: ProviderSettings } | undefined)?.provider;
+  const [token, setToken] = useState(initial?.token ?? "");
+  const [type, setType] = useState<"" | "github" | "gitlab">(initial?.type ?? "");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    setToken(initial?.token ?? "");
+    setType(initial?.type ?? "");
+  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const provider: ProviderSettings = {};
+      if (token.trim()) provider.token = token.trim();
+      if (type) provider.type = type;
+      // Preserve any existing baseUrl the user set via JSON elsewhere.
+      if (initial?.baseUrl) provider.baseUrl = initial.baseUrl;
+      const payload = Object.keys(provider).length
+        ? provider
+        : { type: undefined, token: undefined, baseUrl: undefined };
+      await api.updateProject(project.id, { settings: { provider: payload } } as never);
+      setStatus(
+        token.trim()
+          ? "Saved — clones / pushes for this project will use this token."
+          : "Cleared — falling back to orchestra-wide GITHUB_TOKEN.",
+      );
+      onSaved();
+    } catch (e) {
+      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex flex-col gap-1">
+        <h3 className="text-sm font-semibold text-text-primary">Git provider token</h3>
+        <p className="text-xs text-text-secondary">
+          Optional. Per-project override for the GitHub / GitLab token used to
+          clone, push, and open PRs for this project. Empty falls back to the{" "}
+          <strong>System</strong> tab value. Provider type is auto-detected from
+          the repo URL — set it explicitly only for self-hosted instances.
+        </p>
+      </div>
+
+      <Field label="Provider" optional hint="Auto-detected from the repo URL when blank.">
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value as "" | "github" | "gitlab")}
+          className={INPUT}
+        >
+          <option value="">(auto-detect)</option>
+          <option value="github">GitHub</option>
+          <option value="gitlab">GitLab</option>
+        </select>
+      </Field>
+
+      <Field
+        label="Access token"
+        hint="GitHub: a fine-grained PAT with repo + pull-request scope on this repo. GitLab: a project access token."
+      >
+        <div className="flex items-center gap-2">
+          <input
+            className={INPUT}
+            type={revealed ? "text" : "password"}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="ghp_… or glpat-…"
+            autoComplete="off"
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => setRevealed((v) => !v)}
+          >
+            {revealed ? "Hide" : "Show"}
+          </Button>
+        </div>
+      </Field>
+
+      <div className="flex items-center gap-3">
+        <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {status && <p className="text-xs text-text-tertiary">{status}</p>}
+      </div>
+    </section>
   );
 }
 

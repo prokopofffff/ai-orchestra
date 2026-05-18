@@ -18,8 +18,10 @@ services:
 
   orchestra-core:
     build:
-      context: ./orchestra-core
-      dockerfile: Dockerfile
+      # Build context is the workspace root so the multi-stage Dockerfile
+      # can see shared/, dashboard/, and mcp-tools/ for the build stage.
+      context: .
+      dockerfile: orchestra-core/Dockerfile
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -43,11 +45,12 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./prompts:/app/prompts:ro
-      - ./mcp-tools:/app/mcp-tools:ro
-      - ./templates:/app/templates:ro
-      - ./dashboard/dist:/app/dashboard:ro
+      # Session worktrees survive container rebuilds.
       - sessions_data:/app/data/sessions
+      # User's Claude credentials (Max-subscription cookies) come from the
+      # host. On the deploy server, /root/.claude is created empty until
+      # the operator drops their credentials in — orchestra-core falls back
+      # to CLAUDE_API_KEY when it's not present.
       - ${HOME}/.claude:/root/.claude:ro
     depends_on:
       postgres:

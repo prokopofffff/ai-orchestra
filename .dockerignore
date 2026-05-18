@@ -1,0 +1,25 @@
+# Keep the build context small and reproducible: ignore everything the
+# multi-stage Dockerfile rebuilds inside the image. Node_modules and dist
+# in particular would slow uploads massively and risk shipping
+# stale dev artifacts to production.
+
+**/node_modules
+**/dist
+**/.cache
+
+.git
+.gitignore
+.github
+docs
+
+# Local-only files
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+
+# IDE / OS noise
+.vscode
+.idea
+.claude

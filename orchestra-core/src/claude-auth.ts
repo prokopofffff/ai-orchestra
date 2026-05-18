@@ -6,66 +6,52 @@ import type { Config } from "./config";
  * process.env. The Claude Agent SDK reads ANTHROPIC_API_KEY at query()
  * time, so this MUST be called immediately before spawning the run.
  *
- * Precedence (highest first):
- *   1. settings.claude.apiKey       — per-project API key
- *   2. system_config.claude_api_key — orchestra-wide API key (UI / System tab)
- *   3. process.env.ANTHROPIC_API_KEY — env / .env file
+ * Auth MODE precedence (highest first):
+ *   1. settings.claude.auth   — per-project ("max" | "api")
+ *   2. system_config.claude_auth — orchestra-wide default mode
+ *   3. config.claudeAuth      — env default (CLAUDE_AUTH or "max")
  *
- * settings.claude.auth (per-project) overrides system_config.claude_auth
- * (orchestra-wide), which overrides the config default ("max").
+ * Auth CREDENTIAL precedence: there is no fallback. When mode is "api",
+ * the key MUST come from settings.claude.apiKey on that specific
+ * project. Pulling from a shared system_config row or env var was a
+ * cross-user leak — a token User A pasted into System Settings would
+ * silently bill against User B's projects.
  *
- * When the effective auth is "max", the env var is DELETED — otherwise an
- * earlier project's API key could leak into this run and bill the
- * subscription user's API account. Max-mode authenticates via the local
- * `claude` CLI session, not env.
+ * When the effective auth is "max", the env var is DELETED — Max-mode
+ * authenticates via the local `claude` CLI session. If an earlier
+ * project's API key were still in env, the SDK might pick it up and
+ * bill the subscription user's API account instead.
  */
 export async function applyClaudeAuthForProject(
   settings: unknown,
   config: Config,
 ): Promise<{ auth: "max" | "api"; usingApiKey: boolean }> {
-  const pool = getPool();
-  const { rows: sysRows } = await pool.query(
-    "SELECT key, value FROM system_config WHERE key IN ('claude_auth', 'claude_api_key') LIMIT 2",
+  // The mode (max vs api) is still a deployment-wide default that can be
+  // set in System Settings — it's not a credential, just a preference,
+  // so sharing across users is fine. Credentials are not.
+  const { rows: sysRows } = await getPool().query(
+    "SELECT value FROM system_config WHERE key = 'claude_auth' LIMIT 1",
   ).catch(() => ({ rows: [] }));
-  const sysConfig = Object.fromEntries(
-    (sysRows as { key: string; value: string }[]).map((r) => [r.key, r.value]),
-  );
+  const sysClaudeAuth = (sysRows[0]?.value as string | undefined);
 
   const projClaude = (settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
-  const auth = (projClaude?.auth ?? sysConfig.claude_auth ?? config.claudeAuth) as "max" | "api";
+  const auth = (projClaude?.auth ?? sysClaudeAuth ?? config.claudeAuth) as "max" | "api";
 
   if (auth === "api") {
-    const key = projClaude?.apiKey ?? sysConfig.claude_api_key ?? process.env.ANTHROPIC_API_KEY;
+    const key = projClaude?.apiKey;
     if (key) {
       process.env.ANTHROPIC_API_KEY = key;
       return { auth, usingApiKey: true };
     }
+    // No key on this project. Clear any leftover env so the SDK can't
+    // silently fall back to another user's key that happened to be set
+    // by an earlier run. The caller (agent-spawner / tech-lead-dispatcher)
+    // sees usingApiKey=false and can escalate / refuse to run.
+    delete process.env.ANTHROPIC_API_KEY;
     return { auth, usingApiKey: false };
   }
 
   // Max subscription path — SDK reads from claude CLI session, not env.
   delete process.env.ANTHROPIC_API_KEY;
   return { auth, usingApiKey: false };
-}
-
-/**
- * Hydrate process.env from orchestra-wide system_config rows that other
- * code reads via env. Currently:
- *   - system_config.github_token → process.env.GITHUB_TOKEN
- *
- * Called at server boot and after each PATCH /system-config so the
- * provider resolver (which reads env synchronously) sees up-to-date
- * values without having to plumb DB access through every code path.
- *
- * settings.provider.token still wins for per-project overrides.
- */
-export async function hydrateSystemEnv(): Promise<void> {
-  const { rows } = await getPool().query(
-    "SELECT key, value FROM system_config WHERE key IN ('github_token')",
-  ).catch(() => ({ rows: [] }));
-  for (const r of rows as { key: string; value: string }[]) {
-    if (r.key === "github_token" && r.value) {
-      process.env.GITHUB_TOKEN = r.value;
-    }
-  }
 }

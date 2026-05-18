@@ -19,11 +19,14 @@ async function main() {
   });
   if (p.isCancel(claudeAuth)) return process.exit(0);
 
-  let claudeApiKey = "";
+  // Claude API keys are per-project now. The wizard sets only the default
+  // *mode*; if api mode is chosen, each project pastes its own key in
+  // Project Settings → Claude credentials. Avoids a global key
+  // authorizing every user's projects.
   if (claudeAuth === "api") {
-    const key = await p.text({ message: "Claude API key:", validate: (v) => (v.length < 10 ? "Invalid key" : undefined) });
-    if (p.isCancel(key)) return process.exit(0);
-    claudeApiKey = key;
+    p.log.info(
+      "API mode set as default. Paste each project's Claude API key in Project Settings → Claude credentials.",
+    );
   }
 
   // ─── Pencil CLI ───
@@ -126,23 +129,20 @@ async function main() {
   }
 
   // ─── GitHub ───
-  const githubToken = await p.text({
-    message: "GitHub Token (Enter to skip):",
-    placeholder: "ghp_xxxx...",
+  // No GITHUB_TOKEN prompt — tokens are per-project now (set under
+  // Project Settings → Git provider token). Asking for a global token
+  // here would silently authorize every project; that was the bug.
+  p.log.info(
+    "GitHub / GitLab tokens are per-project — paste them in Project Settings after creating a project.",
+  );
+
+  const org = await p.text({
+    message: "GitHub default org/owner (Enter to skip):",
+    placeholder: "myorg",
     defaultValue: "",
   });
-  if (p.isCancel(githubToken)) return process.exit(0);
-
-  let githubOrg = "";
-  if (githubToken) {
-    const org = await p.text({
-      message: "GitHub default org/owner:",
-      placeholder: "myorg",
-      defaultValue: "",
-    });
-    if (p.isCancel(org)) return process.exit(0);
-    githubOrg = org;
-  }
+  if (p.isCancel(org)) return process.exit(0);
+  const githubOrg = org;
 
   const githubBranch = await p.text({
     message: "Default branch:",
@@ -204,9 +204,13 @@ async function main() {
   const postgresPassword = crypto.randomBytes(24).toString("base64url");
   const sessionSecret = crypto.randomBytes(24).toString("base64url");
 
+  // Credentials (CLAUDE_API_KEY, GITHUB_TOKEN, GITLAB_TOKEN) are
+  // intentionally NOT written here — they're per-project (see
+  // Project Settings → Claude credentials / Git provider token).
+  // A global value in .env would silently authorize every user's
+  // agent runs against the same account.
   const envContent = `# Required
 CLAUDE_AUTH=${claudeAuth}
-CLAUDE_API_KEY=${claudeApiKey}
 
 # Pencil CLI
 PENCIL_ENABLED=${pencilEnabled}
@@ -215,7 +219,6 @@ PENCIL_MODEL=${pencilModel}
 # Optional
 TELEGRAM_BOT_TOKEN=${telegramToken}
 TELEGRAM_CHAT_ID=${telegramChatId}
-GITHUB_TOKEN=${githubToken}
 GITHUB_DEFAULT_ORG=${githubOrg}
 GITHUB_DEFAULT_BRANCH=${githubBranch}
 

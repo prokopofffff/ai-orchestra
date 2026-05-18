@@ -99,7 +99,9 @@ describe("onboarding — live step computation", () => {
     expect(claude?.done).toBe(false);
   });
 
-  it("ticks claude_auth once the user has a project AND system_config has the row", async () => {
+  it("ticks claude_auth when project is on Max mode (no key needed)", async () => {
+    // Default deployment mode is "max" — a project that inherits it (or
+    // explicitly sets it) needs no per-project API key to count as done.
     await getPool().query(
       "INSERT INTO system_config (key, value) VALUES ('claude_auth', 'max')",
     );
@@ -114,10 +116,29 @@ describe("onboarding — live step computation", () => {
     expect(claude?.done).toBe(true);
   });
 
-  it("ticks claude_auth when user has a project AND ANTHROPIC_API_KEY env var is present", async () => {
-    process.env.ANTHROPIC_API_KEY = "sk-test";
+  it("does NOT tick claude_auth when project is in API mode without its own key", async () => {
+    // Default mode flipped to "api" — now the project needs its own key.
+    // No per-project apiKey, no env fallback (security: env can't carry
+    // another user's key into this project). Step stays open.
+    await getPool().query(
+      "INSERT INTO system_config (key, value) VALUES ('claude_auth', 'api')",
+    );
     await getPool().query(
       "INSERT INTO projects (name, slug, owner_id, local_path) VALUES ('P', 'onb-claude2', $1, '/tmp/repo')",
+      [userId],
+    );
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: "/api/onboarding" });
+    await app.close();
+    const claude = (res.json().steps as { key: string; done: boolean }[]).find((s) => s.key === "claude_auth");
+    expect(claude?.done).toBe(false);
+  });
+
+  it("ticks claude_auth when project carries its own API key", async () => {
+    await getPool().query(
+      `INSERT INTO projects (name, slug, owner_id, local_path, settings)
+       VALUES ('P', 'onb-claude3', $1, '/tmp/repo',
+               '{"claude":{"auth":"api","apiKey":"sk-ant-test"}}'::jsonb)`,
       [userId],
     );
     const app = await buildApp();

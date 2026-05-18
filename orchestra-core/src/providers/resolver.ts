@@ -5,16 +5,19 @@ import { GitHubProvider } from "./github";
 import { GitLabProvider } from "./gitlab";
 
 /**
- * Resolve a GitProvider for a repo URL + optional project settings.
+ * Resolve a GitProvider for a repo URL + project settings.
  *
- * Precedence (highest first):
+ * Type precedence (highest first):
  *   - settings.provider.type (explicit override)
  *   - hostname (github.com / gitlab.com)
  *   - custom host matches settings.provider.baseUrl hostname
  *
- * Auth:
- *   - settings.provider.token
- *   - process.env[GITHUB_TOKEN | GITLAB_TOKEN]
+ * Auth: STRICT per-project. settings.provider.token is the only source.
+ * There is NO env-var fallback. Falling back to process.env.GITHUB_TOKEN
+ * was a cross-user leak — a token set in .env (or, before, in System
+ * Settings) would silently authorize requests for ANY user's project.
+ * If you want to share a token across projects, paste it into each
+ * project's Settings → Git provider token.
  *
  * Self-hosted base URL:
  *   - settings.provider.baseUrl
@@ -24,14 +27,18 @@ export function providerFor(repoUrl: string, settings: ProjectSettings | null): 
   const cfg = settings?.provider;
   const kind: GitProviderKind = cfg?.type ?? detectKind(repoUrl, cfg?.baseUrl);
 
+  const token = cfg?.token;
+  if (!token) {
+    const which = kind === "github" ? "GitHub" : "GitLab";
+    throw new Error(
+      `${which} token not configured for this project. Open Project Settings → Git provider token to paste one.`,
+    );
+  }
+
   if (kind === "github") {
-    const token = cfg?.token ?? process.env.GITHUB_TOKEN;
-    if (!token) throw new Error("GITHUB_TOKEN not configured (or project settings.provider.token)");
     return new GitHubProvider({ repoUrl, token, baseUrl: cfg?.baseUrl });
   }
 
-  const token = cfg?.token ?? process.env.GITLAB_TOKEN;
-  if (!token) throw new Error("GITLAB_TOKEN not configured (or project settings.provider.token)");
   // GitLab baseUrl defaults to the repo's own host so /api/v4 works for
   // both gitlab.com and self-hosted without needing an explicit setting.
   const baseUrl = cfg?.baseUrl ?? hostFromUrl(repoUrl);

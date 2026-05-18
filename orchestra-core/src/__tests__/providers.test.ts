@@ -16,41 +16,45 @@ afterEach(() => {
 
 describe("providers — resolver", () => {
   it("detects GitHub from github.com URL", () => {
-    process.env.GITHUB_TOKEN = "gh";
-    const p = providerFor("https://github.com/o/r", null);
+    const p = providerFor("https://github.com/o/r", { provider: { token: "gh" } });
     expect(p.kind).toBe("github");
   });
 
   it("detects GitLab from gitlab.com URL", () => {
-    process.env.GITLAB_TOKEN = "gl";
-    const p = providerFor("https://gitlab.com/group/repo", null);
+    const p = providerFor("https://gitlab.com/group/repo", { provider: { token: "gl" } });
     expect(p.kind).toBe("gitlab");
   });
 
   it("uses explicit project settings.provider.type over URL detection", () => {
-    process.env.GITLAB_TOKEN = "gl";
     const p = providerFor("https://custom.host/group/repo", {
-      provider: { type: "gitlab", baseUrl: "https://custom.host" },
+      provider: { type: "gitlab", token: "gl", baseUrl: "https://custom.host" },
     });
     expect(p.kind).toBe("gitlab");
   });
 
-  it("uses settings.provider.token over env", () => {
+  it("does NOT fall back to env.GITHUB_TOKEN — per-project only (cross-user safety)", () => {
     process.env.GITHUB_TOKEN = "env-token";
+    expect(() => providerFor("https://github.com/o/r", null)).toThrow(/GitHub token not configured/);
+  });
+
+  it("does NOT fall back to env.GITLAB_TOKEN — per-project only (cross-user safety)", () => {
+    process.env.GITLAB_TOKEN = "env-token";
+    expect(() => providerFor("https://gitlab.com/group/repo", null)).toThrow(/GitLab token not configured/);
+  });
+
+  it("uses settings.provider.token", () => {
     const p = providerFor("https://github.com/o/r", {
       provider: { token: "setting-token" },
     }) as GitHubProvider;
-    // The token is internal; smoke via the tokenized URL.
     expect(p.tokenizeCloneUrl()).toContain("setting-token@github.com");
   });
 
-  it("throws when token is missing", () => {
-    expect(() => providerFor("https://github.com/o/r", null)).toThrow(/GITHUB_TOKEN/);
+  it("throws when token is missing on the project (no fallback path)", () => {
+    expect(() => providerFor("https://github.com/o/r", null)).toThrow(/GitHub token not configured/);
   });
 
   it("throws when provider can't be detected (unknown hostname)", () => {
-    process.env.GITHUB_TOKEN = "x";
-    expect(() => providerFor("https://example.com/stuff/repo", null))
+    expect(() => providerFor("https://example.com/stuff/repo", { provider: { token: "x" } }))
       .toThrow(/Cannot detect git provider/);
   });
 

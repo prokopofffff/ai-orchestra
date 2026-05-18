@@ -126,37 +126,45 @@ export async function computeOnboarding(userId: string) {
   const visibleProjects = [...ownedRows, ...memberRows];
   const hasProject = visibleProjects.length > 0;
 
-  // Until the user has at least one project, NONE of the credential steps
-  // are evaluated against orchestra-wide config. system_config is shared
-  // across all users, so without this gate a brand-new signup would see
-  // every step pre-ticked just because a previous user (or operator) had
-  // already set up Claude / GitHub for the orchestra. UX bug: "I haven't
-  // done anything yet, why does the checklist say 3 of 4 done?"
+  // Credentials are now strictly per-project. Until the user has at least
+  // one project, none of the credential steps apply. Once they do, each
+  // step is ticked from THAT project's settings — never from env or
+  // system_config, which would let User A's token unlock User B's
+  // checklist on a shared deployment.
   //
-  // Once they create their first project, orchestra defaults *can*
-  // legitimately auto-tick credential steps (because those defaults will
-  // actually be used when running agents for the new project).
+  // Mode (max vs api) is still a deployment-wide preference in
+  // system_config.claude_auth — it's a default, not a credential. We
+  // read it so a project that's intentionally on Max mode (no API key
+  // needed) still ticks the step.
   const sysConfigRows = await db.select().from(systemConfig);
   const sysMap = Object.fromEntries(sysConfigRows.map((r) => [r.key, r.value]));
 
-  const orchestraHasClaude =
-    !!sysMap.claude_auth ||
-    !!sysMap.claude_api_key ||
-    !!process.env.ANTHROPIC_API_KEY ||
-    !!process.env.CLAUDE_API_KEY;
-  const claudeAuthDone = hasProject && orchestraHasClaude;
+  const claudeAuthDone =
+    hasProject &&
+    visibleProjects.some((p) => {
+      const c = (p.settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
+      // Project explicitly on Max → done (Claude CLI session handles auth).
+      if (c?.auth === "max") return true;
+      // Project has its own API key → done.
+      if (c?.apiKey) return true;
+      // No per-project override → falls back to orchestra default mode.
+      // If the default is "max" (with no key needed), count the step done.
+      if (!c?.auth && (sysMap.claude_auth ?? "max") === "max") return true;
+      return false;
+    });
 
-  // Git token: any project the user can see that's pushed to a remote
-  // resolves a token (per-project override or orchestra-wide fallback).
-  // Projects using only `local_path` don't need a token.
+  // Git token: every project that talks to a remote MUST have its own
+  // token in settings.provider.token. local_path-only projects don't
+  // need one. The step is "done" when every remote-using project has a
+  // token configured (or all projects are local-only).
   const projectsNeedingToken = visibleProjects.filter((p) => !p.localPath && p.repoUrl);
-  const projectTokenSet = projectsNeedingToken.some((p) => {
-    const s = (p.settings as { provider?: { token?: string } } | null)?.provider;
-    return !!s?.token;
-  });
-  const globalToken = !!sysMap.github_token || !!process.env.GITHUB_TOKEN || !!process.env.GITLAB_TOKEN;
   const gitTokenDone =
-    hasProject && (projectsNeedingToken.length === 0 ? true : projectTokenSet || globalToken);
+    hasProject &&
+    (projectsNeedingToken.length === 0 ||
+      projectsNeedingToken.every((p) => {
+        const s = (p.settings as { provider?: { token?: string } } | null)?.provider;
+        return !!s?.token;
+      }));
 
   // Telegram is optional — auto-tick once the user has a project and at
   // least one of their projects has a bot wired up. Don't pre-tick for

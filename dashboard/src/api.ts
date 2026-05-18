@@ -75,11 +75,14 @@ export const createProject = (data: { name: string; repoUrl?: string; localPath?
 export const updateProject = (id: string, data: Partial<Project> & { localPath?: string | null }): Promise<Project> =>
   patchValidated(`/projects/${id}`, data, ProjectSchema);
 
-// System Config
+// System Config — orchestra-wide non-credential defaults only.
+// Credentials (claude_api_key, github_token) used to live here but were
+// removed: system_config is shared across users, so any value set here
+// would silently authorize agent runs for every other user's projects.
+// Per-project settings.claude.apiKey and settings.provider.token are
+// the only credential sources now.
 const SystemConfigSchema = z.object({
   claude_auth: z.enum(["max", "api"]).optional(),
-  claude_api_key: z.string().optional(),
-  github_token: z.string().optional(),
   github_default_org: z.string().optional(),
   github_default_branch: z.string().optional(),
   orchestra_daily_cost_cap_usd: z.string().optional(),

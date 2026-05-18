@@ -27,8 +27,14 @@ beforeEach(async () => {
   await pool.query("DELETE FROM rate_buckets WHERE key = 'github:rest'");
   await registerBucket({ key: "github:rest", capacity: 0, refillPerSecond: 0 });
 
+  // Per-project provider token — providerFor no longer falls back to
+  // env.GITHUB_TOKEN. Individual tests blank this when they want to
+  // exercise the "no token / skipped" path.
   const { rows } = await pool.query(
-    "INSERT INTO projects (name, slug, repo_url) VALUES ('PR Test', 'pr-test', 'https://github.com/test/pr') RETURNING id",
+    `INSERT INTO projects (name, slug, repo_url, settings)
+     VALUES ('PR Test', 'pr-test', 'https://github.com/test/pr',
+             '{"provider":{"token":"fake-token"}}'::jsonb)
+     RETURNING id`,
   );
   projectId = rows[0].id;
 });
@@ -67,8 +73,14 @@ async function pendingCheckJobs(): Promise<Array<{ taskId: string }>> {
 }
 
 describe("pr-watcher — discover handler", () => {
-  it("is a no-op when GITHUB_TOKEN is absent", async () => {
-    delete process.env.GITHUB_TOKEN;
+  it("is a no-op when the project has no provider token configured", async () => {
+    // Drop the per-project token; providerFor will throw and the discover
+    // handler should skip the task instead of queueing a check that would
+    // 401.
+    await getPool().query(
+      "UPDATE projects SET settings = '{}'::jsonb WHERE id = $1",
+      [projectId],
+    );
     await makeTask({ prUrl: "https://github.com/o/r/pull/1", state: "pr_created" });
     await runDiscovery();
     expect(await pendingCheckJobs()).toHaveLength(0);

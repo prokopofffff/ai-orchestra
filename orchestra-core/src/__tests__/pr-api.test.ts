@@ -37,8 +37,13 @@ beforeAll(async () => {
 beforeEach(async () => {
   const pool = getPool();
   await pool.query("DELETE FROM projects WHERE slug LIKE 'pra-%'");
+  // Default project has a per-project GH token in settings — providerFor
+  // requires it (no env fallback anymore). Tests that exercise the
+  // "missing token" path seed a project without the settings.
   const { rows } = await pool.query(
-    "INSERT INTO projects (name, slug, repo_url) VALUES ('PR API', 'pra-test', $1) RETURNING id",
+    `INSERT INTO projects (name, slug, repo_url, settings)
+     VALUES ('PR API', 'pra-test', $1, '{"provider":{"token":"t"}}'::jsonb)
+     RETURNING id`,
     ["https://github.com/test/pr-api-repo"],
   );
   projectId = rows[0].id;
@@ -88,14 +93,18 @@ describe("pr-api — POST /api/pr/create validation", () => {
     expect(body.error).toMatch(/no repository URL/);
   });
 
-  it("400 when GITHUB_TOKEN is not configured", async () => {
-    delete process.env.GITHUB_TOKEN;
+  it("400 when the project has no provider token configured", async () => {
+    // Project without settings.provider.token. No env fallback exists.
+    const { rows } = await getPool().query(
+      "INSERT INTO projects (name, slug, repo_url) VALUES ('No Token', 'pra-notok', $1) RETURNING id",
+      ["https://github.com/test/no-token"],
+    );
     const { status, body } = await api("/api/pr/create", {
       method: "POST",
-      body: JSON.stringify({ projectId, title: "t", body: "b", head: "h" }),
+      body: JSON.stringify({ projectId: rows[0].id, title: "t", body: "b", head: "h" }),
     });
     expect(status).toBe(400);
-    expect(body.error).toMatch(/GITHUB_TOKEN not configured/);
+    expect(body.error).toMatch(/GitHub token not configured/);
   });
 
   it("400 when the repo URL's provider can't be detected", async () => {

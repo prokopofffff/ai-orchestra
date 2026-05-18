@@ -957,7 +957,6 @@ function LimitsTab({ project, onSaved }: { project: Project; onSaved: () => void
 function SystemTab() {
   const [config, setConfig] = useState<SystemConfig>({});
   const [claudeAuth, setClaudeAuth] = useState<"max" | "api">("max");
-  const [apiKey, setApiKey] = useState("");
   const [orgDailyCap, setOrgDailyCap] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -967,7 +966,6 @@ function SystemTab() {
       const c = await api.fetchSystemConfig();
       setConfig(c);
       setClaudeAuth(c.claude_auth ?? "max");
-      setApiKey(c.claude_api_key ?? "");
       setOrgDailyCap(c.orchestra_daily_cost_cap_usd ?? "");
     } catch {
       // system_config table may not exist yet (migration pending)
@@ -981,7 +979,6 @@ function SystemTab() {
     setStatus(null);
     try {
       const patch: SystemConfig = { claude_auth: claudeAuth };
-      if (claudeAuth === "api") patch.claude_api_key = apiKey;
       if (orgDailyCap.trim()) patch.orchestra_daily_cost_cap_usd = orgDailyCap.trim();
       await api.updateSystemConfig(patch);
       setStatus("Saved — takes effect on the next agent run");
@@ -1001,7 +998,9 @@ function SystemTab() {
             System Settings
           </h2>
           <p className="text-sm text-text-secondary">
-            Global configuration applied to all agent runs. Changes take effect on the next run.
+            Orchestra-wide defaults. Credentials (Claude API key, GitHub / GitLab token)
+            live on each project under <strong>Project Settings</strong> — those values
+            are not shared across projects or users.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0 pt-1">
@@ -1014,7 +1013,11 @@ function SystemTab() {
 
       <section className="flex flex-col gap-5">
         <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Claude Authentication
+          Default Claude mode
+        </p>
+
+        <p className="text-xs text-text-secondary -mt-2">
+          Used when a project doesn't override it under Project Settings → Claude credentials.
         </p>
 
         <div className="flex flex-col gap-3">
@@ -1044,23 +1047,13 @@ function SystemTab() {
             />
             <div>
               <span className="text-sm font-medium text-text-primary">API key</span>
-              <p className="text-xs text-text-secondary">Uses ANTHROPIC_API_KEY — billed per token.</p>
+              <p className="text-xs text-text-secondary">
+                Pay-per-token. Each project must paste its own key under Project Settings →
+                Claude credentials — there's no shared key.
+              </p>
             </div>
           </label>
         </div>
-
-        {claudeAuth === "api" && (
-          <Field label="API key" hint="Stored in the database, not in your .env file">
-            <input
-              className={INPUT}
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-ant-…"
-              autoComplete="off"
-            />
-          </Field>
-        )}
       </section>
 
       <section className="flex flex-col gap-5">

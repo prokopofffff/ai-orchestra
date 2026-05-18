@@ -6,7 +6,6 @@ import { getDb, getPool } from "./db";
 import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked, DONE_STATES } from "./dependency-engine";
-import { hydrateSystemEnv } from "./claude-auth";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import { currentUserId } from "./auth";
 import {
@@ -586,7 +585,18 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
 
   // ─── System Config ───
 
-  const ALLOWED_KEYS = ["claude_auth", "claude_api_key", "github_token", "github_default_org", "github_default_branch", "orchestra_daily_cost_cap_usd"] as const;
+  // Orchestra-wide settings that are SAFE to share across users:
+  //   - claude_auth:  mode default (max vs api), not a credential
+  //   - github_default_org / github_default_branch: defaults for new projects
+  //   - orchestra_daily_cost_cap_usd: shared spending guardrail
+  //
+  // What's NOT here anymore (security):
+  //   - claude_api_key, github_token, gitlab_token
+  //     These were shared across all users — a token pasted by one user
+  //     would silently authorize agent runs for every other user. They're
+  //     per-project now via settings.claude.apiKey and
+  //     settings.provider.token. The Settings UI surfaces both.
+  const ALLOWED_KEYS = ["claude_auth", "github_default_org", "github_default_branch", "orchestra_daily_cost_cap_usd"] as const;
   type ConfigKey = typeof ALLOWED_KEYS[number];
   type SystemConfigMap = Partial<Record<ConfigKey, string>>;
 
@@ -604,8 +614,6 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   app.patch("/system-config", async (request, reply) => {
     const body = z.object({
       claude_auth: z.enum(["max", "api"]).optional(),
-      claude_api_key: z.string().optional(),
-      github_token: z.string().optional(),
       github_default_org: z.string().optional(),
       github_default_branch: z.string().optional(),
     }).parse(request.body);
@@ -619,14 +627,6 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
         [key, value],
       );
     }
-
-    // Re-hydrate env for keys other code reads via process.env. Without
-    // this, a github_token saved here only takes effect on next server
-    // restart — confusing for users who saved and immediately ran an
-    // agent. claude_api_key isn't here because agent-spawner /
-    // tech-lead-dispatcher both call applyClaudeAuthForProject at spawn
-    // time and re-resolve from system_config directly.
-    await hydrateSystemEnv();
 
     const { rows } = await pool.query("SELECT key, value FROM system_config");
     const result: SystemConfigMap = {};

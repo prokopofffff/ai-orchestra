@@ -10,8 +10,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true
+    "declaration": true,
+    "noEmit": true
   },
   "include": ["src/**/*"],
-  "exclude": ["src/migrations", "src/__tests__", "**/*.test.ts", "**/*.spec.ts"]
+  "exclude": ["src/migrations"]
 }

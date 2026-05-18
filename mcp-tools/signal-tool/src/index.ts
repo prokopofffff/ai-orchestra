@@ -5,6 +5,7 @@ import { z } from "zod";
 const ORCHESTRA_URL = process.env.ORCHESTRA_URL ?? "http://localhost:3000";
 const AGENT_ROLE = process.env.AGENT_ROLE ?? "unknown";
 const PROJECT_ID = process.env.AGENT_PROJECT_ID ?? "";
+const ORCHESTRA_JWT = process.env.ORCHESTRA_JWT ?? "";
 
 const server = new McpServer({
   name: "orchestra-signal",
@@ -30,7 +31,11 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/signal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Role": AGENT_ROLE,
+          ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
+        },
         body: JSON.stringify({
           from: AGENT_ROLE,
           to,
@@ -65,7 +70,11 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/signal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Role": AGENT_ROLE,
+          ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
+        },
         body: JSON.stringify({
           from: AGENT_ROLE,
           to: "user",
@@ -102,7 +111,11 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Role": AGENT_ROLE,
+          ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
+        },
         body: JSON.stringify({
           projectId: PROJECT_ID,
           title,
@@ -136,7 +149,11 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/diff`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Role": AGENT_ROLE,
+          ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
+        },
         body: JSON.stringify({ prUrl }),
       });
       const data = await res.json() as Record<string, unknown>;
@@ -165,7 +182,11 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/review`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Role": AGENT_ROLE,
+          ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
+        },
         body: JSON.stringify({ prUrl, event, body, comments }),
       });
       const data = await res.json() as Record<string, unknown>;
@@ -187,7 +208,11 @@ server.tool(
     try {
       const res = await fetch(`${ORCHESTRA_URL}/api/pr/reviews`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Agent-Role": AGENT_ROLE },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Role": AGENT_ROLE,
+          ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
+        },
         body: JSON.stringify({ prUrl }),
       });
       const data = await res.json() as Record<string, unknown>;

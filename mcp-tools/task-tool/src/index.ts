@@ -4,6 +4,7 @@ import { z } from "zod";
 
 const ORCHESTRA_URL = process.env.ORCHESTRA_URL ?? "http://localhost:3000";
 const PROJECT_ID = process.env.AGENT_PROJECT_ID ?? "";
+const ORCHESTRA_JWT = process.env.ORCHESTRA_JWT ?? "";
 
 const server = new McpServer({
   name: "orchestra-task",
@@ -12,16 +13,37 @@ const server = new McpServer({
 
 const AGENT_ROLE = process.env.AGENT_ROLE ?? "";
 
+class ApiError extends Error {
+  constructor(public readonly status: number, public readonly body: unknown) {
+    super(typeof body === "object" && body && "error" in body
+      ? String((body as { error: unknown }).error)
+      : `HTTP ${status}`);
+  }
+}
+
 async function apiCall(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`${ORCHESTRA_URL}/api${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
       "X-Agent-Role": AGENT_ROLE,
+      // Authenticate as the project owner so the API's user-permission gates
+      // (userCanEditProject etc.) pass. The token is minted per spawn by
+      // orchestra-core and injected via env.
+      ...(ORCHESTRA_JWT ? { "Authorization": `Bearer ${ORCHESTRA_JWT}` } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) throw new ApiError(res.status, data);
+  return data;
+}
+
+function errorResult(err: unknown) {
+  const msg = err instanceof ApiError
+    ? `${err.status} ${err.message}`
+    : err instanceof Error ? err.message : String(err);
+  return { content: [{ type: "text" as const, text: `Error: ${msg}` }], isError: true };
 }
 
 // ─── Task Tools ───
@@ -35,19 +57,21 @@ server.tool(
     assigneeRole: z.string().optional().describe("Filter by assignee role"),
   },
   async ({ state, type, assigneeRole }) => {
-    const params = new URLSearchParams({ projectId: PROJECT_ID });
-    if (state) params.set("state", state);
-    if (type) params.set("type", type);
-    if (assigneeRole) params.set("assigneeRole", assigneeRole);
+    try {
+      const params = new URLSearchParams({ projectId: PROJECT_ID });
+      if (state) params.set("state", state);
+      if (type) params.set("type", type);
+      if (assigneeRole) params.set("assigneeRole", assigneeRole);
 
-    const tasks = await apiCall(`/tasks?${params}`);
-    const summary = Array.isArray(tasks)
-      ? tasks.map((t: { title: string; state: string; assigneeRole?: string; id: string }) =>
-          `- [${t.state}] ${t.title} (${t.assigneeRole ?? "unassigned"}) id:${t.id}`
-        ).join("\n")
-      : JSON.stringify(tasks);
+      const tasks = await apiCall(`/tasks?${params}`);
+      const summary = Array.isArray(tasks)
+        ? tasks.map((t: { title: string; state: string; assigneeRole?: string; id: string }) =>
+            `- [${t.state}] ${t.title} (${t.assigneeRole ?? "unassigned"}) id:${t.id}`
+          ).join("\n")
+        : JSON.stringify(tasks);
 
-    return { content: [{ type: "text" as const, text: summary || "No tasks found" }] };
+      return { content: [{ type: "text" as const, text: summary || "No tasks found" }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 
@@ -56,8 +80,10 @@ server.tool(
   "Get details of a specific task by ID.",
   { taskId: z.string().uuid().describe("Task ID") },
   async ({ taskId }) => {
-    const task = await apiCall(`/tasks/${taskId}`);
-    return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    try {
+      const task = await apiCall(`/tasks/${taskId}`);
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 
@@ -74,8 +100,10 @@ server.tool(
     blockedBy: z.array(z.string().uuid()).optional().describe("Task IDs that must complete first"),
   },
   async (params) => {
-    const task = await apiCall("/tasks", "POST", { ...params, projectId: PROJECT_ID });
-    return { content: [{ type: "text" as const, text: `Task created: ${task.title} (id: ${task.id})` }] };
+    try {
+      const task = await apiCall("/tasks", "POST", { ...params, projectId: PROJECT_ID });
+      return { content: [{ type: "text" as const, text: `Task created: ${task.title} (id: ${task.id})` }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 
@@ -92,8 +120,10 @@ server.tool(
     prUrl: z.string().optional().describe("Pull request URL"),
   },
   async ({ taskId, ...updates }) => {
-    const task = await apiCall(`/tasks/${taskId}`, "PATCH", updates);
-    return { content: [{ type: "text" as const, text: `Task updated: ${task.title} → ${task.state}` }] };
+    try {
+      const task = await apiCall(`/tasks/${taskId}`, "PATCH", updates);
+      return { content: [{ type: "text" as const, text: `Task updated: ${task.title} → ${task.state}` }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 
@@ -105,9 +135,11 @@ server.tool(
     body: z.string().describe("Comment text"),
   },
   async ({ taskId, body }) => {
-    const author = process.env.AGENT_ROLE ?? "agent";
-    await apiCall(`/tasks/${taskId}/comments`, "POST", { author, body });
-    return { content: [{ type: "text" as const, text: `Comment added to task ${taskId}` }] };
+    try {
+      const author = process.env.AGENT_ROLE ?? "agent";
+      await apiCall(`/tasks/${taskId}/comments`, "POST", { author, body });
+      return { content: [{ type: "text" as const, text: `Comment added to task ${taskId}` }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 
@@ -118,14 +150,16 @@ server.tool(
   "List all projects.",
   {},
   async () => {
-    const projects = await apiCall("/projects");
-    const summary = Array.isArray(projects)
-      ? projects.map((p: { name: string; slug: string; id: string }) =>
-          `- ${p.name} (${p.slug}) id:${p.id}`
-        ).join("\n")
-      : JSON.stringify(projects);
+    try {
+      const projects = await apiCall("/projects");
+      const summary = Array.isArray(projects)
+        ? projects.map((p: { name: string; slug: string; id: string }) =>
+            `- ${p.name} (${p.slug}) id:${p.id}`
+          ).join("\n")
+        : JSON.stringify(projects);
 
-    return { content: [{ type: "text" as const, text: summary || "No projects" }] };
+      return { content: [{ type: "text" as const, text: summary || "No projects" }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 
@@ -138,8 +172,10 @@ server.tool(
     description: z.string().optional().describe("Project description"),
   },
   async (params) => {
-    const project = await apiCall("/projects", "POST", params);
-    return { content: [{ type: "text" as const, text: `Project created: ${project.name} (id: ${project.id})` }] };
+    try {
+      const project = await apiCall("/projects", "POST", params);
+      return { content: [{ type: "text" as const, text: `Project created: ${project.name} (id: ${project.id})` }] };
+    } catch (err) { return errorResult(err); }
   },
 );
 

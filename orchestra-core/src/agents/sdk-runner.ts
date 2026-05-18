@@ -216,9 +216,23 @@ function logMessage(p: SdkRunInput, m: SDKMessage): void {
         `SDK result: subtype=${m.subtype}${cost} duration=${m.duration_ms}ms`);
       break;
     }
-    case "system":
-      // Init / mcp connection notices — verbose, drop unless debugging.
+    case "system": {
+      // Init / mcp connection notices. We surface the init event so MCP
+      // wiring problems (server failed to spawn, wrong cwd, missing dist)
+      // are visible without rerunning with a debugger attached. Other
+      // system subtypes stay silent.
+      const sub = (m as { subtype?: string }).subtype;
+      if (sub === "init") {
+        const init = m as unknown as {
+          tools?: string[];
+          mcp_servers?: { name: string; status: string }[];
+        };
+        const orchestraTools = (init.tools ?? []).filter((t) => t.startsWith("mcp__orchestra"));
+        appendLog(p.projectId, p.sessionId, p.role, "system",
+          `MCP init: servers=${JSON.stringify(init.mcp_servers ?? [])}  orchestra_tools=${JSON.stringify(orchestraTools)}`);
+      }
       break;
+    }
     default:
       // partial_assistant / tool_progress / task_notification — skip
       break;

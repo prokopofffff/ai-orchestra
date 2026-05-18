@@ -25,6 +25,7 @@ import { membersPlugin } from "./members-api";
 import { onboardingPlugin } from "./onboarding-api";
 import { fsPlugin } from "./fs-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
+import { setAgentJwtSigner } from "./agent-jwt";
 import { userCanAccessProject } from "./project-access";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat";
 import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "./rate-limiter";
@@ -52,6 +53,9 @@ async function main() {
     secret: config.jwtSecret,
     cookie: { cookieName: SESSION_COOKIE, signed: false },
   });
+  // After registration the `app.jwt.sign` decorator is available — capture it
+  // so the agent-spawner / tech-lead dispatcher can mint MCP-side tokens.
+  setAgentJwtSigner((payload) => app.jwt.sign(payload));
 
   // Gate every /api/* route behind auth except the public ones (auth itself,
   // health, external webhooks). Static dashboard files stay public.

@@ -35,15 +35,36 @@ const ORCHESTRA_PRELUDE = (() => {
   return fs.existsSync(p) ? fs.readFileSync(p, "utf-8") : "";
 })();
 
-export function buildAgentDefinitions(opts: { pencilEnabled?: boolean }): Record<AgentRole, AgentDefinition> {
+const ALL_ROLES: AgentRole[] = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"];
+
+/**
+ * Strip the "What you write vs what you signal" section from the shared
+ * prelude when building TL's prompt. That section reads "Code / designs →
+ * tool calls (Edit, Write, …)" — correct for dev roles, dangerous for TL
+ * because it primes the model toward writing files. TL gets the rest of
+ * the prelude (tasks, signals, roles, caps, memory) unchanged.
+ */
+function preludeForRole(role: AgentRole): string {
+  if (role !== "tech-lead") return ORCHESTRA_PRELUDE;
+  return ORCHESTRA_PRELUDE.replace(
+    /\n## What you write vs what you signal[\s\S]*?(?=\n## |\n?$)/,
+    "",
+  );
+}
+
+export function buildAgentDefinitions(opts: {
+  pencilEnabled?: boolean;
+  /** Limit the returned map to these roles. Defaults to all 6. */
+  roles?: AgentRole[];
+}): Record<AgentRole, AgentDefinition> {
   const out: Partial<Record<AgentRole, AgentDefinition>> = {};
-  const roles: AgentRole[] = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"];
+  const roles = opts.roles ?? ALL_ROLES;
   for (const role of roles) {
     const cfg = agentConfigs[role];
     const md = loadSystemPrompt(role, opts);
     const scope = buildScopeRules(role);
-    const prompt = [ORCHESTRA_PRELUDE, md, scope].filter(Boolean).join("\n\n---\n\n");
-    out[role] = {
+    const prompt = [preludeForRole(role), md, scope].filter(Boolean).join("\n\n---\n\n");
+    const def: AgentDefinition = {
       description: ROLE_DESCRIPTIONS[role],
       // Static system prompt = shared orchestra vocabulary + role-specific
       // markdown + scope rules. Dynamic per-task context — task title,
@@ -53,13 +74,14 @@ export function buildAgentDefinitions(opts: { pencilEnabled?: boolean }): Record
       // canUseTool. File-path scope (`scope.denied`) is still enforced by
       // canUseTool because the SDK has no native equivalent.
       disallowedTools: cfg.toolsDeny ?? [],
-      // Auto-load .claude/agent-memory/<role>/*.md from the worktree at
-      // each spawn. Gives each role a place to accumulate per-project
-      // notes (conventions, weird gotchas, prior decisions) without us
-      // having to plumb a DB-backed memory store. Roles can read and
-      // write these files themselves over time.
-      memory: "project",
     };
+    // Auto-load .claude/agent-memory/<role>/*.md from the worktree at each
+    // spawn — useful for dev roles to accumulate per-project conventions.
+    // NOT for tech-lead: project memory tends to be implementation-shaped
+    // (CLAUDE.md, "the tech stack is X, conventions are Y") and reading
+    // it nudges TL away from planning and toward execution.
+    if (role !== "tech-lead") def.memory = "project";
+    out[role] = def;
   }
   return out as Record<AgentRole, AgentDefinition>;
 }

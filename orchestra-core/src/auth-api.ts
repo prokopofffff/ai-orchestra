@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import {
   SignupSchema, LoginRequestSchema, UserSchema,
   type User,
@@ -25,11 +25,17 @@ function toUser(row: UserRow): User {
   });
 }
 
-function setSessionCookie(reply: FastifyReply, token: string): void {
+function setSessionCookie(request: FastifyRequest, reply: FastifyReply, token: string): void {
+  // Mirror the request's protocol — `Secure: true` over plain HTTP makes the
+  // browser silently drop the cookie, which kills login on HTTP-only
+  // deployments (no TLS proxy in front of the box). Behind a TLS-terminating
+  // proxy, `request.protocol` reads `X-Forwarded-Proto` once Fastify is
+  // configured with `trustProxy` — until then it reflects the direct hop.
+  const isHttps = request.protocol === "https";
   reply.setCookie(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttps,
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });
@@ -80,7 +86,7 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
     }
 
     const token = await reply.jwtSign({ id: user.id, email: user.email, username: user.username });
-    setSessionCookie(reply, token);
+    setSessionCookie(request, reply, token);
     return reply.code(201).send(user);
   });
 
@@ -101,7 +107,7 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
 
     const user = toUser(rows[0]);
     const token = await reply.jwtSign({ id: user.id, email: user.email, username: user.username });
-    setSessionCookie(reply, token);
+    setSessionCookie(request, reply, token);
     return reply.send(user);
   });
 

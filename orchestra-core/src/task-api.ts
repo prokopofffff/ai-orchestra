@@ -6,6 +6,7 @@ import { getDb, getPool } from "./db";
 import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked, DONE_STATES } from "./dependency-engine";
+import { hydrateSystemEnv } from "./claude-auth";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import { currentUserId } from "./auth";
 import {
@@ -618,6 +619,14 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
         [key, value],
       );
     }
+
+    // Re-hydrate env for keys other code reads via process.env. Without
+    // this, a github_token saved here only takes effect on next server
+    // restart — confusing for users who saved and immediately ran an
+    // agent. claude_api_key isn't here because agent-spawner /
+    // tech-lead-dispatcher both call applyClaudeAuthForProject at spawn
+    // time and re-resolve from system_config directly.
+    await hydrateSystemEnv();
 
     const { rows } = await pool.query("SELECT key, value FROM system_config");
     const result: SystemConfigMap = {};

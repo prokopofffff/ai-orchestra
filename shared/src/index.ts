@@ -100,6 +100,19 @@ export const TelegramConfigSchema = z.object({
 });
 export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
+/**
+ * Per-project Claude credentials. When `apiKey` is set, agents spawned for
+ * THIS project use it as ANTHROPIC_API_KEY; orchestra-wide system_config
+ * value (and process env) act as fallback. `auth` overrides the
+ * orchestra-wide claude_auth choice — useful when one project uses an
+ * API key while another runs on a Max subscription on the same machine.
+ */
+export const ProjectClaudeConfigSchema = z.object({
+  auth: z.enum(["max", "api"]).optional(),
+  apiKey: z.string().optional(),
+});
+export type ProjectClaudeConfig = z.infer<typeof ProjectClaudeConfigSchema>;
+
 export const ProjectSettingsSchema = z.object({
   models: z.record(AgentRoleSchema, z.string()).optional(),
   effort: z.record(AgentRoleSchema, EffortLevelSchema).optional(),
@@ -107,6 +120,7 @@ export const ProjectSettingsSchema = z.object({
   provider: ProjectProviderConfigSchema.optional(),
   limits: LimitsSchema.optional(),
   telegram: TelegramConfigSchema.optional(),
+  claude: ProjectClaudeConfigSchema.optional(),
   /**
    * If true, an approved PR (signal `pr_approved` from tech-lead) is merged
    * automatically by orchestra-core. If false (default), the user gets a

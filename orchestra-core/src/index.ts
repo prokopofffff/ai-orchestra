@@ -13,6 +13,7 @@ import fastifyJwt from "@fastify/jwt";
 import { loadConfig } from "./config";
 import { log, requestHook, installProcessTraps } from "./obs";
 import { waitForDatabase, runMigrations, getPool } from "./db";
+import { hydrateSystemEnv } from "./claude-auth";
 import { taskPlugin } from "./task-api";
 import { signalPlugin } from "./signal-api";
 import { sessionPlugin } from "./session-api";
@@ -144,6 +145,12 @@ async function main() {
 
   log.info("running migrations");
   await runMigrations(config.databaseUrl);
+
+  // Hydrate process.env from orchestra-wide system_config rows that other
+  // code reads via env (e.g. providers/resolver reads GITHUB_TOKEN). Until
+  // this ran, the github_token set via the System Settings UI was dead
+  // storage — only the .env value worked.
+  await hydrateSystemEnv();
 
   // Create first project if configured
   await createFirstProject();

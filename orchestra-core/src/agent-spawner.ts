@@ -21,6 +21,7 @@ import { providerFor } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
 import { DONE_STATES } from "./dependency-engine";
+import { applyClaudeAuthForProject } from "./claude-auth";
 import { resolveDailyCostCap } from "./limits";
 import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
@@ -74,14 +75,9 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     throw new PreflightError(`no repo/local_path on project ${slug}`);
   }
 
-  // Apply any DB-stored auth overrides (set via UI) on top of env defaults.
-  const { rows: sysRows } = await pool.query(
-    "SELECT key, value FROM system_config WHERE key IN ('claude_auth', 'claude_api_key') LIMIT 2",
-  ).catch(() => ({ rows: [] }));
-  const sysConfig = Object.fromEntries((sysRows as { key: string; value: string }[]).map((r) => [r.key, r.value]));
-  if (sysConfig.claude_api_key && (sysConfig.claude_auth ?? config.claudeAuth) === "api") {
-    process.env.ANTHROPIC_API_KEY = sysConfig.claude_api_key;
-  }
+  // Apply project-scoped Claude auth (per-project key wins over orchestra-
+  // wide). Must run right before query() since process.env mutates global.
+  await applyClaudeAuthForProject(settings, config);
 
   const { rows: taskRows } = await pool.query("SELECT blocked_by FROM tasks WHERE id = $1", [taskId]);
   if (taskRows.length && (taskRows[0].blocked_by as string[]).length > 0) {

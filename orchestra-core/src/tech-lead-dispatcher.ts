@@ -17,6 +17,7 @@ import { getAgentConfig } from "./agents/configs";
 import { buildAgentDefinitions } from "./agents/role-definitions";
 import { providerFor } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
+import { applyClaudeAuthForProject } from "./claude-auth";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 
 // Track in-flight Tech Lead conversations (per-project) so we can interrupt.
@@ -64,6 +65,11 @@ export async function dispatchTechLead(
     } else {
       workDir = ensureTempDir(slug);
     }
+
+    // Same precedence the dev-agent spawner uses: per-project Claude key
+    // wins, then orchestra-wide, then env. Without this every TL chat
+    // would bill the orchestra-wide key regardless of project setting.
+    await applyClaudeAuthForProject(settings, config);
 
     const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, "tech-lead"));
     const conversationHistory = await getConversationHistory(projectId);

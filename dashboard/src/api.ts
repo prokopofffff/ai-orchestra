@@ -172,6 +172,17 @@ export const deleteTask = (id: string) => del(`/tasks/${id}`);
 export const unfreezeTask = (id: string): Promise<Task> =>
   postValidated(`/tasks/${id}/unfreeze`, {}, TaskSchema);
 
+/**
+ * Manual merge of the task's PR. 200 → {merged:true, sha}. 409 from the
+ * server signals a soft refusal (conflict, branch protection, failing
+ * checks); the error body's `error` field has the provider's reason and
+ * we surface it to the user via the thrown message.
+ */
+const MergeResultSchema = z.object({ merged: z.literal(true), sha: z.string() });
+export type MergeResult = z.infer<typeof MergeResultSchema>;
+export const mergeTask = (id: string): Promise<MergeResult> =>
+  postValidated(`/tasks/${id}/merge`, {}, MergeResultSchema);
+
 // Comments
 export const fetchComments = (taskId: string): Promise<TaskComment[]> =>
   getValidated(`/tasks/${taskId}/comments`, z.array(TaskCommentSchema));

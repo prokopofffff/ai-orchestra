@@ -17,6 +17,8 @@ import { reconcileTelegramNow } from "./telegram-manager";
 import { isGitRepo, initGitRepo } from "./repo-manager";
 import { loadConfig } from "./config";
 import type { AgentRole } from "./config";
+import { providerForProject } from "./providers";
+import { log } from "./obs";
 
 /**
  * Reject a settings patch that would make this project share a Telegram
@@ -459,6 +461,59 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const r = await getDb().delete(tasks).where(eq(tasks.id, request.params.id));
     if (!(r as { rowCount?: number }).rowCount) return reply.code(404).send({ error: "Task not found" });
     return { deleted: true };
+  });
+
+  // ─── Manual merge ───
+  //
+  // User-initiated merge of the task's PR. Same provider call as the
+  // background auto-merge path; difference is the trigger (button click
+  // vs `pr_approved` signal) and the response shape (synchronous status
+  // back to the UI instead of a notification). Returns 409 for soft
+  // refusals (conflicts, branch protection, failed checks) so the
+  // dashboard can show a precise reason without distinguishing from
+  // transport errors.
+
+  app.post<{ Params: { id: string } }>("/tasks/:id/merge", async (request, reply) => {
+    const userId = currentUserId(request);
+    const pid = await projectIdOf("tasks", request.params.id);
+    if (!pid || !(await userCanAccessProject(userId, pid))) {
+      return reply.code(404).send({ error: "Task not found" });
+    }
+    if (!(await userCanEditProject(userId, pid))) {
+      return reply.code(403).send({ error: "Insufficient permissions" });
+    }
+    const { rows } = await getPool().query<{ pr_url: string | null; state: string; title: string }>(
+      "SELECT pr_url, state, title FROM tasks WHERE id = $1 LIMIT 1",
+      [request.params.id],
+    );
+    const row = rows[0];
+    if (!row) return reply.code(404).send({ error: "Task not found" });
+    if (!row.pr_url) return reply.code(400).send({ error: "Task has no PR to merge" });
+    if (row.state === "merged" || row.state === "closed") {
+      return reply.code(409).send({ error: `Task is already ${row.state}` });
+    }
+
+    let provider;
+    try {
+      provider = await providerForProject(pid);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+
+    try {
+      const result = await provider.mergePR(row.pr_url, { method: "squash" });
+      if (result.merged) {
+        // Don't flip task.state here — leave it to the webhook + pr-watcher
+        // path so manual and auto-merge converge on the same downstream
+        // effects (QA dispatch, dependency unblock).
+        return reply.send({ merged: true, sha: result.sha });
+      }
+      return reply.code(409).send({ error: result.reason });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ err, taskId: request.params.id, prUrl: row.pr_url }, "manual merge failed");
+      return reply.code(502).send({ error: msg });
+    }
   });
 
   // ─── Unfreeze ───

@@ -122,9 +122,12 @@ export function TaskDetail({ taskId, onClose }: Props) {
 
           {task.prUrl && (
             <Row label="PR">
-              <a href={task.prUrl} target="_blank" rel="noopener" className="text-xs text-accent-blue hover:underline break-all">
-                {task.prUrl}
-              </a>
+              <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+                <a href={task.prUrl} target="_blank" rel="noopener" className="text-xs text-accent-blue hover:underline break-all min-w-0">
+                  {task.prUrl}
+                </a>
+                <MergeButton taskId={taskId} state={task.state} />
+              </div>
             </Row>
           )}
 
@@ -187,6 +190,59 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="field-row flex items-center gap-3">
       <label className="text-xs font-medium text-text-secondary w-20 shrink-0">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/**
+ * One-shot "merge this PR" action. Hidden once the task lands in merged/closed
+ * to avoid double-fires. Surfaces provider refusals (409 from the API) inline
+ * so the user sees the exact reason — conflict, branch protection, failing
+ * checks — instead of a generic failure toast.
+ *
+ * On success we don't update task.state ourselves; the GitHub/GitLab webhook
+ * + pr-watcher pipeline does that, the same path as auto-merge. We just
+ * invalidate the task query to pick up downstream changes when they arrive.
+ */
+function MergeButton({ taskId, state }: { taskId: string; state: TaskState }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<{ kind: "ok" | "err"; message: string } | null>(null);
+
+  if (state === "merged" || state === "closed") return null;
+
+  async function merge() {
+    if (!confirm("Merge this PR to main now? Squash merge via the provider; no rollback.")) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const r = await api.mergeTask(taskId);
+      setStatus({ kind: "ok", message: `Merged · sha ${r.sha.slice(0, 7)}` });
+      await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus({ kind: "err", message: msg });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button variant="primary-green" size="sm" onClick={merge} disabled={busy}>
+        {busy ? "Merging…" : "Merge to main"}
+      </Button>
+      {status && (
+        <span
+          className={[
+            "text-[11px]",
+            status.kind === "ok" ? "text-accent-green" : "text-accent-red",
+          ].join(" ")}
+          role={status.kind === "err" ? "alert" : undefined}
+        >
+          {status.message}
+        </span>
+      )}
     </div>
   );
 }

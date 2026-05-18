@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary-red" | "primary-blue" | "secondary" | "ghost";
+type Variant = "primary-red" | "primary-blue" | "primary-green" | "secondary" | "ghost";
 type Size = "sm" | "md" | "lg";
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -15,6 +15,8 @@ const variantClass: Record<Variant, string> = {
     "bg-accent-red text-text-on-accent hover:bg-accent-red/90 focus-visible:ring-accent-red/40",
   "primary-blue":
     "bg-accent-blue text-text-on-accent hover:bg-accent-blue/90 focus-visible:ring-accent-blue/40",
+  "primary-green":
+    "bg-accent-green text-text-on-accent hover:bg-accent-green/90 focus-visible:ring-accent-green/40",
   secondary:
     "bg-transparent text-text-secondary border border-border hover:text-text-primary hover:border-text-secondary focus-visible:ring-border",
   ghost:

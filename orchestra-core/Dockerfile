@@ -56,8 +56,13 @@ COPY mcp-tools/task-tool/package.json mcp-tools/task-tool/package.json
 RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store \
     pnpm install --frozen-lockfile --prod --filter='!dashboard'
 
-# Built JS — shared (workspace dep), mcp-tools (stdio child processes).
-COPY --from=builder /workspace/shared/dist shared/dist
+# shared/src — orchestra-core imports `@ai-orchestra/shared`, and that
+# package's `exports` field points at ./src/index.ts (it's TS-source-only
+# at the package boundary, with dist as a side-effect of `tsc`). Since
+# orchestra-core runs via tsx, we ship the .ts files directly.
+COPY shared/src shared/src
+
+# Built JS for mcp-tools (spawned as stdio child processes by node, not tsx).
 COPY --from=builder /workspace/mcp-tools/signal-tool/dist mcp-tools/signal-tool/dist
 COPY --from=builder /workspace/mcp-tools/task-tool/dist mcp-tools/task-tool/dist
 

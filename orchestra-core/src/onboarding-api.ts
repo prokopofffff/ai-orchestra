@@ -126,40 +126,46 @@ export async function computeOnboarding(userId: string) {
   const visibleProjects = [...ownedRows, ...memberRows];
   const hasProject = visibleProjects.length > 0;
 
-  // Claude auth step: any signal the user (or env) has wired up Claude.
-  // If the deployment runs in `max` mode and there's no explicit API key
-  // configured, we count the row in system_config as the act of choosing.
+  // Until the user has at least one project, NONE of the credential steps
+  // are evaluated against orchestra-wide config. system_config is shared
+  // across all users, so without this gate a brand-new signup would see
+  // every step pre-ticked just because a previous user (or operator) had
+  // already set up Claude / GitHub for the orchestra. UX bug: "I haven't
+  // done anything yet, why does the checklist say 3 of 4 done?"
+  //
+  // Once they create their first project, orchestra defaults *can*
+  // legitimately auto-tick credential steps (because those defaults will
+  // actually be used when running agents for the new project).
   const sysConfigRows = await db.select().from(systemConfig);
   const sysMap = Object.fromEntries(sysConfigRows.map((r) => [r.key, r.value]));
-  const claudeAuthDone =
+
+  const orchestraHasClaude =
     !!sysMap.claude_auth ||
     !!sysMap.claude_api_key ||
     !!process.env.ANTHROPIC_API_KEY ||
     !!process.env.CLAUDE_API_KEY;
+  const claudeAuthDone = hasProject && orchestraHasClaude;
 
-  // Git token step: any git provider token reachable from this user's
-  // projects, or all their projects use local_path (no token needed).
+  // Git token: any project the user can see that's pushed to a remote
+  // resolves a token (per-project override or orchestra-wide fallback).
+  // Projects using only `local_path` don't need a token.
   const projectsNeedingToken = visibleProjects.filter((p) => !p.localPath && p.repoUrl);
   const projectTokenSet = projectsNeedingToken.some((p) => {
     const s = (p.settings as { provider?: { token?: string } } | null)?.provider;
     return !!s?.token;
   });
   const globalToken = !!sysMap.github_token || !!process.env.GITHUB_TOKEN || !!process.env.GITLAB_TOKEN;
-  // If they don't have any project that *needs* a token yet, treat the
-  // step as not-applicable-yet → done so it doesn't nag a local-path-only
-  // user. As soon as they add a remote-repo project, the step re-opens.
-  const gitTokenDone = projectsNeedingToken.length === 0 ? true : projectTokenSet || globalToken;
+  const gitTokenDone =
+    hasProject && (projectsNeedingToken.length === 0 ? true : projectTokenSet || globalToken);
 
-  // Telegram is optional — auto-tick if the user has visible projects but
-  // none with a Telegram bot configured (we don't want to nag people who
-  // never wanted Telegram). If at least one of the user's projects has a
-  // bot wired up, count the step as done. The card on the checklist is
-  // explicit that it's optional.
+  // Telegram is optional — auto-tick once the user has a project and at
+  // least one of their projects has a bot wired up. Don't pre-tick for
+  // users with no project yet (was the other source of the 3-of-4 bug).
   const telegramAny = visibleProjects.some((p) => {
     const tg = (p.settings as { telegram?: { botToken?: string } } | null)?.telegram;
     return !!tg?.botToken;
   });
-  const telegramDone = !hasProject || telegramAny;
+  const telegramDone = hasProject && telegramAny;
 
   const steps = [
     {

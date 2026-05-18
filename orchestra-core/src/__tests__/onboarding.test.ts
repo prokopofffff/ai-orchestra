@@ -54,18 +54,58 @@ describe("onboarding — fresh user", () => {
     expect(body.dismissedAt).toBeNull();
     expect(body.allDone).toBe(false);
     expect(body.steps).toHaveLength(4);
-    // claude_auth + project should be unchecked. git_token is auto-ticked
-    // when there are no projects yet (nothing needing a token).
+    // None of the steps should pre-tick for a fresh signup, even when the
+    // orchestra-wide system_config or env has Claude / GitHub credentials
+    // from a previous user — those don't count as "this user did
+    // something". All four steps stay unchecked until the user creates
+    // their first project.
     const map = Object.fromEntries((body.steps as { key: string; done: boolean }[]).map((s) => [s.key, s.done]));
     expect(map.claude_auth).toBe(false);
     expect(map.project).toBe(false);
+    expect(map.git_token).toBe(false);
+    expect(map.telegram).toBe(false);
+  });
+
+  it("stays at 0-of-4 even when system_config + env are pre-populated", async () => {
+    // Seed every "orchestra-wide" knob a previous user might have set.
+    await getPool().query("INSERT INTO system_config (key, value) VALUES ('claude_auth', 'max')");
+    await getPool().query("INSERT INTO system_config (key, value) VALUES ('claude_api_key', 'sk-test')");
+    await getPool().query("INSERT INTO system_config (key, value) VALUES ('github_token', 'ghp_test')");
+    process.env.ANTHROPIC_API_KEY = "sk-test-env";
+    process.env.GITHUB_TOKEN = "ghp_env";
+
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: "/api/onboarding" });
+    await app.close();
+
+    const body = res.json();
+    const map = Object.fromEntries((body.steps as { key: string; done: boolean }[]).map((s) => [s.key, s.done]));
+    expect(map.claude_auth).toBe(false);
+    expect(map.project).toBe(false);
+    expect(map.git_token).toBe(false);
+    expect(map.telegram).toBe(false);
   });
 });
 
 describe("onboarding — live step computation", () => {
-  it("ticks claude_auth when system_config holds claude_auth row", async () => {
+  it("does NOT tick claude_auth before the user has a project (avoid pre-ticking new signups)", async () => {
     await getPool().query(
       "INSERT INTO system_config (key, value) VALUES ('claude_auth', 'max')",
+    );
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: "/api/onboarding" });
+    await app.close();
+    const claude = (res.json().steps as { key: string; done: boolean }[]).find((s) => s.key === "claude_auth");
+    expect(claude?.done).toBe(false);
+  });
+
+  it("ticks claude_auth once the user has a project AND system_config has the row", async () => {
+    await getPool().query(
+      "INSERT INTO system_config (key, value) VALUES ('claude_auth', 'max')",
+    );
+    await getPool().query(
+      "INSERT INTO projects (name, slug, owner_id, local_path) VALUES ('P', 'onb-claude', $1, '/tmp/repo')",
+      [userId],
     );
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: "/api/onboarding" });
@@ -74,8 +114,12 @@ describe("onboarding — live step computation", () => {
     expect(claude?.done).toBe(true);
   });
 
-  it("ticks claude_auth when ANTHROPIC_API_KEY env var is present", async () => {
+  it("ticks claude_auth when user has a project AND ANTHROPIC_API_KEY env var is present", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-test";
+    await getPool().query(
+      "INSERT INTO projects (name, slug, owner_id, local_path) VALUES ('P', 'onb-claude2', $1, '/tmp/repo')",
+      [userId],
+    );
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: "/api/onboarding" });
     await app.close();

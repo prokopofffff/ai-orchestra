@@ -1,57 +1,87 @@
 import { getPool } from "./db";
 import type { Config } from "./config";
 
+export type ClaudeAuthResolution =
+  | { mode: "max" }                              // SDK uses local `claude` CLI session
+  | { mode: "api"; apiKey: string }              // SDK uses this API key
+  | { mode: "api"; apiKey: null; reason: string }; // API mode chosen but no key on project
+
 /**
- * Resolve Claude credentials for a given project and apply them to
- * process.env. The Claude Agent SDK reads ANTHROPIC_API_KEY at query()
- * time, so this MUST be called immediately before spawning the run.
+ * Resolve Claude credentials for a given project WITHOUT mutating env.
+ * Use this for preflight checks (project creation, dispatcher entry).
  *
  * Auth MODE precedence (highest first):
  *   1. settings.claude.auth   — per-project ("max" | "api")
  *   2. system_config.claude_auth — orchestra-wide default mode
  *   3. config.claudeAuth      — env default (CLAUDE_AUTH or "max")
  *
- * Auth CREDENTIAL precedence: there is no fallback. When mode is "api",
- * the key MUST come from settings.claude.apiKey on that specific
- * project. Pulling from a shared system_config row or env var was a
- * cross-user leak — a token User A pasted into System Settings would
- * silently bill against User B's projects.
+ * Auth CREDENTIAL: no fallback. When mode is "api", the key must come
+ * from settings.claude.apiKey. Pulling from a shared system_config row
+ * or env var was a cross-user leak.
+ */
+export async function resolveClaudeAuth(
+  settings: unknown,
+  config: Config,
+): Promise<ClaudeAuthResolution> {
+  // Mode (max vs api) is a deployment-wide preference, not a credential —
+  // safe to share across users via system_config.
+  const { rows: sysRows } = await getPool().query(
+    "SELECT value FROM system_config WHERE key = 'claude_auth' LIMIT 1",
+  ).catch(() => ({ rows: [] }));
+  const sysClaudeAuth = sysRows[0]?.value as string | undefined;
+
+  const projClaude = (settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
+  const mode = (projClaude?.auth ?? sysClaudeAuth ?? config.claudeAuth) as "max" | "api";
+
+  if (mode === "max") return { mode };
+  const apiKey = projClaude?.apiKey;
+  if (apiKey) return { mode, apiKey };
+  return {
+    mode,
+    apiKey: null,
+    reason:
+      "Project is in API mode but has no Claude API key configured. Open Project Settings → Claude credentials to paste one, " +
+      "or switch the mode to Max (uses the local `claude` CLI session).",
+  };
+}
+
+/**
+ * Apply the resolved auth to process.env. Must be called immediately
+ * before spawning a run since the SDK reads ANTHROPIC_API_KEY at query()
+ * time.
  *
- * When the effective auth is "max", the env var is DELETED — Max-mode
- * authenticates via the local `claude` CLI session. If an earlier
- * project's API key were still in env, the SDK might pick it up and
- * bill the subscription user's API account instead.
+ * When the effective auth is "max" we explicitly DELETE the env var —
+ * otherwise an earlier project's API key could leak into this run and
+ * bill the Max-subscription user's API quota instead of their plan.
  */
 export async function applyClaudeAuthForProject(
   settings: unknown,
   config: Config,
-): Promise<{ auth: "max" | "api"; usingApiKey: boolean }> {
-  // The mode (max vs api) is still a deployment-wide default that can be
-  // set in System Settings — it's not a credential, just a preference,
-  // so sharing across users is fine. Credentials are not.
-  const { rows: sysRows } = await getPool().query(
-    "SELECT value FROM system_config WHERE key = 'claude_auth' LIMIT 1",
-  ).catch(() => ({ rows: [] }));
-  const sysClaudeAuth = (sysRows[0]?.value as string | undefined);
-
-  const projClaude = (settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
-  const auth = (projClaude?.auth ?? sysClaudeAuth ?? config.claudeAuth) as "max" | "api";
-
-  if (auth === "api") {
-    const key = projClaude?.apiKey;
-    if (key) {
-      process.env.ANTHROPIC_API_KEY = key;
-      return { auth, usingApiKey: true };
-    }
-    // No key on this project. Clear any leftover env so the SDK can't
-    // silently fall back to another user's key that happened to be set
-    // by an earlier run. The caller (agent-spawner / tech-lead-dispatcher)
-    // sees usingApiKey=false and can escalate / refuse to run.
+): Promise<ClaudeAuthResolution> {
+  const resolution = await resolveClaudeAuth(settings, config);
+  if (resolution.mode === "api" && resolution.apiKey) {
+    process.env.ANTHROPIC_API_KEY = resolution.apiKey;
+  } else {
     delete process.env.ANTHROPIC_API_KEY;
-    return { auth, usingApiKey: false };
   }
+  return resolution;
+}
 
-  // Max subscription path — SDK reads from claude CLI session, not env.
-  delete process.env.ANTHROPIC_API_KEY;
-  return { auth, usingApiKey: false };
+/**
+ * Cheap preflight check: can this project actually run a Claude agent?
+ * Returns null when the project is ready to run; a user-facing reason
+ * string otherwise. Callers post the reason to the chat as a system
+ * message instead of letting the SDK fail mid-stream.
+ *
+ * Max-mode is treated as "trust the user" — there's no server-side way
+ * to verify the local `claude` CLI session without burning a request.
+ * If max-mode actually breaks at spawn time the SDK gives a clean error.
+ */
+export async function preflightClaudeAuth(
+  settings: unknown,
+  config: Config,
+): Promise<string | null> {
+  const r = await resolveClaudeAuth(settings, config);
+  if (r.mode === "api" && r.apiKey === null) return r.reason;
+  return null;
 }

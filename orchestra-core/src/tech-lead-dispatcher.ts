@@ -17,7 +17,7 @@ import { getAgentConfig } from "./agents/configs";
 import { buildAgentDefinitions } from "./agents/role-definitions";
 import { providerFor } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
-import { applyClaudeAuthForProject } from "./claude-auth";
+import { applyClaudeAuthForProject, preflightClaudeAuth } from "./claude-auth";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 
 // Track in-flight Tech Lead conversations (per-project) so we can interrupt.
@@ -66,9 +66,19 @@ export async function dispatchTechLead(
       workDir = ensureTempDir(slug);
     }
 
-    // Same precedence the dev-agent spawner uses: per-project Claude key
-    // wins, then orchestra-wide, then env. Without this every TL chat
-    // would bill the orchestra-wide key regardless of project setting.
+    // Preflight: refuse to spawn TL when the project's Claude auth is
+    // unusable. Otherwise the SDK would fire a query() that 401s mid-
+    // stream — confusing UX, especially for first-time users whose
+    // checklist hasn't walked them through credentials yet.
+    const reason = await preflightClaudeAuth(settings, config);
+    if (reason) {
+      notify({
+        projectId, text: reason, priority: "high", fromRole: "system",
+      }).catch(() => { /* best-effort */ });
+      return { action: "error", error: reason };
+    }
+
+    // Per-project Claude key wins — same precedence as agent-spawner.
     await applyClaudeAuthForProject(settings, config);
 
     const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, "tech-lead"));

@@ -21,7 +21,7 @@ import { providerFor } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
 import { DONE_STATES } from "./dependency-engine";
-import { applyClaudeAuthForProject } from "./claude-auth";
+import { applyClaudeAuthForProject, preflightClaudeAuth } from "./claude-auth";
 import { resolveDailyCostCap } from "./limits";
 import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
@@ -75,8 +75,22 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     throw new PreflightError(`no repo/local_path on project ${slug}`);
   }
 
-  // Apply project-scoped Claude auth (per-project key wins over orchestra-
-  // wide). Must run right before query() since process.env mutates global.
+  // Preflight: refuse to spawn if Claude auth isn't usable. Escalate so
+  // the user sees a clear message in the chat rather than a mid-stream
+  // SDK error. PreflightError is the same shape used for "no repo" —
+  // downgraded to log.info instead of a crash trace.
+  const authReason = await preflightClaudeAuth(settings, config);
+  if (authReason) {
+    await escalate(projectId, taskId, authReason, {
+      event: "claude_auth_unconfigured",
+      slug,
+      role,
+    });
+    throw new PreflightError(`claude auth unconfigured on project ${slug}`);
+  }
+
+  // Apply project-scoped Claude auth. Must run right before query()
+  // since the SDK reads ANTHROPIC_API_KEY at query time (mutates env).
   await applyClaudeAuthForProject(settings, config);
 
   const { rows: taskRows } = await pool.query("SELECT blocked_by FROM tasks WHERE id = $1", [taskId]);

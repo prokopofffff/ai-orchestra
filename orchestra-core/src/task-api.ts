@@ -6,6 +6,8 @@ import { getDb, getPool } from "./db";
 import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked, DONE_STATES } from "./dependency-engine";
+import { preflightClaudeAuth } from "./claude-auth";
+import { notify } from "./notification-hub";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import { currentUserId } from "./auth";
 import {
@@ -88,22 +90,38 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     await db.insert(conversations).values({ projectId: row.id });
 
     // Auto-seed an "introduce yourself to this codebase" task. Only when
-    // there's actually a repo to look at — a project with neither
-    // local_path nor repo_url can't have anything indexed yet.
+    // there's actually a repo to look at AND Claude auth is set up for
+    // the project. Without the auth check, the intro task would spawn
+    // TL and the SDK would 401 — a confusing first impression for a
+    // brand-new signup whose checklist hasn't even guided them through
+    // setting credentials yet. We post a system message instead pointing
+    // them at Settings; they can re-trigger the intro from there.
     if (row.repoUrl || row.localPath) {
-      try {
-        const introTaskId = await createIntroTask(row.id);
-        await db
-          .update(projects)
-          .set({ introTaskId })
-          .where(eq(projects.id, row.id));
-        row.introTaskId = introTaskId;
-      } catch (err) {
-        // Best-effort: don't fail project creation if the intro task can't
-        // be queued (e.g. flow_audit constraint). User can re-trigger from
-        // Settings later.
-        // eslint-disable-next-line no-console
-        console.error("intro-task seeding failed", err);
+      const reason = await preflightClaudeAuth(row.settings, loadConfig());
+      if (reason) {
+        notify({
+          projectId: row.id,
+          text:
+            `Project created. The codebase intro task is on hold until Claude is configured for this project. ${reason} ` +
+            "Once configured, open Settings → Intro → Re-run scan to start the intro task.",
+          priority: "normal",
+          fromRole: "system",
+        }).catch(() => { /* best-effort */ });
+      } else {
+        try {
+          const introTaskId = await createIntroTask(row.id);
+          await db
+            .update(projects)
+            .set({ introTaskId })
+            .where(eq(projects.id, row.id));
+          row.introTaskId = introTaskId;
+        } catch (err) {
+          // Best-effort: don't fail project creation if the intro task can't
+          // be queued (e.g. flow_audit constraint). User can re-trigger from
+          // Settings later.
+          // eslint-disable-next-line no-console
+          console.error("intro-task seeding failed", err);
+        }
       }
     }
 
@@ -210,6 +228,17 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (!(await userCanEditProject(userId, projectId))) {
       return reply.code(403).send({ error: "Insufficient permissions" });
     }
+    // Preflight: same gate as POST /projects. If Claude isn't configured
+    // we'd burn the task spawning a TL that immediately 401s.
+    const [proj] = await getDb()
+      .select({ settings: projects.settings })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!proj) return reply.code(404).send({ error: "Project not found" });
+    const reason = await preflightClaudeAuth(proj.settings, loadConfig());
+    if (reason) return reply.code(409).send({ error: reason });
+
     const introTaskId = await createIntroTask(projectId);
     await getDb()
       .update(projects)

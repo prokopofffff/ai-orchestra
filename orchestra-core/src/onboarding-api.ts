@@ -4,6 +4,12 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { users, projects, projectMembers, systemConfig } from "./db/schema";
 import { currentUserId } from "./auth";
+import {
+  claudeLoggedIn,
+  codexLoggedIn,
+  hostClaudeAuthAvailable,
+  hostCodexAuthAvailable,
+} from "./per-project-creds";
 
 /**
  * Onboarding tracks one piece of explicit state — whether the user has
@@ -81,7 +87,7 @@ export const onboardingPlugin: FastifyPluginAsync = async (app) => {
   // append guarded by a containment check so re-posts are no-ops.
   app.post<{ Params: { key: string } }>("/onboarding/tabs/:key", async (request, reply) => {
     const parsed = TabKeySchema.safeParse(request.params.key);
-    if (!parsed.success) return reply.code(400).send({ error: "Unknown tab key" });
+    if (!parsed.success) return reply.code(400).send({ error: "Неизвестный ключ вкладки" });
     const userId = currentUserId(request);
     const key = parsed.data;
     await getDb()
@@ -139,19 +145,36 @@ export async function computeOnboarding(userId: string) {
   const sysConfigRows = await db.select().from(systemConfig);
   const sysMap = Object.fromEntries(sysConfigRows.map((r) => [r.key, r.value]));
 
-  const claudeAuthDone =
-    hasProject &&
-    visibleProjects.some((p) => {
-      const c = (p.settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
-      // Project explicitly on Max → done (Claude CLI session handles auth).
-      if (c?.auth === "max") return true;
-      // Project has its own API key → done.
-      if (c?.apiKey) return true;
-      // No per-project override → falls back to orchestra default mode.
-      // If the default is "max" (with no key needed), count the step done.
-      if (!c?.auth && (sysMap.claude_auth ?? "max") === "max") return true;
-      return false;
-    });
+  // AI provider step: the project must have a usable login for AT LEAST
+  // one provider (Claude or Codex). Either provider satisfies the step —
+  // a user who only wants Codex can leave Claude blank, and vice versa.
+  //
+  // Max / subscription modes now require a real per-project credentials
+  // file (we no longer trust the host's ~/.claude or ~/.codex implicitly).
+  // BUT: when the host has a global login AND the project hasn't yet
+  // triggered the lazy seed (which only fires on first spawn), we still
+  // count the step done — the seed will succeed when the user tries to
+  // spawn an agent.
+  const hostClaudeReady = hostClaudeAuthAvailable();
+  const hostCodexReady = hostCodexAuthAvailable();
+  const claudeDefaultMode = (sysMap.claude_auth ?? "max") as "max" | "api";
+
+  const projectAiProviderReady = (p: { id: string; settings: unknown }): boolean => {
+    // Claude side
+    const claude = (p.settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
+    const claudeMode = (claude?.auth ?? claudeDefaultMode) as "max" | "api";
+    if (claudeMode === "api" && claude?.apiKey) return true;
+    if (claudeMode === "max" && (claudeLoggedIn(p.id) || hostClaudeReady)) return true;
+
+    // Codex side
+    const codex = (p.settings as { codex?: { auth?: "subscription" | "api"; apiKey?: string } } | null)?.codex;
+    if (codex?.auth === "api" && codex?.apiKey) return true;
+    if (codex?.auth === "subscription" && (codexLoggedIn(p.id) || hostCodexReady)) return true;
+
+    return false;
+  };
+
+  const aiProviderDone = hasProject && visibleProjects.some(projectAiProviderReady);
 
   // Git token: every project that talks to a remote MUST have its own
   // token in settings.provider.token. local_path-only projects don't
@@ -177,11 +200,14 @@ export async function computeOnboarding(userId: string) {
 
   const steps = [
     {
+      // Key kept as `claude_auth` for backward compat (it's in stepKeySchema
+      // and the user_onboarding.dismissed_steps history). Title reflects
+      // the new reality: either Claude OR Codex satisfies the step.
       key: "claude_auth" as const,
-      title: "Настроить аутентификацию Claude",
-      done: claudeAuthDone,
+      title: "Настроить ИИ-провайдера (Claude или Codex)",
+      done: aiProviderDone,
       href: "/settings",
-      hint: "Выберите подписку Max или API-ключ. Без этого агенты не смогут запускаться.",
+      hint: "Авторизуйтесь в Claude или Codex для проекта (подписка или API-ключ). Без этого агенты не смогут запускаться.",
     },
     {
       key: "project" as const,

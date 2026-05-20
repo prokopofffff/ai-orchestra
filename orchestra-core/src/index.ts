@@ -24,6 +24,7 @@ import { usagePlugin } from "./usage-api";
 import { membersPlugin } from "./members-api";
 import { onboardingPlugin } from "./onboarding-api";
 import { fsPlugin } from "./fs-api";
+import { providersPlugin } from "./providers-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { setAgentJwtSigner } from "./agent-jwt";
 import { userCanAccessProject } from "./project-access";
@@ -90,12 +91,12 @@ async function main() {
   app.get("/api/logs", async (request, reply) => {
     const query = request.query as Record<string, string>;
     const projectId = query.projectId;
-    if (!projectId) return reply.code(400).send({ error: "projectId required" });
+    if (!projectId) return reply.code(400).send({ error: "Обязательное поле: projectId" });
     // Membership gate: agent_logs are project-scoped, so a non-member must
     // not be able to read another project's logs by guessing the id.
     const userId = currentUserId(request);
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const logs = await getLogs(projectId, {
       sessionId: query.sessionId,
@@ -118,6 +119,7 @@ async function main() {
   await app.register(membersPlugin, { prefix: "/api" });
   await app.register(onboardingPlugin, { prefix: "/api" });
   await app.register(fsPlugin, { prefix: "/api" });
+  await app.register(providersPlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
   const dashboardRoot = path.resolve(config.dashboardPath);
@@ -125,7 +127,7 @@ async function main() {
 
   // SPA fallback — serve index.html for non-API routes
   app.setNotFoundHandler(async (request, reply) => {
-    if (request.url.startsWith("/api")) return reply.code(404).send({ error: "not found" });
+    if (request.url.startsWith("/api")) return reply.code(404).send({ error: "не найдено" });
     return reply.sendFile("index.html");
   });
 
@@ -133,9 +135,9 @@ async function main() {
   app.setErrorHandler(async (err: Error, _request, reply) => {
     log.error({ err }, "unhandled error");
     if (err.name === "ZodError") {
-      return reply.code(400).send({ error: "Validation error", details: err });
+      return reply.code(400).send({ error: "Ошибка валидации", details: err });
     }
-    return reply.code(500).send({ error: "Internal server error" });
+    return reply.code(500).send({ error: "Внутренняя ошибка сервера" });
   });
 
   // ─── Startup ───

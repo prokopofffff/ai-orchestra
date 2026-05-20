@@ -1,14 +1,14 @@
-import type { ModelUsage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRole } from "./config";
 import { getPool } from "./db";
 import { log } from "./obs";
+import type { ModelUsage, RuntimeResult } from "./agents/runtime/types";
 
 export type RecordCostInput = {
   projectId: string;
   sessionId: string;
   taskId: string | null;
   role: AgentRole;
-  result: SDKResultMessage;
+  result: RuntimeResult;
 };
 
 /**
@@ -27,12 +27,12 @@ export async function recordCost(input: RecordCostInput): Promise<void> {
   const entries = Object.entries(result.modelUsage ?? {});
   if (entries.length === 0) {
     // Defensive: keep cost visible even when modelUsage is missing.
-    if ((result.total_cost_usd ?? 0) > 0) {
+    if ((result.totalCostUsd ?? 0) > 0) {
       await pool.query(
         `INSERT INTO usage_costs
            (project_id, session_id, task_id, role, model, cost_usd, duration_ms, result_subtype)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [projectId, sessionId, taskId, role, "unknown", result.total_cost_usd, result.duration_ms, subtype],
+        [projectId, sessionId, taskId, role, "unknown", result.totalCostUsd, result.durationMs, subtype],
       );
     }
     return;
@@ -50,7 +50,7 @@ export async function recordCost(input: RecordCostInput): Promise<void> {
         projectId, sessionId, taskId, role, model, u.costUSD ?? 0,
         u.inputTokens ?? 0, u.outputTokens ?? 0,
         u.cacheReadInputTokens ?? 0, u.cacheCreationInputTokens ?? 0,
-        result.duration_ms, subtype,
+        result.durationMs, subtype,
       ],
     );
   }

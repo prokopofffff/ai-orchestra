@@ -1,12 +1,7 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { dispatchTechLead } from "../tech-lead-dispatcher";
 import { configSchema } from "../config";
-
-// Mock the SDK — real calls require a Claude binary / API key.
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: vi.fn(),
-}));
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

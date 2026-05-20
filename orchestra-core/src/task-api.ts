@@ -6,7 +6,7 @@ import { getDb, getPool } from "./db";
 import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
 import { checkUnblocked, DONE_STATES } from "./dependency-engine";
-import { preflightClaudeAuth } from "./claude-auth";
+import { resolveRuntimeForRole } from "./agents/runtime/resolver";
 import { notify } from "./notification-hub";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import { currentUserId } from "./auth";
@@ -90,20 +90,23 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     await db.insert(conversations).values({ projectId: row.id });
 
     // Auto-seed an "introduce yourself to this codebase" task. Only when
-    // there's actually a repo to look at AND Claude auth is set up for
-    // the project. Without the auth check, the intro task would spawn
-    // TL and the SDK would 401 — a confusing first impression for a
-    // brand-new signup whose checklist hasn't even guided them through
-    // setting credentials yet. We post a system message instead pointing
-    // them at Settings; they can re-trigger the intro from there.
+    // there's actually a repo to look at AND tech-lead's resolved runtime
+    // is ready (Claude OR Codex configured, depending on what the project
+    // assigned to the tech-lead role). Without the check, the intro task
+    // would spawn TL and the CLI would 401 — a confusing first impression
+    // for a brand-new signup whose checklist hasn't yet guided them through
+    // credentials. We post a system message pointing at Settings instead.
     if (row.repoUrl || row.localPath) {
-      const reason = await preflightClaudeAuth(row.settings, loadConfig());
-      if (reason) {
+      const resolved = await resolveRuntimeForRole({
+        projectId: row.id, role: "tech-lead",
+        settings: row.settings, config: loadConfig(),
+      });
+      if (!resolved.ok) {
         notify({
           projectId: row.id,
           text:
-            `Project created. The codebase intro task is on hold until Claude is configured for this project. ${reason} ` +
-            "Once configured, open Settings → Intro → Re-run scan to start the intro task.",
+            `Проект создан. Задача знакомства с кодом отложена до настройки ИИ-провайдера для этого проекта. ${resolved.reason} ` +
+            "После настройки откройте Настройки → Знакомство → Запустить заново.",
           priority: "normal",
           fromRole: "system",
         }).catch(() => { /* best-effort */ });
@@ -131,18 +134,18 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
     const userId = currentUserId(request);
     if (!(await userCanAccessProject(userId, request.params.id))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const db = getDb();
     const [row] = await db.select().from(projects).where(eq(projects.id, request.params.id)).limit(1);
-    if (!row) return reply.code(404).send({ error: "Project not found" });
+    if (!row) return reply.code(404).send({ error: "Проект не найден" });
     return parseRow(projectSchema, row);
   });
 
   app.patch<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
     const userId = currentUserId(request);
     if (!(await userCanEditProject(userId, request.params.id))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const body = z.object({
       name: z.string().optional(),
@@ -190,7 +193,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .set(updates)
       .where(eq(projects.id, request.params.id))
       .returning();
-    if (!row) return reply.code(404).send({ error: "Project not found" });
+    if (!row) return reply.code(404).send({ error: "Проект не найден" });
     // If the patch touched telegram settings, kick the manager so it
     // starts / stops / restarts loops without waiting for the 30s timer.
     if (body.settings && (body.settings as { telegram?: unknown }).telegram !== undefined) {
@@ -209,7 +212,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const rows = await getDb()
       .select()
@@ -226,18 +229,22 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanEditProject(userId, projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
-    // Preflight: same gate as POST /projects. If Claude isn't configured
-    // we'd burn the task spawning a TL that immediately 401s.
+    // Preflight: same gate as POST /projects. If tech-lead's resolved
+    // runtime isn't ready (no Claude OR Codex creds for the configured
+    // provider) we'd burn the task spawning a TL that immediately 401s.
     const [proj] = await getDb()
       .select({ settings: projects.settings })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
-    if (!proj) return reply.code(404).send({ error: "Project not found" });
-    const reason = await preflightClaudeAuth(proj.settings, loadConfig());
-    if (reason) return reply.code(409).send({ error: reason });
+    if (!proj) return reply.code(404).send({ error: "Проект не найден" });
+    const resolved = await resolveRuntimeForRole({
+      projectId, role: "tech-lead",
+      settings: proj.settings, config: loadConfig(),
+    });
+    if (!resolved.ok) return reply.code(409).send({ error: resolved.reason });
 
     const introTaskId = await createIntroTask(projectId);
     await getDb()
@@ -257,14 +264,14 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const [row] = await getDb()
       .select({ localPath: projects.localPath, repoUrl: projects.repoUrl })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
-    if (!row) return reply.code(404).send({ error: "Project not found" });
+    if (!row) return reply.code(404).send({ error: "Проект не найден" });
 
     const localPath = row.localPath ?? null;
     let exists = false;
@@ -287,7 +294,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanEditProject(userId, projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
 
     const [row] = await getDb()
@@ -296,7 +303,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .where(eq(projects.id, projectId))
       .limit(1);
     if (!row?.localPath) {
-      return reply.code(400).send({ error: "Project has no local path to initialize." });
+      return reply.code(400).send({ error: "У проекта не задан локальный путь для инициализации." });
     }
 
     try {
@@ -311,9 +318,9 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const db = getDb();
     const [row] = await db.select({ ownerId: projects.ownerId }).from(projects).where(eq(projects.id, request.params.id)).limit(1);
-    if (!row) return reply.code(404).send({ error: "Project not found" });
+    if (!row) return reply.code(404).send({ error: "Проект не найден" });
     if (row.ownerId !== userId) {
-      return reply.code(403).send({ error: "Only the project owner can delete it" });
+      return reply.code(403).send({ error: "Только владелец проекта может его удалить" });
     }
     await db.delete(projects).where(eq(projects.id, request.params.id));
     return { deleted: true };
@@ -332,7 +339,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     }).parse(query);
 
     if (filters.projectId && !(await userCanAccessProject(userId, filters.projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const visible = filters.projectId ? [filters.projectId] : await visibleProjectIds(userId);
     if (!visible.length) return [];
@@ -371,7 +378,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     }).parse(request.body);
 
     if (!(await userCanEditProject(userId, body.projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions on project" });
+      return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
     }
 
     const [row] = await getDb()
@@ -395,10 +402,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     const [row] = await getDb().select().from(tasks).where(eq(tasks.id, request.params.id)).limit(1);
-    if (!row) return reply.code(404).send({ error: "Task not found" });
+    if (!row) return reply.code(404).send({ error: "Задача не найдена" });
     return parseRow(taskSchema, row);
   });
 
@@ -406,10 +413,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     if (!(await userCanEditProject(userId, pid))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const agentRole = request.headers["x-agent-role"] as string | undefined;
     if (agentRole) {
@@ -459,7 +466,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .set(updates)
       .where(eq(tasks.id, request.params.id))
       .returning();
-    if (!row) return reply.code(404).send({ error: "Task not found" });
+    if (!row) return reply.code(404).send({ error: "Задача не найдена" });
 
     const parsed = parseRow(taskSchema, row);
     if (body.state && (DONE_STATES as readonly string[]).includes(body.state)) {
@@ -476,10 +483,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     if (!(await userCanEditProject(userId, pid))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const agentRole = request.headers["x-agent-role"] as string | undefined;
     if (agentRole) {
@@ -488,7 +495,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     }
 
     const r = await getDb().delete(tasks).where(eq(tasks.id, request.params.id));
-    if (!(r as { rowCount?: number }).rowCount) return reply.code(404).send({ error: "Task not found" });
+    if (!(r as { rowCount?: number }).rowCount) return reply.code(404).send({ error: "Задача не найдена" });
     return { deleted: true };
   });
 
@@ -506,18 +513,18 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     if (!(await userCanEditProject(userId, pid))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const { rows } = await getPool().query<{ pr_url: string | null; state: string; title: string }>(
       "SELECT pr_url, state, title FROM tasks WHERE id = $1 LIMIT 1",
       [request.params.id],
     );
     const row = rows[0];
-    if (!row) return reply.code(404).send({ error: "Task not found" });
-    if (!row.pr_url) return reply.code(400).send({ error: "Task has no PR to merge" });
+    if (!row) return reply.code(404).send({ error: "Задача не найдена" });
+    if (!row.pr_url) return reply.code(400).send({ error: "У задачи нет PR для мержа" });
     if (row.state === "merged" || row.state === "closed") {
       return reply.code(409).send({ error: `Task is already ${row.state}` });
     }
@@ -555,10 +562,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     if (!(await userCanEditProject(userId, pid))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const [row] = await getDb()
       .update(tasks)
@@ -571,7 +578,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       })
       .where(eq(tasks.id, request.params.id))
       .returning();
-    if (!row) return reply.code(404).send({ error: "Task not found" });
+    if (!row) return reply.code(404).send({ error: "Задача не найдена" });
     return parseRow(taskSchema, row);
   });
 
@@ -581,7 +588,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     const rows = await getDb()
       .select()
@@ -595,10 +602,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
     if (!pid || !(await userCanAccessProject(userId, pid))) {
-      return reply.code(404).send({ error: "Task not found" });
+      return reply.code(404).send({ error: "Задача не найдена" });
     }
     if (!(await userCanEditProject(userId, pid))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const body = z.object({
       author: z.string().min(1),

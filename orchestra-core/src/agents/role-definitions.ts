@@ -1,9 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentRole } from "../config";
 import { agentConfigs } from "./configs";
 import { loadSystemPrompt, buildScopeRules } from "./prompt";
+
+/**
+ * Subset of the Claude Agent SDK's `AgentDefinition` we actually emit. The
+ * `claude` CLI accepts the same JSON shape via its `--agents <json>` flag,
+ * so we type the field set locally and skip the SDK dependency.
+ */
+export type AgentDefinition = {
+  description: string;
+  prompt: string;
+  disallowedTools?: string[];
+  /** "project" auto-loads .claude/agent-memory/<role>/*.md from the worktree. */
+  memory?: "project" | "user" | "none";
+};
 
 /**
  * Build SDK-native AgentDefinition for a role. One source of truth instead

@@ -101,11 +101,13 @@ export const TelegramConfigSchema = z.object({
 export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
 /**
- * Per-project Claude credentials. When `apiKey` is set, agents spawned for
- * THIS project use it as ANTHROPIC_API_KEY; orchestra-wide system_config
- * value (and process env) act as fallback. `auth` overrides the
- * orchestra-wide claude_auth choice — useful when one project uses an
- * API key while another runs on a Max subscription on the same machine.
+ * Per-project Claude credentials. `auth` chooses the auth mode for THIS
+ * project; `max` runs against the per-project Claude credentials dir
+ * (data/project-creds/&lt;id&gt;/.claude/, populated by `claude /login`); `api`
+ * uses the persisted `apiKey`. The orchestra-wide system_config default
+ * still applies as a fallback for `auth` mode selection, but credentials
+ * are now strictly per-project — there is no env-var fallback (the
+ * pre-refactor model leaked across users).
  */
 export const ProjectClaudeConfigSchema = z.object({
   auth: z.enum(["max", "api"]).optional(),
@@ -113,14 +115,62 @@ export const ProjectClaudeConfigSchema = z.object({
 });
 export type ProjectClaudeConfig = z.infer<typeof ProjectClaudeConfigSchema>;
 
+/**
+ * Per-project Codex (OpenAI) credentials. Same shape as Claude: `auth` picks
+ * the mode; `subscription` (ChatGPT Plus/Pro/Codex) reads credentials from
+ * data/project-creds/&lt;id&gt;/.codex/auth.json (populated by `codex login`);
+ * `api` uses the persisted `apiKey`. Persistence happens via
+ * `codex login --with-api-key` even in api mode — codex does not honour the
+ * OPENAI_API_KEY env var at request time (empirically verified).
+ */
+export const ProjectCodexConfigSchema = z.object({
+  auth: z.enum(["subscription", "api"]).optional(),
+  apiKey: z.string().optional(),
+});
+export type ProjectCodexConfig = z.infer<typeof ProjectCodexConfigSchema>;
+
+/**
+ * Per-role model spec. Accepts both:
+ *   - bare model name (`"opus"`, `"sonnet"`, `"haiku"`) — defaults to claude
+ *     for backward compatibility with pre-codex projects
+ *   - `provider:model` (`"claude:opus"`, `"codex:gpt-5-codex"`) — explicit
+ *
+ * Provider-aware code calls `parseModelSpec()` to resolve.
+ */
+export const ModelSpecSchema = z.string().min(1);
+
+export type RuntimeProvider = "claude" | "codex";
+
+export type ParsedModelSpec = {
+  provider: RuntimeProvider;
+  model: string;
+};
+
+/**
+ * Parse a per-role model setting. Bare names assume claude (backward compat).
+ * Unknown providers fall back to claude rather than throwing — keeps a
+ * misconfigured project running rather than crashing the spawn cycle.
+ */
+export function parseModelSpec(spec: string): ParsedModelSpec {
+  const idx = spec.indexOf(":");
+  if (idx <= 0) return { provider: "claude", model: spec };
+  const provider = spec.slice(0, idx) as RuntimeProvider;
+  const model = spec.slice(idx + 1);
+  if (provider !== "claude" && provider !== "codex") {
+    return { provider: "claude", model: spec };
+  }
+  return { provider, model };
+}
+
 export const ProjectSettingsSchema = z.object({
-  models: z.record(AgentRoleSchema, z.string()).optional(),
+  models: z.record(AgentRoleSchema, ModelSpecSchema).optional(),
   effort: z.record(AgentRoleSchema, EffortLevelSchema).optional(),
   checks: z.record(AgentRoleSchema, z.array(AgentCheckSchema)).optional(),
   provider: ProjectProviderConfigSchema.optional(),
   limits: LimitsSchema.optional(),
   telegram: TelegramConfigSchema.optional(),
   claude: ProjectClaudeConfigSchema.optional(),
+  codex: ProjectCodexConfigSchema.optional(),
   /**
    * If true, an approved PR (signal `pr_approved` from tech-lead) is merged
    * automatically by orchestra-core. If false (default), the user gets a

@@ -1,5 +1,11 @@
-import { type Config, type AgentRole, getModelForRole, getEffortForRole } from "./config";
-import { createSession, type Session } from "./session-manager";
+import { type Config, type AgentRole, getEffortForRole } from "./config";
+import {
+  createSession,
+  updateSession,
+  registerSessionController,
+  unregisterSessionController,
+  type Session,
+} from "./session-manager";
 import { appendLog } from "./logger";
 import { notify } from "./notification-hub";
 import { logBackgroundError } from "./error-handler";
@@ -16,15 +22,21 @@ import {
 } from "./repo-manager";
 import { PreflightError } from "./error-handler";
 import { installScopeHook } from "./scope-enforcer";
-import { runAgentSdk } from "./agents/sdk-runner";
+import { resolveRuntimeForRole } from "./agents/runtime/resolver";
+import {
+  logRuntimeEvent,
+  enqueueObserveCheck,
+  recordRuntimeCost,
+  type ObserverContext,
+} from "./agents/runtime/observers";
 import { providerFor } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
 import { DONE_STATES } from "./dependency-engine";
-import { applyClaudeAuthForProject, preflightClaudeAuth } from "./claude-auth";
-import { resolveDailyCostCap } from "./limits";
+import { resolveDailyCostCap, resolvePerRunBudgetUsd } from "./limits";
 import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
+import type { RuntimeEvent } from "./agents/runtime/types";
 
 // ─── Spawn Agent ───
 
@@ -66,7 +78,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     // Same shape as the "not a git repo" preflight — the user has an
     // actionable fix (set a repo URL or local path in Settings), so
     // escalate cleanly instead of logging a [agent-run] fatal.
-    const reason = `Project "${slug}" has no repo URL or local path. Open Project Settings to configure one.`;
+    const reason = `У проекта "${slug}" не задан репозиторий или локальный путь. Откройте Настройки проекта, чтобы указать его.`;
     await escalate(projectId, taskId, reason, {
       event: "no_repo_configured",
       slug,
@@ -75,23 +87,19 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     throw new PreflightError(`no repo/local_path on project ${slug}`);
   }
 
-  // Preflight: refuse to spawn if Claude auth isn't usable. Escalate so
-  // the user sees a clear message in the chat rather than a mid-stream
-  // SDK error. PreflightError is the same shape used for "no repo" —
-  // downgraded to log.info instead of a crash trace.
-  const authReason = await preflightClaudeAuth(settings, config);
-  if (authReason) {
-    await escalate(projectId, taskId, authReason, {
-      event: "claude_auth_unconfigured",
-      slug,
-      role,
+  // Resolve which runtime + model + auth env to use for this (project, role).
+  // The resolver picks Claude vs Codex based on settings.models[role] and
+  // builds the per-spawn env vars (CLAUDE_CONFIG_DIR / CODEX_HOME /
+  // ANTHROPIC_API_KEY) — no global env mutation.
+  const resolved = await resolveRuntimeForRole({
+    projectId, role, settings, config,
+  });
+  if (!resolved.ok) {
+    await escalate(projectId, taskId, resolved.reason, {
+      event: "runtime_auth_unconfigured", slug, role,
     });
-    throw new PreflightError(`claude auth unconfigured on project ${slug}`);
+    throw new PreflightError(`runtime auth unconfigured on project ${slug}: ${resolved.reason}`);
   }
-
-  // Apply project-scoped Claude auth. Must run right before query()
-  // since the SDK reads ANTHROPIC_API_KEY at query time (mutates env).
-  await applyClaudeAuthForProject(settings, config);
 
   const { rows: taskRows } = await pool.query("SELECT blocked_by FROM tasks WHERE id = $1", [taskId]);
   if (taskRows.length && (taskRows[0].blocked_by as string[]).length > 0) {
@@ -106,7 +114,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     }
   }
 
-  const model = getModelForRole(config, role, settings as Record<string, unknown>);
+  // Provider-stripped model (e.g. "opus" for "claude:opus", "gpt-5-codex"
+  // for "codex:gpt-5-codex"). Falls back to whatever getModelForRole would
+  // have returned if no provider was specified. Recorded on the session row.
+  const model = resolved.resolved.model;
   const effort = getEffortForRole(role, settings as Record<string, unknown>);
 
   // ── 1b. Orchestra-wide + per-project daily cost cap gate ────────────
@@ -138,7 +149,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     // button on the Settings → Project tab) and bail out cleanly —
     // PreflightError keeps this out of the [agent-run] fatal log.
     if (!isGitRepo(repoDir)) {
-      const reason = `The local path \`${repoDir}\` is not a git repository. Open Project Settings to initialize one, or change the path.`;
+      const reason = `Локальный путь \`${repoDir}\` не является git-репозиторием. Откройте Настройки проекта, чтобы инициализировать его, или укажите другой путь.`;
       await escalate(projectId, taskId, reason, {
         event: "not_a_git_repo",
         path: repoDir,
@@ -169,36 +180,84 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const { mcpServers } = generateMcpConfig(role, config, projectId, agentJwt);
   appendLog(projectId, session.id, role, "system", `agent run: model=${model} worktree=${worktreeDir}`);
 
-  // ── 5. SDK run (awaits the full agent) ──────────────────────────────
+  // ── 5. Runtime run (awaits the full agent) ──────────────────────────
+  // The runtime drives the `claude` CLI in headless stream-json mode and
+  // delivers normalized RuntimeEvents to our observer. What used to be
+  // in-process SDK callbacks (PostToolUse, canUseTool) now lives either
+  // in the per-worktree settings.json (sandbox + permissions.deny) or as
+  // observer logic right here (logging, observe-check enqueue, cost).
+  const abortController = new AbortController();
+  registerSessionController(session.id, abortController);
+
+  const maxBudgetUsd = resolvePerRunBudgetUsd(role, settings);
+  const ctx: ObserverContext = {
+    projectId,
+    sessionId: session.id,
+    taskId,
+    role,
+    worktree: worktreeDir,
+  };
+  const onEvent = async (evt: RuntimeEvent): Promise<void> => {
+    logRuntimeEvent(ctx, evt);
+    await enqueueObserveCheck(ctx, evt).catch((e) =>
+      logBackgroundError("spawner:observe-check", e, projectId));
+    await recordRuntimeCost(ctx, evt, { maxBudgetUsd });
+  };
+
   let capExceeded: SpawnResult["capExceeded"];
   try {
-    const outcome = await runAgentSdk({
+    appendLog(projectId, session.id, role, "system",
+      `runtime run: provider=${resolved.resolved.provider} model=${model} effort=${effort ?? "(default)"} worktree=${worktreeDir} budget=$${maxBudgetUsd}`);
+    const outcome = await resolved.resolved.runtime.run({
       projectId,
       taskId,
       sessionId: session.id,
       role,
       model,
       effort,
-      worktree: worktreeDir,
-      bootstrap,
+      cwd: worktreeDir,
+      prompt: bootstrap,
       pencilEnabled: config.pencilEnabled,
       mcpServers,
       settings,
       resumeSessionId: params.resumeSessionId,
-    });
+      abortSignal: abortController.signal,
+      spawnEnv: resolved.resolved.spawnEnv,
+    }, onEvent);
     capExceeded = outcome.capExceeded;
     if (capExceeded) {
+      // Surface timeouts as an escalation here — the runtime can't see the
+      // task context. Budget caps already escalated in recordRuntimeCost.
+      if (capExceeded.kind === "timeout") {
+        await escalate(projectId, taskId,
+          `Агент ${role} превысил таймаут на задаче ${taskId}: ${capExceeded.detail}`,
+          { event: "run_timeout", role, sessionId: session.id }
+        ).catch((e) => logBackgroundError("spawner:timeout-escalate", e, projectId));
+      }
       await pool.query(
         "UPDATE tasks SET frozen_reason = $1, updated_at = now() WHERE id = $2 AND frozen_reason IS NULL",
         [capExceeded.detail, taskId],
       );
+      await updateSession(session.id, {
+        status: capExceeded.kind === "aborted" ? "crashed" : "terminated",
+        finishedAt: new Date(),
+      });
+    } else {
+      await updateSession(session.id, { status: "terminated", finishedAt: new Date() });
     }
+    appendLog(projectId, session.id, role, "system", "runtime run completed");
+  } catch (err) {
+    await updateSession(session.id, { status: "crashed", finishedAt: new Date() });
+    appendLog(projectId, session.id, role, "error",
+      `runtime run failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   } finally {
+    unregisterSessionController(session.id);
     // ── 6. Notify + cleanup ────────────────────────────────────────────
     const taskTitle = (await getPool().query("SELECT title FROM tasks WHERE id = $1", [taskId])).rows[0]?.title;
     await notify({
       projectId,
-      text: `Agent ${role} finished: ${taskTitle ?? taskId}`,
+      text: `Агент ${role} завершил работу: ${taskTitle ?? taskId}`,
       priority: "low",
       fromRole: "system",
     }).catch((e) => logBackgroundError("agent:notify-completion", e, projectId));

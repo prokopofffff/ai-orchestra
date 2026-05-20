@@ -1,5 +1,4 @@
-import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
-import { type Config, getModelForRole } from "./config";
+import { type Config, getEffortForRole } from "./config";
 import {
   createSession,
   updateSession,
@@ -12,16 +11,23 @@ import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir } from "./repo-manager";
-import { extractText, extractAssistantText, buildCanUseTool, type DenyStreak } from "./agents/sdk-runner";
-import { getAgentConfig } from "./agents/configs";
-import { buildAgentDefinitions } from "./agents/role-definitions";
 import { providerFor } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
-import { applyClaudeAuthForProject, preflightClaudeAuth } from "./claude-auth";
+import { resolveRuntimeForRole } from "./agents/runtime/resolver";
+import {
+  logRuntimeEvent,
+  recordRuntimeCost,
+  type ObserverContext,
+} from "./agents/runtime/observers";
+import { resolvePerRunBudgetUsd } from "./limits";
+import { logBackgroundError } from "./error-handler";
+import type { AgentRuntime, RuntimeEvent } from "./agents/runtime/types";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 
-// Track in-flight Tech Lead conversations (per-project) so we can interrupt.
-const techLeadQueries = new Map<string, Query>();
+// In-flight Tech Lead conversations per project — used by interruptTechLead()
+// to cancel a run while it's mid-stream. Previously held SDK Query handles;
+// the runtime exposes the same control surface via AbortController.
+const techLeadAborts = new Map<string, AbortController>();
 
 export async function dispatchTechLead(
   projectId: string,
@@ -45,10 +51,24 @@ export async function dispatchTechLead(
       "SELECT slug, repo_url, local_path, settings FROM projects WHERE id = $1",
       [projectId],
     );
-    if (!projRows.length) return { action: "error", error: "Project not found" };
+    if (!projRows.length) return { action: "error", error: "Проект не найден" };
 
     const { slug, repo_url: repoUrl, local_path: localPath, settings } = projRows[0];
-    const model = getModelForRole(config, "tech-lead", settings as Record<string, unknown>);
+    const effort = getEffortForRole("tech-lead", settings as Record<string, unknown>);
+
+    // Resolve provider+model+auth once, up-front. Same path the spawner
+    // uses — picks Claude or Codex based on settings.models["tech-lead"]
+    // and builds the per-spawn env (CLAUDE_CONFIG_DIR / CODEX_HOME).
+    const resolved = await resolveRuntimeForRole({
+      projectId, role: "tech-lead", settings, config,
+    });
+    if (!resolved.ok) {
+      notify({
+        projectId, text: resolved.reason, priority: "high", fromRole: "system",
+      }).catch(() => { /* best-effort */ });
+      return { action: "error", error: resolved.reason };
+    }
+    const model = resolved.resolved.model;
 
     // Workspace resolution mirrors agent-spawner — local_path wins, then
     // repo_url (cloned), then a per-project temp dir. Without this branch,
@@ -66,27 +86,13 @@ export async function dispatchTechLead(
       workDir = ensureTempDir(slug);
     }
 
-    // Preflight: refuse to spawn TL when the project's Claude auth is
-    // unusable. Otherwise the SDK would fire a query() that 401s mid-
-    // stream — confusing UX, especially for first-time users whose
-    // checklist hasn't walked them through credentials yet.
-    const reason = await preflightClaudeAuth(settings, config);
-    if (reason) {
-      notify({
-        projectId, text: reason, priority: "high", fromRole: "system",
-      }).catch(() => { /* best-effort */ });
-      return { action: "error", error: reason };
-    }
-
-    // Per-project Claude key wins — same precedence as agent-spawner.
-    await applyClaudeAuthForProject(settings, config);
-
+    // Auth preflight + env resolution already happened in `resolved` above.
     const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, "tech-lead"));
     const conversationHistory = await getConversationHistory(projectId);
 
     // Dynamic user turn = bootstrap context + conversation history + new
     // user message + a TL-specific reply rubric. The role identity / rules
-    // live on the SDK agent definition (selected below via `agent: "tech-lead"`),
+    // live on the agent definition (selected below via `agent: "tech-lead"`),
     // but the system prompt and the user message land in different layers
     // and the model's "be helpful" instincts win when the user asks for
     // implementation. Putting the same hard rule in the user turn — right
@@ -121,8 +127,11 @@ export async function dispatchTechLead(
     // Run the conversation in the background — the HTTP request that triggered
     // this returns immediately; the tech-lead's reply arrives via notify().
     void runTechLead({
-      projectId, sessionId: session.id, model, workDir,
+      projectId, sessionId: session.id, model, effort, workDir,
       userTurn, mcpServers, pencilEnabled: config.pencilEnabled,
+      settings,
+      runtime: resolved.resolved.runtime,
+      spawnEnv: resolved.resolved.spawnEnv,
     });
 
     return { action: "spawned", sessionId: session.id };
@@ -136,60 +145,17 @@ async function runTechLead(p: {
   projectId: string;
   sessionId: string;
   model: string;
+  effort?: "low" | "medium" | "high" | "max";
   workDir: string;
   userTurn: string;
   pencilEnabled?: boolean;
   mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+  settings: unknown;
+  runtime: AgentRuntime;
+  spawnEnv: Record<string, string | undefined>;
 }): Promise<void> {
   appendLog(p.projectId, p.sessionId, "tech-lead", "system", `tech-lead run: model=${p.model}`);
 
-  // Pass only TL's own definition. Including the other 5 roles makes the
-  // SDK list them as `Task`/`Agent` subagent targets in the injected tool
-  // description — TL then tries to delegate via `Task`, hits the deny
-  // (Task/Agent are in toolsDeny), and the deny-streak guard aborts the
-  // run. Orchestra delegates via signal-tool MCP, not in-process subagents.
-  const agents = buildAgentDefinitions({
-    pencilEnabled: p.pencilEnabled,
-    roles: ["tech-lead"],
-  });
-  const tlCfg = getAgentConfig("tech-lead");
-  // Deny-streak abort: when canUseTool denies the same kind of tool
-  // call 3 times in a row, TL is clearly stuck in a "find another way
-  // to write" loop. Pull the cord and stop burning budget. We can't
-  // pass an AbortController to the SDK from this dispatcher (the
-  // stream object doesn't expose one), so we capture the deny event
-  // and call stream.interrupt() at the next message boundary.
-  let tooManyDenies: DenyStreak | null = null;
-  const stream = query({
-    prompt: p.userTurn,
-    options: {
-      agent: "tech-lead",
-      agents,
-      model: p.model,
-      cwd: p.workDir,
-      permissionMode: "default",
-      // Options-level disallowedTools STRIPS these names from the model's
-      // available tool set — the LLM never sees "Bash" or "Write" as
-      // callable. Per the SDK docs this is stronger than the agent-level
-      // AgentDefinition.disallowedTools (which proved unreliable for the
-      // main-thread agent — model still emitted [tool:Bash] calls).
-      // canUseTool then catches anything that somehow slips through and
-      // enforces the path-confinement sandbox.
-      disallowedTools: tlCfg.toolsDeny ?? [],
-      canUseTool: buildCanUseTool(
-        tlCfg.scope.denied, tlCfg.toolsDeny ?? [], p.workDir,
-        (streak) => { tooManyDenies = streak; },
-      ),
-      mcpServers: Object.fromEntries(
-        Object.entries(p.mcpServers).map(([name, s]) => [
-          name,
-          { type: "stdio" as const, command: s.command, args: s.args, env: s.env },
-        ]),
-      ),
-    },
-  });
-
-  techLeadQueries.set(p.projectId, stream);
   // Mid-stream code-block guard. Tracks whether we're inside a fenced
   // block and how many body lines have streamed since the opening fence.
   // Crossing MAX_CODE_BLOCK_LINES counts as TL trying to implement the
@@ -198,65 +164,66 @@ async function runTechLead(p: {
   const guard = createGuardState();
   let violation: string | null = null;
 
-  try {
-    for await (const message of stream) {
-      // Diagnose MCP wiring once at session init: which servers actually
-      // connected, and what tool names the model sees. If a server failed
-      // to spawn (bad path, missing dist, crashing env) it shows up here
-      // with status != "connected" and its tools won't be in the tools list.
-      if (message.type === "system" && (message as { subtype?: string }).subtype === "init") {
-        const init = message as unknown as {
-          tools?: string[];
-          mcp_servers?: { name: string; status: string }[];
-        };
-        const orchestraTools = (init.tools ?? []).filter((t) => t.startsWith("mcp__orchestra"));
-        appendLog(p.projectId, p.sessionId, "tech-lead", "system",
-          `MCP init: servers=${JSON.stringify(init.mcp_servers ?? [])}  orchestra_tools=${JSON.stringify(orchestraTools)}`);
-      }
-      if (message.type !== "assistant") continue;
-      const logText = extractText(message.message.content);
-      if (logText) appendLog(p.projectId, p.sessionId, "tech-lead", "stdout", logText);
-      const chatText = extractAssistantText(message.message.content);
-      if (chatText && !violation) {
-        violation = scanForCodeBlockViolation(chatText, guard);
-        if (violation) {
-          appendLog(p.projectId, p.sessionId, "tech-lead", "error",
-            `RUN ABORTED: ${violation}. Chat reply was pasting implementation instead of creating tasks.`);
-          await stream.interrupt().catch(() => { /* already over */ });
-          break;
-        }
-        // Stream this fragment to chat as its own message — landed in the
-        // conversation the moment TL emitted it, so the user can read TL's
-        // running commentary instead of waiting for the whole run to
-        // finish. Per-chunk stripLongCodeBlocks is defense in depth against
-        // a single block that snuck under the streaming guard.
-        const chunk = stripLongCodeBlocks(chatText).trim();
-        if (chunk) {
-          await notify({
-            projectId: p.projectId,
-            text: chunk,
-            priority: "high",
-            fromRole: "tech-lead",
-          }).catch((err) => log.error({ err, projectId: p.projectId }, "tech-lead stream notify failed"));
-        }
-      }
-      // canUseTool flagged a deny streak — TL is hammering denied tools.
-      // Pull the cord and surface what it tried so the operator can see.
-      // Cast away the closure-mutated narrowing — TS thinks tooManyDenies
-      // is always null because only the assignment from canUseTool's
-      // callback mutates it, and the analyzer can't see across that boundary.
-      const denies = tooManyDenies as DenyStreak | null;
-      if (denies && !violation) {
-        const breakdown = Array.from(denies.byTool.entries())
-          .map(([t, n]) => `${t}×${n}`)
-          .join(", ");
-        violation = `${denies.total} denied tool calls in a row (${breakdown})`;
+  // Per-project abort controller. Stored in techLeadAborts so an external
+  // /tech-lead/interrupt call (or a violation below) can cancel mid-stream.
+  // Replaces the SDK's Query.interrupt() handle 1:1.
+  const abortController = new AbortController();
+  techLeadAborts.set(p.projectId, abortController);
+
+  const ctx: ObserverContext = {
+    projectId: p.projectId,
+    sessionId: p.sessionId,
+    taskId: null,
+    role: "tech-lead",
+    worktree: p.workDir,
+  };
+  const maxBudgetUsd = resolvePerRunBudgetUsd("tech-lead", p.settings);
+
+  const onEvent = async (evt: RuntimeEvent): Promise<void> => {
+    // Standard logs (init/MCP, assistant text, tool calls, result + cost).
+    logRuntimeEvent(ctx, evt);
+    await recordRuntimeCost(ctx, evt, { maxBudgetUsd });
+
+    // TL-specific: stream assistant turns to the chat as they arrive, while
+    // running the code-block guard against each chunk. A violation triggers
+    // an abort; the partial reply that already streamed stays in the chat
+    // as a breadcrumb, and a system note about the abort is appended after.
+    if (evt.type === "assistant_text" && !violation) {
+      violation = scanForCodeBlockViolation(evt.text, guard);
+      if (violation) {
         appendLog(p.projectId, p.sessionId, "tech-lead", "error",
-          `RUN ABORTED: ${violation}. TL was looping on denied tools instead of using task-tool / signal-tool.`);
-        await stream.interrupt().catch(() => { /* already over */ });
-        break;
+          `RUN ABORTED: ${violation}. Chat reply was pasting implementation instead of creating tasks.`);
+        abortController.abort(`code-block guard: ${violation}`);
+        return;
+      }
+      const chunk = stripLongCodeBlocks(evt.text).trim();
+      if (chunk) {
+        await notify({
+          projectId: p.projectId,
+          text: chunk,
+          priority: "high",
+          fromRole: "tech-lead",
+        }).catch((err) => log.error({ err, projectId: p.projectId }, "tech-lead stream notify failed"));
       }
     }
+  };
+
+  try {
+    await p.runtime.run({
+      projectId: p.projectId,
+      taskId: null,
+      sessionId: p.sessionId,
+      role: "tech-lead",
+      model: p.model,
+      effort: p.effort,
+      cwd: p.workDir,
+      prompt: p.userTurn,
+      pencilEnabled: p.pencilEnabled,
+      mcpServers: p.mcpServers,
+      settings: p.settings,
+      abortSignal: abortController.signal,
+      spawnEnv: p.spawnEnv,
+    }, onEvent);
     await updateSession(p.sessionId, {
       status: violation ? "crashed" : "terminated",
       finishedAt: new Date(),
@@ -265,7 +232,7 @@ async function runTechLead(p: {
     await updateSession(p.sessionId, { status: "crashed", finishedAt: new Date() });
     log.error({ err, projectId: p.projectId, sessionId: p.sessionId }, "tech-lead run failed");
   } finally {
-    techLeadQueries.delete(p.projectId);
+    techLeadAborts.delete(p.projectId);
   }
 
   if (violation) {
@@ -276,12 +243,12 @@ async function runTechLead(p: {
     await notify({
       projectId: p.projectId,
       text:
-        "⚠️ Tech Lead started writing code in chat (forbidden) — the run was aborted. " +
-        "Tech Lead's job is to create tasks via `task_create` and delegate to the frontend / backend / designer agents, not to paste implementations. " +
-        "Try re-asking with: \"create tasks for the dev team — don't write code yourself.\"",
+        "⚠️ Tech Lead начал писать код в чате (запрещено) — запуск прерван. " +
+        "Задача Tech Lead — создавать таски через `task_create` и делегировать их фронтенд / бэкенд / дизайнер агентам, а не вставлять реализацию в чат. " +
+        "Попробуйте переформулировать: \"создай таски для команды разработки — не пиши код сам.\"",
       priority: "high",
       fromRole: "system",
-    }).catch((err) => log.error({ err, projectId: p.projectId }, "violation notify failed"));
+    }).catch((err) => logBackgroundError("tech-lead:violation-notify", err, p.projectId));
   }
 }
 
@@ -385,10 +352,10 @@ export function stripLongCodeBlocks(text: string): string {
 
 /** Cancel an in-flight tech-lead conversation if one exists. */
 export async function interruptTechLead(projectId: string): Promise<boolean> {
-  const q = techLeadQueries.get(projectId);
-  if (!q) return false;
-  await q.interrupt();
-  techLeadQueries.delete(projectId);
+  const ctrl = techLeadAborts.get(projectId);
+  if (!ctrl) return false;
+  ctrl.abort("user interrupted tech-lead");
+  techLeadAborts.delete(projectId);
   return true;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
-import type { SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { RuntimeResult } from "../agents/runtime/types";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import {
   recordCost,
@@ -55,38 +55,23 @@ function fakeResult(modelUsage: Record<string, {
   outputTokens?: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
-}>): SDKResultMessage {
-  // Build a structurally-correct SDKResultMessage with the modelUsage we want.
-  // Only fields recordCost reads need to be present.
+}>): RuntimeResult {
   return {
-    type: "result",
+    isError: false,
     subtype: "success",
-    duration_ms: 1234,
-    duration_api_ms: 1234,
-    is_error: false,
-    num_turns: 1,
-    result: "ok",
-    stop_reason: null,
-    total_cost_usd: Object.values(modelUsage).reduce((a, m) => a + m.costUSD, 0),
-    // SDK shape — recordCost only touches fields it knows.
-    usage: {} as unknown as SDKResultMessage["usage"],
+    totalCostUsd: Object.values(modelUsage).reduce((a, m) => a + m.costUSD, 0),
+    durationMs: 1234,
     modelUsage: Object.fromEntries(
       Object.entries(modelUsage).map(([m, u]) => [m, {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadInputTokens: 0,
-        cacheCreationInputTokens: 0,
-        webSearchRequests: 0,
-        contextWindow: 0,
-        maxOutputTokens: 0,
-        ...u,
+        costUSD: u.costUSD,
+        inputTokens: u.inputTokens ?? 0,
+        outputTokens: u.outputTokens ?? 0,
+        cacheReadInputTokens: u.cacheReadInputTokens ?? 0,
+        cacheCreationInputTokens: u.cacheCreationInputTokens ?? 0,
       }]),
-    ) as SDKResultMessage["modelUsage"],
-    permission_denials: [],
-    errors: [],
-    uuid: "00000000-0000-0000-0000-000000000000",
-    session_id: "fake",
-  } as unknown as SDKResultMessage;
+    ),
+    sessionId: "fake",
+  };
 }
 
 describe("cost-tracker — recordCost", () => {
@@ -113,9 +98,9 @@ describe("cost-tracker — recordCost", () => {
     });
   });
 
-  it("falls back to total_cost_usd when modelUsage is empty", async () => {
+  it("falls back to totalCostUsd when modelUsage is empty", async () => {
     const result = fakeResult({});
-    (result as { total_cost_usd: number }).total_cost_usd = 0.07;
+    result.totalCostUsd = 0.07;
 
     await recordCost({ projectId, sessionId, taskId, role: "qa", result });
 
@@ -127,7 +112,7 @@ describe("cost-tracker — recordCost", () => {
     expect(rows[0]).toMatchObject({ model: "unknown", cost: 0.07 });
   });
 
-  it("does nothing when both modelUsage and total_cost_usd are zero", async () => {
+  it("does nothing when both modelUsage and totalCostUsd are zero", async () => {
     await recordCost({ projectId, sessionId, taskId, role: "qa", result: fakeResult({}) });
     const { rows } = await getPool().query(`SELECT 1 FROM usage_costs WHERE project_id = $1`, [projectId]);
     expect(rows).toHaveLength(0);

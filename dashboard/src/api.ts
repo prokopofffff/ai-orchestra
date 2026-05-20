@@ -108,6 +108,76 @@ export const fetchProjectNotes = (projectId: string): Promise<ProjectNote[]> =>
   getValidated(`/projects/${projectId}/notes`, z.array(ProjectNoteSchema));
 
 const RescanSchema = z.object({ introTaskId: z.string().uuid() });
+
+// ─── Providers (per-project Claude / Codex credentials) ───────────────────
+
+const ProvidersStatusSchema = z.object({
+  claude: z.object({
+    loggedIn: z.boolean(),
+    configDir: z.string(),
+  }),
+  codex: z.object({
+    loggedIn: z.boolean(),
+    mode: z.enum(["apikey", "chatgpt"]).nullable(),
+    codexHome: z.string(),
+  }),
+});
+export type ProvidersStatus = z.infer<typeof ProvidersStatusSchema>;
+export const fetchProvidersStatus = (projectId: string): Promise<ProvidersStatus> =>
+  getValidated(`/projects/${projectId}/providers/status`, ProvidersStatusSchema);
+
+/**
+ * Start a server-side OAuth login. The server spawns the vendor CLI with
+ * the project's per-project creds dir pre-set, captures the authorization
+ * URL it prints, and returns it. The dashboard opens the URL in a new tab;
+ * the CLI's local HTTP server receives the OAuth callback and writes
+ * credentials. Status poll picks up the result within ~4s.
+ */
+const StartLoginSchema = z.object({
+  sessionId: z.string().uuid(),
+  url: z.string().url(),
+});
+export type StartLogin = z.infer<typeof StartLoginSchema>;
+export const startProviderLogin = (
+  projectId: string,
+  provider: "claude" | "codex",
+): Promise<StartLogin> =>
+  postValidated(
+    `/projects/${projectId}/providers/${provider}/login/start`,
+    {},
+    StartLoginSchema,
+  );
+
+export const cancelProviderLogin = async (
+  projectId: string,
+  provider: "claude" | "codex",
+  sessionId: string,
+): Promise<void> => {
+  await fetch(
+    `${BASE}/projects/${projectId}/providers/${provider}/login/${sessionId}/cancel`,
+    { method: "POST", credentials: "include" },
+  );
+};
+
+export async function saveProviderApiKey(
+  projectId: string,
+  provider: "claude" | "codex",
+  apiKey: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/projects/${projectId}/providers/${provider}/api-key`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+}
+
+export const logoutProvider = (projectId: string, provider: "claude" | "codex"): Promise<void> =>
+  del(`/projects/${projectId}/providers/${provider}/login`);
 export const rescanProject = (projectId: string) =>
   postValidated(`/projects/${projectId}/rescan`, {}, RescanSchema);
 

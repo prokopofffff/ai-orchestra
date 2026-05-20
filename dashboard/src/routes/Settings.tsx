@@ -50,6 +50,7 @@ export default function Settings() {
             <ProjectTab project={project} onSaved={refresh} />
             <ProjectIntroSection project={project} />
             <ProjectClaudeSection project={project} onSaved={refresh} />
+            <ProjectCodexSection project={project} onSaved={refresh} />
             <ProjectGitTokenSection project={project} onSaved={refresh} />
             <ProjectTelegramSection project={project} onSaved={refresh} />
           </div>
@@ -223,9 +224,11 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
 }
 
 function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
-  // Per-project Claude credentials. Empty → fall back to orchestra-wide
-  // System tab values → fall back to .env. Auth = "max" (subscription via
-  // local `claude` CLI) needs no API key; "api" requires one.
+  // Per-project Claude credentials. Max mode now uses a per-project
+  // CLAUDE_CONFIG_DIR (data/.../&lt;projectId&gt;/.claude) so projects can't read
+  // each other's logged-in session. First spawn seeds from ~/.claude/ if
+  // present (preserves the pre-refactor UX); otherwise the user runs
+  // `claude /login` with the dir pre-set — the command is surfaced below.
   type ClaudeSettings = { auth?: "max" | "api"; apiKey?: string };
   const initial = (project.settings as { claude?: ClaudeSettings } | undefined)?.claude;
   const [auth, setAuth] = useState<"" | "max" | "api">(initial?.auth ?? "");
@@ -233,6 +236,25 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [loginSession, setLoginSession] = useState<{ sessionId: string; url: string } | null>(null);
+  const [loginStarting, setLoginStarting] = useState(false);
+
+  const { data: provStatus, refetch: refetchStatus } = useQuery({
+    queryKey: ["providers-status", project.id],
+    queryFn: () => api.fetchProvidersStatus(project.id),
+    refetchOnWindowFocus: true,
+    refetchInterval: 4000,
+  });
+
+  // Close the login modal automatically once the credentials file appears.
+  // The status poll above is the source of truth — when it flips to
+  // loggedIn: true mid-OAuth we know the CLI's local callback fired.
+  useEffect(() => {
+    if (loginSession && provStatus?.claude?.loggedIn) {
+      setLoginSession(null);
+      setStatus("✓ Авторизация завершена.");
+    }
+  }, [loginSession, provStatus?.claude?.loggedIn]);
 
   useEffect(() => {
     setAuth(initial?.auth ?? "");
@@ -264,14 +286,65 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
     }
   }
 
+  async function startLogin() {
+    setLoginStarting(true);
+    setStatus(null);
+    try {
+      const sess = await api.startProviderLogin(project.id, "claude");
+      setLoginSession(sess);
+      // Open the vendor's OAuth page in a new tab. The CLI's local HTTP
+      // server (random port like :54969) receives the callback after the
+      // user authorizes and writes the credentials file. Our status poll
+      // detects the file and auto-closes the modal.
+      window.open(sess.url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setStatus(`Не удалось запустить авторизацию: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoginStarting(false);
+    }
+  }
+
+  async function cancelLogin() {
+    if (!loginSession) return;
+    try { await api.cancelProviderLogin(project.id, "claude", loginSession.sessionId); } catch { /* best-effort */ }
+    setLoginSession(null);
+  }
+
+  async function logoutClaude() {
+    if (!confirm("Выйти из Claude для этого проекта? Потребуется повторный логин.")) return;
+    try {
+      await api.logoutProvider(project.id, "claude");
+      refetchStatus();
+      setStatus("Сессия Claude очищена.");
+    } catch (e) {
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const claudeStatus = provStatus?.claude;
+
   return (
     <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
       <div className="border-t border-border pt-6 flex flex-col gap-1">
-        <h3 className="text-sm font-semibold text-text-primary">Учётные данные Claude</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-text-primary">Учётные данные Claude</h3>
+          {claudeStatus && (
+            <span
+              className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded ${
+                claudeStatus.loggedIn
+                  ? "bg-green-500/10 text-green-600"
+                  : "bg-amber-500/10 text-amber-600"
+              }`}
+              title={claudeStatus.configDir}
+            >
+              {claudeStatus.loggedIn ? "✓ авторизован" : "не настроено"}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-text-secondary">
-          Необязательно. Переопределение авторизации Claude для проекта. Пустые значения наследуются из{" "}
-          вкладки <strong>Система</strong>, затем из <code>.env</code>. Используйте это, если один проект
-          должен работать на подписке Max, а другой — на API-ключе с оплатой по токенам.
+          Учётные данные хранятся в дир. проекта (изоляция между проектами). Для подписки Max
+          запустите команду логина ниже один раз — далее агенты этого проекта используют сохранённую
+          сессию.
         </p>
       </div>
 
@@ -282,10 +355,39 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
           className={INPUT}
         >
           <option value="">(наследовать)</option>
-          <option value="max">Подписка Max — использует локальный логин в CLI `claude`</option>
+          <option value="max">Подписка Max / Pro — `claude /login` в дир. проекта</option>
           <option value="api">API-ключ — оплата по токенам</option>
         </select>
       </Field>
+
+      {auth === "max" && (
+        <div className="flex flex-col gap-2">
+          {!loginSession && (
+            <Button variant="secondary" size="md" type="button" onClick={startLogin} disabled={loginStarting}>
+              {loginStarting ? "Запуск…" : claudeStatus?.loggedIn ? "Переавторизовать Claude" : "Авторизовать Claude"}
+            </Button>
+          )}
+          {loginSession && (
+            <div className="flex flex-col gap-2 p-3 border border-border rounded bg-surface-secondary">
+              <p className="text-xs text-text-secondary">
+                Авторизация Claude открыта в новой вкладке. Завершите OAuth и эта панель закроется
+                автоматически. Если вкладка не открылась, перейдите по{" "}
+                <a href={loginSession.url} target="_blank" rel="noopener noreferrer" className="underline">
+                  ссылке
+                </a>.
+              </p>
+              <Button variant="secondary" size="sm" type="button" onClick={cancelLogin}>
+                Отменить
+              </Button>
+            </div>
+          )}
+          {claudeStatus?.loggedIn && !loginSession && (
+            <Button variant="secondary" size="sm" type="button" onClick={logoutClaude}>
+              Выйти из Claude для этого проекта
+            </Button>
+          )}
+        </div>
+      )}
 
       {auth === "api" && (
         <Field
@@ -299,6 +401,214 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-ant-…"
+              autoComplete="off"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => setRevealed((v) => !v)}
+            >
+              {revealed ? "Скрыть" : "Показать"}
+            </Button>
+          </div>
+        </Field>
+      )}
+
+      <div className="flex items-center gap-3">
+        <Button variant="primary-red" size="md" onClick={save} disabled={saving} type="button">
+          {saving ? "Сохранение…" : "Сохранить"}
+        </Button>
+        {status && <p className="text-xs text-text-tertiary">{status}</p>}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Per-project Codex (OpenAI) credentials. Same shape as Claude — supports
+ * Subscription (ChatGPT Plus/Pro/Codex) and API-key modes. Subscription
+ * login isn't owned by orchestra: the dashboard surfaces the exact shell
+ * command (with CODEX_HOME pre-set to the per-project dir) the user runs
+ * in their own terminal. After OAuth, the status badge auto-updates.
+ */
+function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  type CodexSettings = { auth?: "subscription" | "api"; apiKey?: string };
+  const initial = (project.settings as { codex?: CodexSettings } | undefined)?.codex;
+  const [auth, setAuth] = useState<"" | "subscription" | "api">(initial?.auth ?? "");
+  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
+
+  // Auth status badge — polls the providers endpoint so the user sees
+  // login state without needing a manual refresh.
+  const { data: provStatus, refetch: refetchStatus } = useQuery({
+    queryKey: ["providers-status", project.id],
+    queryFn: () => api.fetchProvidersStatus(project.id),
+    refetchOnWindowFocus: true,
+    refetchInterval: 4000,
+  });
+
+  const [loginSession, setLoginSession] = useState<{ sessionId: string; url: string } | null>(null);
+  const [loginStarting, setLoginStarting] = useState(false);
+
+  useEffect(() => {
+    setAuth(initial?.auth ?? "");
+    setApiKey(initial?.apiKey ?? "");
+  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close login modal when status flips to logged-in mid-OAuth.
+  useEffect(() => {
+    if (loginSession && provStatus?.codex?.loggedIn) {
+      setLoginSession(null);
+      setStatus("✓ Авторизация Codex завершена.");
+    }
+  }, [loginSession, provStatus?.codex?.loggedIn]);
+
+  async function save() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const codex: CodexSettings = {};
+      if (auth) codex.auth = auth;
+      if (apiKey.trim()) codex.apiKey = apiKey.trim();
+
+      // For API-mode we ALSO need to persist the key into the per-project
+      // codex auth.json. The dedicated endpoint does both at once.
+      if (auth === "api" && apiKey.trim()) {
+        await api.saveProviderApiKey(project.id, "codex", apiKey.trim());
+      } else {
+        const payload = Object.keys(codex).length ? codex : { auth: undefined, apiKey: undefined };
+        await api.updateProject(project.id, { settings: { codex: payload } } as never);
+      }
+      setStatus(
+        Object.keys(codex).length
+          ? "Сохранено — агенты, использующие Codex, при следующем запуске возьмут эти учётные данные."
+          : "Очищено — Codex для проекта не настроен.",
+      );
+      onSaved();
+      refetchStatus();
+    } catch (e) {
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function startLogin() {
+    setLoginStarting(true);
+    setStatus(null);
+    try {
+      const sess = await api.startProviderLogin(project.id, "codex");
+      setLoginSession(sess);
+      window.open(sess.url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setStatus(`Не удалось запустить авторизацию: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoginStarting(false);
+    }
+  }
+
+  async function cancelLogin() {
+    if (!loginSession) return;
+    try { await api.cancelProviderLogin(project.id, "codex", loginSession.sessionId); } catch { /* best-effort */ }
+    setLoginSession(null);
+  }
+
+  async function logoutCodex() {
+    if (!confirm("Выйти из Codex для этого проекта? Потребуется повторный логин.")) return;
+    try {
+      await api.logoutProvider(project.id, "codex");
+      refetchStatus();
+      setStatus("Сессия Codex очищена.");
+    } catch (e) {
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const codexStatus = provStatus?.codex;
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-text-primary">Учётные данные Codex (OpenAI)</h3>
+          {codexStatus && (
+            <span
+              className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded ${
+                codexStatus.loggedIn
+                  ? "bg-green-500/10 text-green-600"
+                  : "bg-amber-500/10 text-amber-600"
+              }`}
+              title={codexStatus.codexHome}
+            >
+              {codexStatus.loggedIn
+                ? codexStatus.mode === "apikey" ? "✓ API-ключ" : "✓ Подписка ChatGPT"
+                : "не настроено"}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-text-secondary">
+          Необязательно. Включите, если хотите использовать Codex (gpt-5-codex) для каких-то ролей.
+          Выберите модель Codex во вкладке <strong>Агенты</strong>; без учётных данных запуск роли с
+          Codex упадёт с ошибкой аутентификации.
+        </p>
+      </div>
+
+      <Field label="Режим" optional>
+        <select
+          value={auth}
+          onChange={(e) => setAuth(e.target.value as "" | "subscription" | "api")}
+          className={INPUT}
+        >
+          <option value="">(не настроено)</option>
+          <option value="subscription">Подписка ChatGPT — использует `codex login` (OAuth в браузере)</option>
+          <option value="api">API-ключ — оплата по токенам (от platform.openai.com)</option>
+        </select>
+      </Field>
+
+      {auth === "subscription" && (
+        <div className="flex flex-col gap-2">
+          {!loginSession && (
+            <Button variant="secondary" size="md" type="button" onClick={startLogin} disabled={loginStarting}>
+              {loginStarting ? "Запуск…" : codexStatus?.loggedIn ? "Переавторизовать Codex" : "Авторизовать Codex"}
+            </Button>
+          )}
+          {loginSession && (
+            <div className="flex flex-col gap-2 p-3 border border-border rounded bg-surface-secondary">
+              <p className="text-xs text-text-secondary">
+                Авторизация ChatGPT открыта в новой вкладке. Завершите OAuth и эта панель закроется
+                автоматически. Если вкладка не открылась, перейдите по{" "}
+                <a href={loginSession.url} target="_blank" rel="noopener noreferrer" className="underline">
+                  ссылке
+                </a>.
+              </p>
+              <Button variant="secondary" size="sm" type="button" onClick={cancelLogin}>
+                Отменить
+              </Button>
+            </div>
+          )}
+          {codexStatus?.loggedIn && !loginSession && (
+            <Button variant="secondary" size="sm" type="button" onClick={logoutCodex}>
+              Выйти из Codex для этого проекта
+            </Button>
+          )}
+        </div>
+      )}
+
+      {auth === "api" && (
+        <Field
+          label="OpenAI API-ключ"
+          hint="С platform.openai.com. Начинается с sk-. При сохранении ключ сохраняется в настройках и регистрируется через `codex login --with-api-key` (codex игнорирует переменную среды OPENAI_API_KEY)."
+        >
+          <div className="flex items-center gap-2">
+            <input
+              className={INPUT}
+              type={revealed ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-…"
               autoComplete="off"
             />
             <Button
@@ -610,8 +920,29 @@ function ProjectIntroSection({ project }: { project: Project }) {
 const ROLES = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"] as const;
 type AgentRole = typeof ROLES[number];
 
-const MODELS = ["opus", "sonnet", "haiku"] as const;
-type Model = typeof MODELS[number];
+/**
+ * Per-role model specs are `provider:model` strings on the wire. Bare
+ * model names (no `:` prefix) are accepted on the backend for backward
+ * compat — they default to claude. The dashboard always writes the full
+ * `provider:model` form so the user explicitly sees which CLI they're
+ * driving.
+ */
+const MODEL_OPTIONS: { value: string; label: string; provider: "claude" | "codex" }[] = [
+  { value: "claude:opus", label: "Claude — opus", provider: "claude" },
+  { value: "claude:sonnet", label: "Claude — sonnet", provider: "claude" },
+  { value: "claude:haiku", label: "Claude — haiku", provider: "claude" },
+  { value: "codex:gpt-5-codex", label: "Codex — gpt-5-codex", provider: "codex" },
+  { value: "codex:gpt-5.2", label: "Codex — gpt-5.2", provider: "codex" },
+  { value: "codex:gpt-5.5", label: "Codex — gpt-5.5", provider: "codex" },
+];
+
+/** Recognise stored bare-model names so the dropdown highlights the right row. */
+function normaliseStoredModel(raw: string): string {
+  if (!raw) return "";
+  if (raw.includes(":")) return raw;
+  // Bare names came in pre-codex. Resolve to claude: equivalents.
+  return `claude:${raw}`;
+}
 
 const EFFORTS = ["low", "medium", "high", "max"] as const;
 type Effort = typeof EFFORTS[number];
@@ -620,7 +951,7 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
   const initial = project.settings as { models?: Record<string, string>; effort?: Record<string, string> };
   const [models, setModels] = useState<Record<AgentRole, string>>(() => {
     const out = {} as Record<AgentRole, string>;
-    for (const r of ROLES) out[r] = initial.models?.[r] ?? "";
+    for (const r of ROLES) out[r] = normaliseStoredModel(initial.models?.[r] ?? "");
     return out;
   });
   const [efforts, setEfforts] = useState<Record<AgentRole, string>>(() => {
@@ -634,10 +965,10 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
   async function save() {
     setSaving(true); setStatus(null);
     try {
-      const modelsPatch: Record<string, Model> = {};
+      const modelsPatch: Record<string, string> = {};
       const effortPatch: Record<string, Effort> = {};
       for (const r of ROLES) {
-        if (models[r]) modelsPatch[r] = models[r] as Model;
+        if (models[r]) modelsPatch[r] = models[r];
         if (efforts[r]) effortPatch[r] = efforts[r] as Effort;
       }
       // PATCH merges into settings (jsonb ||). Empty objects clear nothing —
@@ -690,7 +1021,16 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
               onChange={(e) => setModels((m) => ({ ...m, [role]: e.target.value }))}
             >
               <option value="">(глобальное по умолчанию)</option>
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+              <optgroup label="Claude">
+                {MODEL_OPTIONS.filter((m) => m.provider === "claude").map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Codex">
+                {MODEL_OPTIONS.filter((m) => m.provider === "codex").map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </optgroup>
             </select>
             <select
               className={INPUT}
@@ -698,11 +1038,17 @@ function AgentsTab({ project, onSaved }: { project: Project; onSaved: () => void
               onChange={(e) => setEfforts((m) => ({ ...m, [role]: e.target.value }))}
             >
               <option value="">(по умолчанию SDK)</option>
-              {EFFORTS.map((eff) => (
-                <option key={eff} value={eff} disabled={eff === "max" && models[role] !== "opus"}>
-                  {eff}{eff === "max" ? " (только Opus)" : ""}
-                </option>
-              ))}
+              {EFFORTS.map((eff) => {
+                // Effort=max is Claude-Opus-only. Disable for any other selection
+                // including all Codex models (where the flag is silently ignored
+                // anyway by `codex exec`).
+                const disabled = eff === "max" && models[role] !== "claude:opus";
+                return (
+                  <option key={eff} value={eff} disabled={disabled}>
+                    {eff}{eff === "max" ? " (только Claude Opus)" : ""}
+                  </option>
+                );
+              })}
             </select>
           </div>
         ))}

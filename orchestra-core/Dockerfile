@@ -44,6 +44,15 @@ RUN pnpm -r build
 FROM node:22-alpine AS runtime
 ENV PNPM_HOME=/pnpm PATH=$PNPM_HOME:$PATH NODE_ENV=production
 RUN corepack enable && corepack prepare pnpm@10 --activate
+
+# Runtime CLIs orchestra-core spawns: `git` (worktrees, branch ops),
+# `claude` and `codex` (per-role agent runtimes + OAuth login flows
+# triggered from the dashboard). Without these, anything past project-
+# creation fails with ENOENT — bin-resolver surfaces the install hint,
+# but the deployed image should already have them.
+RUN apk add --no-cache git \
+ && npm i -g @openai/codex @anthropic-ai/claude-code
+
 WORKDIR /app
 
 # Install only production deps. Dashboard is build-only — drop it.

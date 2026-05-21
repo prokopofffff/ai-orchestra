@@ -9,25 +9,42 @@ import { resolveClaudeBin, resolveCodexBin } from "./bin-resolver";
 import { log } from "./obs";
 
 /**
- * Owns the lifecycle of in-flight `claude auth login` / `codex login` child
- * processes spawned on behalf of dashboard users. Each provider+project has
- * at most one active login session — starting a second cancels the first.
+ * Owns the lifecycle of `claude auth login` / `codex login --device-auth`
+ * child processes spawned on behalf of dashboard users. Each
+ * (projectId, provider) has at most one active session — starting a second
+ * cancels the first.
  *
- * Login UX (both providers):
- *   1. Dashboard hits POST /providers/:provider/login/start
- *   2. We spawn the CLI, capture the OAuth URL it prints, return it
- *   3. Dashboard opens the URL in a new browser tab
- *   4. User authorizes; vendor redirects to the CLI's local HTTP server
- *      (claude binds a random port like 54969; codex binds 1455)
- *   5. CLI receives the callback, writes credentials, exits
- *   6. Dashboard's existing /providers/status poll flips the badge to "✓"
+ * Both flows are headless-friendly (no localhost callback required), so
+ * they work whether the dashboard user is on the same machine as
+ * orchestra-core or hitting it over the network from a remote browser:
  *
- * This only works when the user's browser can reach localhost on the
- * orchestra-core host. Fine for local dev (same machine). For remote
- * deployments we'd need to add the device-auth fallback (codex login
- * --device-auth and claude's paste-code mode) — additive change.
+ *   Codex (`codex login --device-auth`):
+ *     - CLI prints a URL (https://auth.openai.com/codex/device) plus a
+ *       short device code (e.g. "E23K-LK1V9") and starts polling.
+ *     - Dashboard shows both. User opens URL on any browser, types the
+ *       code, authorizes. The polling CLI gets the token and exits 0,
+ *       leaving auth.json in $CODEX_HOME.
+ *     - The status poll on the dashboard flips the badge to ✓.
+ *
+ *   Claude (`claude auth login`, spawned without a TTY):
+ *     - CLI prints a paste-mode URL (redirect_uri=platform.claude.com,
+ *       not localhost) and waits on stdin for the code.
+ *     - Dashboard shows the URL + a paste field. User authorizes on
+ *       claude.com, claude.com hands them a code, they paste it into
+ *       the dashboard which POSTs to `/login/:sessionId/code`. We write
+ *       the code to the child's stdin; CLI exchanges it, writes creds,
+ *       exits 0.
  */
 export type LoginProvider = "claude" | "codex";
+
+/**
+ * Public shape of a login flow. Discriminator: provider.
+ * - Codex: shows `code` (typed on OpenAI's page), no submission step.
+ * - Claude: shows URL only; user submits the returned `code` back via API.
+ */
+export type StartLoginResult =
+  | { provider: "codex"; sessionId: string; url: string; code: string }
+  | { provider: "claude"; sessionId: string; url: string; needsCodeSubmit: true };
 
 type LoginSession = {
   id: string;
@@ -35,42 +52,41 @@ type LoginSession = {
   projectId: string;
   child: ChildProcess;
   url: string;
+  /** Codex device code shown to the user — not used by the server. */
+  code?: string;
   timeoutHandle: NodeJS.Timeout;
 };
 
 const sessions = new Map<string, LoginSession>();
-/**
- * Per (projectId, provider) → current sessionId. Lets a second "Authorize"
- * click cleanly cancel the first abandoned attempt before starting a new one.
- */
 const byProjectProvider = new Map<string, string>();
 
 /** 5-minute hard limit on a login attempt — frees resources if the user walks away. */
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 /** How long to wait after spawn for the CLI to print its authorization URL. */
-const URL_CAPTURE_TIMEOUT_MS = 8_000;
+const URL_CAPTURE_TIMEOUT_MS = 10_000;
 
-const CLAUDE_URL_PATTERN = /https:\/\/claude\.com\/cai\/oauth\/authorize\?[^\s]+/;
-const CODEX_URL_PATTERN = /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s]+/;
+const CLAUDE_PASTE_URL_PATTERN = /https:\/\/claude\.com\/cai\/oauth\/authorize\?[^\s]+/;
+/** Codex device-auth always prints this exact URL (path is fixed by the API). */
+const CODEX_DEVICE_URL_PATTERN = /https:\/\/auth\.openai\.com\/codex\/device/;
+/** Codex device codes look like XXXX-XXXXX (8–10 chars, letters/digits). */
+const CODEX_DEVICE_CODE_PATTERN = /\b[A-Z0-9]{4}-[A-Z0-9]{5}\b/;
+/** Strip ANSI color codes so the regex doesn't get split across escapes. */
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 
 function key(projectId: string, provider: LoginProvider): string {
   return `${projectId}::${provider}`;
 }
 
-export type StartLoginResult = { sessionId: string; url: string };
-
 export async function startProviderLogin(
   projectId: string,
   provider: LoginProvider,
 ): Promise<StartLoginResult> {
-  // Idempotent: cancel any prior in-flight session for this project+provider.
-  // Avoids accumulating zombie CLI children when a user repeatedly clicks.
   const existing = byProjectProvider.get(key(projectId, provider));
   if (existing) cancelProviderLogin(existing);
 
-  // Per-spawn env: scope the OAuth to the project's credentials dir so the
-  // resulting auth.json / .credentials.json lands in the right place. Strip
-  // ANTHROPIC_API_KEY so a stale env var can't divert Claude to API mode.
+  // Per-spawn env: scope OAuth to the project's credentials dir so creds
+  // land in the right place. Strip ANTHROPIC_API_KEY so a stale value
+  // can't divert Claude to API mode mid-flow.
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (provider === "claude") {
     const dir = getClaudeConfigDir(projectId);
@@ -83,24 +99,19 @@ export async function startProviderLogin(
     env.CODEX_HOME = home;
   }
 
-  // resolveBin throws a Russian-localized error if the CLI isn't on PATH and
-  // not at any of the common install locations — caller turns that into the
-  // 500-response body.
   const bin = provider === "claude" ? resolveClaudeBin() : resolveCodexBin();
-  const args = provider === "claude" ? ["auth", "login"] : ["login"];
+  // Codex needs the --device-auth flag to skip its localhost-callback
+  // default. Claude detects no-TTY and auto-switches to paste-code mode.
+  const args = provider === "claude" ? ["auth", "login"] : ["login", "--device-auth"];
 
   const child = spawn(bin, args, {
     env,
-    // stdin pipe lets us close it if the CLI happens to fall through to the
-    // paste-code fallback prompt (which would otherwise hang forever).
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  const pattern = provider === "claude" ? CLAUDE_URL_PATTERN : CODEX_URL_PATTERN;
-
-  let url: string;
+  let captured: { url: string; code?: string };
   try {
-    url = await captureUrl(child, pattern);
+    captured = await captureForProvider(child, provider);
   } catch (err) {
     try { child.kill("SIGTERM"); } catch { /* already gone */ }
     throw err;
@@ -114,24 +125,40 @@ export async function startProviderLogin(
   }, LOGIN_TIMEOUT_MS);
 
   const session: LoginSession = {
-    id: sessionId, provider, projectId, child, url, timeoutHandle,
+    id: sessionId, provider, projectId, child,
+    url: captured.url, code: captured.code, timeoutHandle,
   };
   sessions.set(sessionId, session);
   byProjectProvider.set(key(projectId, provider), sessionId);
 
-  // Auto-cleanup when child exits naturally (successful OAuth, or vendor
-  // rejected, or any other terminal cause). Dashboard's status poll detects
-  // the success path; failures just leave loggedIn=false and the user clicks
-  // Authorize again.
   child.once("close", (code) => {
     log.info({ sessionId, provider, projectId, code }, "provider login CLI exited");
     cleanup(sessionId);
   });
 
-  return { sessionId, url };
+  if (provider === "codex") {
+    return { provider: "codex", sessionId, url: captured.url, code: captured.code as string };
+  }
+  return { provider: "claude", sessionId, url: captured.url, needsCodeSubmit: true };
 }
 
-/** External cancel (user closed modal). Returns true if a session was found. */
+/**
+ * Pipe a user-supplied code into the running Claude CLI. Codex doesn't need
+ * this — its device-auth flow polls OpenAI directly, so we don't wire the
+ * endpoint for it. Returns false if the session is gone or already finished.
+ */
+export function submitProviderLoginCode(sessionId: string, code: string): boolean {
+  const s = sessions.get(sessionId);
+  if (!s) return false;
+  if (s.provider !== "claude") return false;
+  if (!s.child.stdin || s.child.stdin.destroyed) return false;
+  // Claude's prompt is line-buffered — a single write with a trailing newline
+  // is enough. Don't end the stream; the CLI may print follow-up prompts on
+  // bad codes and we want it to stay alive to surface them.
+  s.child.stdin.write(code.trim() + "\n");
+  return true;
+}
+
 export function cancelProviderLogin(sessionId: string): boolean {
   const s = sessions.get(sessionId);
   if (!s) return false;
@@ -151,16 +178,19 @@ function cleanup(sessionId: string): void {
 }
 
 /**
- * Resolve as soon as we see the authorization URL in stdout/stderr. Rejects
- * with a clear error if the CLI exits before printing it (broken install,
- * missing creds dir, etc) or if it takes longer than URL_CAPTURE_TIMEOUT_MS.
+ * Read from the CLI's stdout/stderr until we've seen everything we need.
+ * For Codex: URL **and** device code. For Claude: just the URL (the code
+ * round-trips through the user). Strips ANSI so regexes match cleanly.
  */
-function captureUrl(child: ChildProcess, pattern: RegExp): Promise<string> {
+function captureForProvider(
+  child: ChildProcess,
+  provider: LoginProvider,
+): Promise<{ url: string; code?: string }> {
   return new Promise((resolve, reject) => {
     let buf = "";
     let settled = false;
 
-    const finish = (err: Error | null, value?: string): void => {
+    const finish = (err: Error | null, value?: { url: string; code?: string }): void => {
       if (settled) return;
       settled = true;
       clearTimeout(captureTimeout);
@@ -169,18 +199,29 @@ function captureUrl(child: ChildProcess, pattern: RegExp): Promise<string> {
       child.removeListener("error", onError);
       child.removeListener("close", onClose);
       if (err) reject(err);
-      else resolve(value as string);
+      else resolve(value as { url: string; code?: string });
+    };
+
+    const tryMatch = (): void => {
+      const clean = buf.replace(ANSI_PATTERN, "");
+      if (provider === "claude") {
+        const m = CLAUDE_PASTE_URL_PATTERN.exec(clean);
+        if (m) finish(null, { url: m[0] });
+      } else {
+        const u = CODEX_DEVICE_URL_PATTERN.exec(clean);
+        const c = CODEX_DEVICE_CODE_PATTERN.exec(clean);
+        if (u && c) finish(null, { url: u[0], code: c[0] });
+      }
     };
 
     const onChunk = (chunk: Buffer): void => {
       buf += chunk.toString("utf-8");
-      const m = pattern.exec(buf);
-      if (m) finish(null, m[0]);
+      tryMatch();
     };
     const onError = (err: Error): void => finish(err);
     const onClose = (code: number | null): void => {
       finish(new Error(
-        `CLI логина завершился (код=${code}) до вывода URL авторизации. stdout/stderr: ${buf.slice(0, 400)}`,
+        `CLI логина завершился (код=${code}) до вывода данных авторизации. stdout/stderr: ${buf.slice(0, 400)}`,
       ));
     };
 
@@ -196,9 +237,7 @@ function captureUrl(child: ChildProcess, pattern: RegExp): Promise<string> {
   });
 }
 
-// Best-effort shutdown — kill any orphan CLIs when the orchestra process is
-// going down. The CLI's local HTTP server holds a socket open; without this
-// they'd outlive their parent until the OS reclaims them.
+// Best-effort shutdown — kill orphan CLIs when orchestra-core is going down.
 process.on("beforeExit", () => {
   for (const s of sessions.values()) {
     try { s.child.kill("SIGTERM"); } catch { /* gone */ }

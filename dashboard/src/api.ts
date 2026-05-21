@@ -127,16 +127,28 @@ export const fetchProvidersStatus = (projectId: string): Promise<ProvidersStatus
   getValidated(`/projects/${projectId}/providers/status`, ProvidersStatusSchema);
 
 /**
- * Start a server-side OAuth login. The server spawns the vendor CLI with
- * the project's per-project creds dir pre-set, captures the authorization
- * URL it prints, and returns it. The dashboard opens the URL in a new tab;
- * the CLI's local HTTP server receives the OAuth callback and writes
- * credentials. Status poll picks up the result within ~4s.
+ * Start a headless OAuth login on the server. Shape depends on the provider:
+ *   Codex (device-auth):  { provider: "codex", url, code } — user opens the
+ *                         URL, types the code on OpenAI's page, server-side
+ *                         CLI completes auth via polling.
+ *   Claude (paste-code):  { provider: "claude", url, needsCodeSubmit: true }
+ *                         — user authorizes, claude.com hands them a code,
+ *                         dashboard POSTs that code back via submitProviderLoginCode.
  */
-const StartLoginSchema = z.object({
-  sessionId: z.string().uuid(),
-  url: z.string().url(),
-});
+const StartLoginSchema = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("codex"),
+    sessionId: z.string().uuid(),
+    url: z.string().url(),
+    code: z.string(),
+  }),
+  z.object({
+    provider: z.literal("claude"),
+    sessionId: z.string().uuid(),
+    url: z.string().url(),
+    needsCodeSubmit: z.literal(true),
+  }),
+]);
 export type StartLogin = z.infer<typeof StartLoginSchema>;
 export const startProviderLogin = (
   projectId: string,
@@ -147,6 +159,31 @@ export const startProviderLogin = (
     {},
     StartLoginSchema,
   );
+
+/**
+ * Submit the paste-mode code back to a running Claude login session.
+ * Codex doesn't use this — its CLI polls OpenAI directly.
+ */
+export async function submitProviderLoginCode(
+  projectId: string,
+  provider: "claude" | "codex",
+  sessionId: string,
+  code: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/projects/${projectId}/providers/${provider}/login/${sessionId}/code`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+}
 
 export const cancelProviderLogin = async (
   projectId: string,

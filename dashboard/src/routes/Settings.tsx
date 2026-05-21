@@ -236,8 +236,11 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [loginSession, setLoginSession] = useState<{ sessionId: string; url: string } | null>(null);
+  type ClaudeLoginSession = { sessionId: string; url: string };
+  const [loginSession, setLoginSession] = useState<ClaudeLoginSession | null>(null);
   const [loginStarting, setLoginStarting] = useState(false);
+  const [pasteCode, setPasteCode] = useState("");
+  const [submittingCode, setSubmittingCode] = useState(false);
 
   const { data: provStatus, refetch: refetchStatus } = useQuery({
     queryKey: ["providers-status", project.id],
@@ -247,11 +250,13 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
   });
 
   // Close the login modal automatically once the credentials file appears.
-  // The status poll above is the source of truth — when it flips to
-  // loggedIn: true mid-OAuth we know the CLI's local callback fired.
+  // The status poll above is the source of truth — when the user pastes
+  // a valid code, the CLI exchanges it for credentials and writes them,
+  // which is what we detect here.
   useEffect(() => {
     if (loginSession && provStatus?.claude?.loggedIn) {
       setLoginSession(null);
+      setPasteCode("");
       setStatus("✓ Авторизация завершена.");
     }
   }, [loginSession, provStatus?.claude?.loggedIn]);
@@ -291,11 +296,11 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
     setStatus(null);
     try {
       const sess = await api.startProviderLogin(project.id, "claude");
-      setLoginSession(sess);
-      // Open the vendor's OAuth page in a new tab. The CLI's local HTTP
-      // server (random port like :54969) receives the callback after the
-      // user authorizes and writes the credentials file. Our status poll
-      // detects the file and auto-closes the modal.
+      if (sess.provider !== "claude") throw new Error("Неожиданный тип ответа");
+      setLoginSession({ sessionId: sess.sessionId, url: sess.url });
+      // Open Claude's paste-mode OAuth page (redirect_uri=platform.claude.com).
+      // The user gets a code back, pastes it into the field below — we POST
+      // it to the server which pipes it to the running CLI's stdin.
       window.open(sess.url, "_blank", "noopener,noreferrer");
     } catch (e) {
       setStatus(`Не удалось запустить авторизацию: ${e instanceof Error ? e.message : String(e)}`);
@@ -304,10 +309,26 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
     }
   }
 
+  async function submitCode() {
+    if (!loginSession || !pasteCode.trim()) return;
+    setSubmittingCode(true);
+    setStatus(null);
+    try {
+      await api.submitProviderLoginCode(project.id, "claude", loginSession.sessionId, pasteCode.trim());
+      setStatus("Код отправлен — ждём подтверждения от Claude…");
+      // Status poll will flip loggedIn → true once CLI writes creds.
+    } catch (e) {
+      setStatus(`Ошибка отправки кода: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmittingCode(false);
+    }
+  }
+
   async function cancelLogin() {
     if (!loginSession) return;
     try { await api.cancelProviderLogin(project.id, "claude", loginSession.sessionId); } catch { /* best-effort */ }
     setLoginSession(null);
+    setPasteCode("");
   }
 
   async function logoutClaude() {
@@ -370,12 +391,34 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
           {loginSession && (
             <div className="flex flex-col gap-2 p-3 border border-border rounded bg-surface-secondary">
               <p className="text-xs text-text-secondary">
-                Авторизация Claude открыта в новой вкладке. Завершите OAuth и эта панель закроется
-                автоматически. Если вкладка не открылась, перейдите по{" "}
+                1. Перейдите по{" "}
                 <a href={loginSession.url} target="_blank" rel="noopener noreferrer" className="underline">
                   ссылке
-                </a>.
+                </a>{" "}и авторизуйтесь в Claude.
               </p>
+              <p className="text-xs text-text-secondary">
+                2. Скопируйте код, который выдаст claude.com, и вставьте его сюда:
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  className={INPUT}
+                  type="text"
+                  value={pasteCode}
+                  onChange={(e) => setPasteCode(e.target.value)}
+                  placeholder="вставьте код от claude.com"
+                  autoComplete="off"
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitCode(); } }}
+                />
+                <Button
+                  variant="primary-red"
+                  size="sm"
+                  type="button"
+                  onClick={submitCode}
+                  disabled={submittingCode || !pasteCode.trim()}
+                >
+                  {submittingCode ? "Отправка…" : "Подтвердить"}
+                </Button>
+              </div>
               <Button variant="secondary" size="sm" type="button" onClick={cancelLogin}>
                 Отменить
               </Button>
@@ -450,7 +493,8 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
     refetchInterval: 4000,
   });
 
-  const [loginSession, setLoginSession] = useState<{ sessionId: string; url: string } | null>(null);
+  type CodexLoginSession = { sessionId: string; url: string; code: string };
+  const [loginSession, setLoginSession] = useState<CodexLoginSession | null>(null);
   const [loginStarting, setLoginStarting] = useState(false);
 
   useEffect(() => {
@@ -458,7 +502,9 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
     setApiKey(initial?.apiKey ?? "");
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close login modal when status flips to logged-in mid-OAuth.
+  // The CLI is polling OpenAI's device-auth endpoint server-side; once the
+  // user types the code and authorizes, auth.json appears and our status
+  // poll flips loggedIn → true.
   useEffect(() => {
     if (loginSession && provStatus?.codex?.loggedIn) {
       setLoginSession(null);
@@ -501,7 +547,8 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
     setStatus(null);
     try {
       const sess = await api.startProviderLogin(project.id, "codex");
-      setLoginSession(sess);
+      if (sess.provider !== "codex") throw new Error("Неожиданный тип ответа");
+      setLoginSession({ sessionId: sess.sessionId, url: sess.url, code: sess.code });
       window.open(sess.url, "_blank", "noopener,noreferrer");
     } catch (e) {
       setStatus(`Не удалось запустить авторизацию: ${e instanceof Error ? e.message : String(e)}`);
@@ -576,13 +623,29 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
             </Button>
           )}
           {loginSession && (
-            <div className="flex flex-col gap-2 p-3 border border-border rounded bg-surface-secondary">
+            <div className="flex flex-col gap-3 p-3 border border-border rounded bg-surface-secondary">
               <p className="text-xs text-text-secondary">
-                Авторизация ChatGPT открыта в новой вкладке. Завершите OAuth и эта панель закроется
-                автоматически. Если вкладка не открылась, перейдите по{" "}
+                1. Откройте{" "}
                 <a href={loginSession.url} target="_blank" rel="noopener noreferrer" className="underline">
-                  ссылке
-                </a>.
+                  {loginSession.url}
+                </a>{" "}и войдите в OpenAI / ChatGPT.
+              </p>
+              <p className="text-xs text-text-secondary">2. Введите этот одноразовый код на странице:</p>
+              <div className="flex items-center gap-2">
+                <code className="px-3 py-2 font-mono text-base tracking-wider bg-bg-elevated border border-border rounded select-all">
+                  {loginSession.code}
+                </code>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(loginSession.code).catch(() => undefined)}
+                >
+                  Копировать
+                </Button>
+              </div>
+              <p className="text-[11px] text-text-tertiary">
+                После подтверждения на сайте OpenAI эта панель закроется автоматически (код действителен ~15 мин).
               </p>
               <Button variant="secondary" size="sm" type="button" onClick={cancelLogin}>
                 Отменить

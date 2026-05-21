@@ -14,7 +14,11 @@ import {
   logoutClaude,
   logoutCodex,
 } from "./per-project-creds";
-import { startProviderLogin, cancelProviderLogin } from "./provider-login-manager";
+import {
+  startProviderLogin,
+  cancelProviderLogin,
+  submitProviderLoginCode,
+} from "./provider-login-manager";
 import { resolveCodexBin } from "./bin-resolver";
 import { log } from "./obs";
 
@@ -81,8 +85,10 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
       return reply.code(403).send({ error: "Недостаточно прав" });
     }
     try {
-      const { sessionId, url } = await startProviderLogin(params.id, params.provider);
-      return { sessionId, url };
+      // Shape is provider-specific: Codex returns a device code the user
+      // types on OpenAI's page; Claude returns a paste-code flag — the
+      // dashboard surfaces an input box and POSTs the code to /code.
+      return await startProviderLogin(params.id, params.provider);
     } catch (err) {
       log.warn({ err, projectId: params.id, provider: params.provider }, "provider login start failed");
       return reply.code(500).send({
@@ -108,6 +114,32 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
     }
     const cancelled = cancelProviderLogin(params.sessionId);
     return { cancelled };
+  });
+
+  /**
+   * Submit a paste-mode code back to a running Claude login session. The
+   * Codex flow polls OpenAI directly so it doesn't need this endpoint —
+   * we 400 if anyone calls it for codex.
+   */
+  app.post("/projects/:id/providers/:provider/login/:sessionId/code", async (req, reply) => {
+    const params = z.object({
+      id: z.string().uuid(),
+      provider: providerSchema,
+      sessionId: z.string().uuid(),
+    }).parse(req.params);
+    const body = z.object({ code: z.string().min(1).max(200) }).parse(req.body);
+    const userId = currentUserId(req);
+    if (!(await userCanEditProject(userId, params.id))) {
+      return reply.code(403).send({ error: "Недостаточно прав" });
+    }
+    if (params.provider !== "claude") {
+      return reply.code(400).send({ error: "Этот провайдер не использует paste-режим" });
+    }
+    const ok = submitProviderLoginCode(params.sessionId, body.code);
+    if (!ok) {
+      return reply.code(404).send({ error: "Сессия логина не найдена или уже завершена" });
+    }
+    return { ok: true };
   });
 
   /**

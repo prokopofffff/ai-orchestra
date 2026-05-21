@@ -378,6 +378,10 @@ export const browseFs = (path?: string, showHidden = false): Promise<FsBrowseRes
   return getValidated(`/fs/browse${q ? `?${q}` : ""}`, FsBrowseSchema);
 };
 
+const MkdirResultSchema = z.object({ path: z.string() });
+export const createFsDir = (parent: string, name: string): Promise<{ path: string }> =>
+  postValidated("/fs/mkdir", { parent, name }, MkdirResultSchema);
+
 // Onboarding
 const OnboardingStepSchema = z.object({
   key: z.enum(["claude_auth", "project", "git_token", "telegram"]),

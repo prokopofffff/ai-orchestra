@@ -66,7 +66,56 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
       return { cwd: requested, parent, home, entries };
     },
   );
+
+  /**
+   * Create a new subdirectory inside `parent`. Used by the folder picker's
+   * "New folder" affordance so the user can scaffold a project directory
+   * without dropping to a terminal. Single-segment names only — no path
+   * traversal, no nested creation — to keep this a small, predictable op.
+   */
+  app.post<{ Body: { parent: string; name: string } }>(
+    "/fs/mkdir",
+    async (request, reply) => {
+      const body = MkdirBodySchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: "parent и name обязательны" });
+      }
+      const name = body.data.name.trim();
+      if (!name || name.includes("/") || name.includes("\\") || name === "." || name === "..") {
+        return reply.code(400).send({ error: "Недопустимое имя папки" });
+      }
+      const parentPath = path.resolve(body.data.parent);
+      let parentStat;
+      try {
+        parentStat = await fs.stat(parentPath);
+      } catch {
+        return reply.code(404).send({ error: `Родительская папка не найдена: ${parentPath}` });
+      }
+      if (!parentStat.isDirectory()) {
+        return reply.code(400).send({ error: `Не папка: ${parentPath}` });
+      }
+      const target = path.join(parentPath, name);
+      try {
+        await fs.mkdir(target);
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === "EEXIST") {
+          return reply.code(409).send({ error: "Папка уже существует" });
+        }
+        if (e.code === "EACCES" || e.code === "EPERM") {
+          return reply.code(403).send({ error: `Нет прав на создание в ${parentPath}` });
+        }
+        return reply.code(500).send({ error: `Не удалось создать папку: ${e.message}` });
+      }
+      return { path: target };
+    },
+  );
 };
+
+const MkdirBodySchema = z.object({
+  parent: z.string().min(1),
+  name: z.string().min(1).max(255),
+});
 
 // Exposed for tests.
 export const _querySchema = z.object({

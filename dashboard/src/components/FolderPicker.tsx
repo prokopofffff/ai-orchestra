@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../api";
 import { Button } from "./ui/Button";
@@ -21,12 +21,47 @@ interface Props {
 export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
   const [path, setPath] = useState<string | undefined>(initialPath);
   const [showHidden, setShowHidden] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createBusy, setCreateBusy] = useState(false);
+  const newNameInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["fs-browse", path, showHidden],
     queryFn: () => api.browseFs(path, showHidden),
     retry: false,
   });
+
+  useEffect(() => {
+    if (creating) newNameInputRef.current?.focus();
+  }, [creating]);
+
+  const cancelCreate = (): void => {
+    setCreating(false);
+    setNewName("");
+    setCreateError(null);
+  };
+
+  const submitCreate = async (): Promise<void> => {
+    const cwd = data?.cwd;
+    const name = newName.trim();
+    if (!cwd || !name) return;
+    setCreateBusy(true);
+    setCreateError(null);
+    try {
+      const { path: created } = await api.createFsDir(cwd, name);
+      cancelCreate();
+      await refetch();
+      // Navigate into the freshly created folder — it's the path the user
+      // is almost certainly about to pick.
+      setPath(created);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Не удалось создать папку");
+    } finally {
+      setCreateBusy(false);
+    }
+  };
 
   // Auto-correct: if the requested path errored (deleted out from under
   // us, no permission), fall back to home so the modal stays usable.
@@ -112,6 +147,45 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
           )}
           {data && (
             <ul className="folder-entries">
+              {creating && (
+                <li className="px-5 py-2 border-b border-border-subtle bg-bg-hover/20">
+                  <div className="flex items-center gap-2">
+                    <span aria-hidden>📁</span>
+                    <input
+                      ref={newNameInputRef}
+                      type="text"
+                      value={newName}
+                      onChange={(e) => { setNewName(e.target.value); setCreateError(null); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); void submitCreate(); }
+                        else if (e.key === "Escape") { e.preventDefault(); cancelCreate(); }
+                      }}
+                      placeholder="имя новой папки"
+                      disabled={createBusy}
+                      className="flex-1 bg-bg-input border border-border px-2 py-1 text-sm text-text-primary font-mono outline-none focus:border-accent-red"
+                    />
+                    <Button
+                      variant="primary-red"
+                      size="sm"
+                      disabled={createBusy || !newName.trim()}
+                      onClick={() => void submitCreate()}
+                    >
+                      {createBusy ? "..." : "Создать"}
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={cancelCreate}
+                      disabled={createBusy}
+                      className="text-text-tertiary hover:text-text-primary text-xs px-2 py-1"
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                  {createError && (
+                    <div className="mt-1 text-xs text-accent-red">{createError}</div>
+                  )}
+                </li>
+              )}
               {data.parent && (
                 <li>
                   <button
@@ -150,15 +224,25 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
         </div>
 
         <footer className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border">
-          <label className="flex items-center gap-2 text-[11px] text-text-tertiary">
-            <input
-              type="checkbox"
-              checked={showHidden}
-              onChange={(e) => setShowHidden(e.target.checked)}
-              className="accent-accent-red"
-            />
-Показывать скрытые
-          </label>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-[11px] text-text-tertiary">
+              <input
+                type="checkbox"
+                checked={showHidden}
+                onChange={(e) => setShowHidden(e.target.checked)}
+                className="accent-accent-red"
+              />
+              Показывать скрытые
+            </label>
+            <button
+              type="button"
+              onClick={() => { setCreating(true); setNewName(""); setCreateError(null); }}
+              disabled={!cwd || creating}
+              className="text-[11px] text-text-tertiary hover:text-text-primary px-2 py-0.5 border border-border-subtle disabled:opacity-50"
+            >
+              + Создать папку
+            </button>
+          </div>
           <div className="flex items-center gap-3 min-w-0">
             <code className="font-mono text-[11px] text-text-tertiary truncate max-w-[280px]" title={cwd}>
               {cwd}

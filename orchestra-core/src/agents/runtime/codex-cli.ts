@@ -8,12 +8,11 @@ import {
   resolvePerRunBudgetUsd,
   resolveRunTimeoutMs,
 } from "../../limits";
+import { resolveCodexBin } from "../../bin-resolver";
 import type {
   AgentRunOutcome,
   AgentRuntime,
 } from "./types";
-
-const CODEX_BIN = process.env.CODEX_CLI_BIN ?? "codex";
 
 /** SIGTERM grace before SIGKILL — same shape as the Claude runtime. */
 const KILL_GRACE_MS = 5_000;
@@ -72,7 +71,13 @@ export const codexCliRuntime: AgentRuntime = {
       resumeSessionId: input.resumeSessionId,
     });
 
-    const child = spawn(CODEX_BIN, argv, {
+    let codexBin: string;
+    try { codexBin = resolveCodexBin(); }
+    catch (err) {
+      await onEvent({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      return { capExceeded: { kind: "aborted", detail: "Codex CLI не найден" } };
+    }
+    const child = spawn(codexBin, argv, {
       cwd: input.cwd,
       env: spawnEnv,
       // stdin must be passed (not "ignore") because we write the prompt

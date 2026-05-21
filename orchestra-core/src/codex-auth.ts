@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { resolveCodexBin } from "./bin-resolver";
 import { getPool } from "./db";
 import {
   getCodexHome,
@@ -90,7 +91,8 @@ export async function preflightCodexAuth(
  */
 function persistCodexApiKey(codexHome: string, apiKey: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const bin = process.env.CODEX_CLI_BIN ?? "codex";
+    let bin: string;
+    try { bin = resolveCodexBin(); } catch (err) { reject(err); return; }
     const child = spawn(bin, ["login", "--with-api-key"], {
       env: { ...process.env, CODEX_HOME: codexHome },
       stdio: ["pipe", "pipe", "pipe"],

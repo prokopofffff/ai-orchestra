@@ -15,6 +15,7 @@ import {
   logoutCodex,
 } from "./per-project-creds";
 import { startProviderLogin, cancelProviderLogin } from "./provider-login-manager";
+import { resolveCodexBin } from "./bin-resolver";
 import { log } from "./obs";
 
 /**
@@ -183,7 +184,8 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
  */
 function persistCodexApiKey(projectId: string, apiKey: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const bin = process.env.CODEX_CLI_BIN ?? "codex";
+    let bin: string;
+    try { bin = resolveCodexBin(); } catch (err) { reject(err); return; }
     const codexHome = getCodexHome(projectId);
     ensureCredsDir(codexHome);
     const child = spawn(bin, ["login", "--with-api-key"], {

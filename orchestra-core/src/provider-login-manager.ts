@@ -5,6 +5,7 @@ import {
   getClaudeConfigDir,
   getCodexHome,
 } from "./per-project-creds";
+import { resolveClaudeBin, resolveCodexBin } from "./bin-resolver";
 import { log } from "./obs";
 
 /**
@@ -82,9 +83,10 @@ export async function startProviderLogin(
     env.CODEX_HOME = home;
   }
 
-  const bin = provider === "claude"
-    ? (process.env.CLAUDE_CLI_BIN ?? "claude")
-    : (process.env.CODEX_CLI_BIN ?? "codex");
+  // resolveBin throws a Russian-localized error if the CLI isn't on PATH and
+  // not at any of the common install locations — caller turns that into the
+  // 500-response body.
+  const bin = provider === "claude" ? resolveClaudeBin() : resolveCodexBin();
   const args = provider === "claude" ? ["auth", "login"] : ["login"];
 
   const child = spawn(bin, args, {

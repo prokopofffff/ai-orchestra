@@ -2,17 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { buildClaudeCliArgs, buildClaudeSettings } from "./claude-args";
 import { normalizeClaudeStream } from "./claude-jsonl-parser";
 import { resolvePerRunBudgetUsd, resolveRunTimeoutMs } from "../../limits";
+import { resolveClaudeBin } from "../../bin-resolver";
 import type {
   AgentRunOutcome,
   AgentRuntime,
 } from "./types";
-
-/**
- * Where the `claude` binary lives. Override via env when the deployment has
- * a non-PATH install (Docker images, devcontainers). Defaults to the same
- * `claude` we'd find on the user's shell.
- */
-const CLAUDE_BIN = process.env.CLAUDE_CLI_BIN ?? "claude";
 
 /**
  * Grace window between SIGTERM and SIGKILL. The CLI tries to flush its
@@ -74,7 +68,13 @@ export const claudeCliRuntime: AgentRuntime = {
     // (~256KB on macOS / Linux). Falls back to stdin only if we hit that.
     argv.push(input.prompt);
 
-    const child = spawn(CLAUDE_BIN, argv, {
+    let claudeBin: string;
+    try { claudeBin = resolveClaudeBin(); }
+    catch (err) {
+      await onEvent({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      return { capExceeded: { kind: "aborted", detail: "Claude CLI не найден" } };
+    }
+    const child = spawn(claudeBin, argv, {
       cwd: input.cwd,
       env: spawnEnv,
       stdio: ["ignore", "pipe", "pipe"],

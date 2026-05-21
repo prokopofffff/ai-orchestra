@@ -41,18 +41,46 @@ export function ensureCredsDir(dir: string): void {
 }
 
 /**
- * Filenames the Claude CLI uses to persist credentials. Newer CLI versions
- * (2.x) write `.claude.json`; older versions wrote `.credentials.json`.
- * Check both so the same code works across CLI upgrades.
+ * Files Claude CLI may touch inside CLAUDE_CONFIG_DIR. Only `.credentials.json`
+ * carries actual auth tokens (oauth or api key). `.claude.json` is a state
+ * file the CLI writes on first invocation regardless of whether the user
+ * actually logged in — it contains migration flags, a derived userID, and
+ * other settings, but no usable credentials. Checking it for "logged in"
+ * produces false positives (the symptom that drove this fix: the badge
+ * flipped to ✓ as soon as `claude auth login` started, before the user had
+ * even seen the OAuth URL).
  */
-const CLAUDE_AUTH_FILES = [".claude.json", ".credentials.json"] as const;
+const CLAUDE_CREDS_FILE = ".credentials.json";
+/** Cleanup list — both files get removed on logout so the next attempt is fresh. */
+const CLAUDE_CLEAN_FILES = [".credentials.json", ".claude.json"] as const;
 
-function findClaudeAuthFile(dir: string): string | null {
-  for (const name of CLAUDE_AUTH_FILES) {
-    const p = path.join(dir, name);
-    if (fs.existsSync(p)) return p;
+/**
+ * Validate that `.credentials.json` actually contains a usable token. Returns
+ * the absolute path if so, null otherwise. Subscription flow writes
+ * `claudeAiOauth.accessToken`; older / api-key flows use a top-level
+ * `accessToken` or `apiKey`. Anything else (file present but empty/junk)
+ * counts as not logged in.
+ */
+function findClaudeCredsFile(dir: string): string | null {
+  const p = path.join(dir, CLAUDE_CREDS_FILE);
+  if (!fs.existsSync(p)) return null;
+  try {
+    const raw = fs.readFileSync(p, "utf-8");
+    if (!raw.trim()) return null;
+    const parsed = JSON.parse(raw) as {
+      claudeAiOauth?: { accessToken?: string };
+      accessToken?: string;
+      apiKey?: string;
+    };
+    const hasToken = Boolean(
+      parsed.claudeAiOauth?.accessToken
+        || parsed.accessToken
+        || parsed.apiKey,
+    );
+    return hasToken ? p : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
@@ -68,17 +96,16 @@ function findClaudeAuthFile(dir: string): string | null {
  */
 export function seedClaudeCredsFromHost(projectId: string): boolean {
   const target = getClaudeConfigDir(projectId);
-  if (findClaudeAuthFile(target)) return false;
+  if (findClaudeCredsFile(target)) return false;
 
   const hostHome = process.env.HOME;
   if (!hostHome) return false;
-  const hostDir = path.join(hostHome, ".claude");
-  const hostAuth = findClaudeAuthFile(hostDir);
+  const hostAuth = findClaudeCredsFile(path.join(hostHome, ".claude"));
   if (!hostAuth) return false;
 
   ensureCredsDir(target);
   try {
-    const targetAuth = path.join(target, path.basename(hostAuth));
+    const targetAuth = path.join(target, CLAUDE_CREDS_FILE);
     fs.copyFileSync(hostAuth, targetAuth);
     fs.chmodSync(targetAuth, 0o600);
     log.info({ projectId, target }, "seeded per-project Claude creds from host");
@@ -118,12 +145,39 @@ export function seedCodexCredsFromHost(projectId: string): boolean {
  * and from preflight to short-circuit a spawn that would 401 mid-stream.
  */
 export function claudeLoggedIn(projectId: string): boolean {
-  return findClaudeAuthFile(getClaudeConfigDir(projectId)) !== null;
+  return findClaudeCredsFile(getClaudeConfigDir(projectId)) !== null;
 }
 
+/**
+ * Validate that codex auth.json has actual tokens — the file gets written
+ * empty/partial in some abort paths, so existence alone is not enough.
+ */
 export function codexLoggedIn(projectId: string): boolean {
-  const auth = path.join(getCodexHome(projectId), "auth.json");
-  return fs.existsSync(auth);
+  return readCodexAuth(getCodexHome(projectId)) !== null;
+}
+
+type CodexAuth = {
+  OPENAI_API_KEY?: string;
+  tokens?: { access_token?: string; id_token?: string };
+  auth_mode?: string;
+};
+
+function readCodexAuth(home: string): CodexAuth | null {
+  const p = path.join(home, "auth.json");
+  if (!fs.existsSync(p)) return null;
+  try {
+    const raw = fs.readFileSync(p, "utf-8");
+    if (!raw.trim()) return null;
+    const parsed = JSON.parse(raw) as CodexAuth;
+    const hasToken = Boolean(
+      parsed.OPENAI_API_KEY
+        || parsed.tokens?.access_token
+        || parsed.tokens?.id_token,
+    );
+    return hasToken ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -136,7 +190,7 @@ export function codexLoggedIn(projectId: string): boolean {
 export function hostClaudeAuthAvailable(): boolean {
   const hostHome = process.env.HOME;
   if (!hostHome) return false;
-  return findClaudeAuthFile(path.join(hostHome, ".claude")) !== null;
+  return findClaudeCredsFile(path.join(hostHome, ".claude")) !== null;
 }
 
 export function hostCodexAuthAvailable(): boolean {
@@ -151,20 +205,16 @@ export function hostCodexAuthAvailable(): boolean {
  * mode independently from what the user configured.
  */
 export function codexAuthMode(projectId: string): "apikey" | "chatgpt" | null {
-  if (!codexLoggedIn(projectId)) return null;
-  try {
-    const raw = fs.readFileSync(path.join(getCodexHome(projectId), "auth.json"), "utf-8");
-    const parsed = JSON.parse(raw) as { auth_mode?: string };
-    return parsed.auth_mode === "apikey" ? "apikey" : "chatgpt";
-  } catch {
-    return null;
-  }
+  const parsed = readCodexAuth(getCodexHome(projectId));
+  if (!parsed) return null;
+  if (parsed.OPENAI_API_KEY || parsed.auth_mode === "apikey") return "apikey";
+  return "chatgpt";
 }
 
 /** Best-effort credential reset (e.g. "log out" button). */
 export function logoutClaude(projectId: string): void {
   const dir = getClaudeConfigDir(projectId);
-  for (const name of CLAUDE_AUTH_FILES) {
+  for (const name of CLAUDE_CLEAN_FILES) {
     fs.rmSync(path.join(dir, name), { force: true });
   }
 }

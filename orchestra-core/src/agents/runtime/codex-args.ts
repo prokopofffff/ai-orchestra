@@ -28,13 +28,27 @@ export function buildCodexCliArgs(input: {
     ? ["--model", input.model]
     : [];
 
+  // --dangerously-bypass-approvals-and-sandbox is the documented escape
+  // hatch for "externally sandboxed environments" (Codex's own wording in
+  // --help). Two reasons we need it:
+  //   1. MCP tool calls auto-cancel as "user cancelled MCP tool call" in
+  //      non-interactive exec mode without it. approval_policy=never only
+  //      governs shell commands, not MCP — every signal-tool / task-tool
+  //      call would die before it could reach orchestra-core.
+  //   2. --sandbox workspace-write triggers the same per-call approval
+  //      prompts for un-sandboxed escalations, which also auto-cancel.
+  // Orchestra always spawns codex inside Docker (or under the agent's
+  // git worktree on dev machines), so the per-spawn sandbox layer is
+  // redundant with the container/worktree boundary.
+  const sandboxBypass = "--dangerously-bypass-approvals-and-sandbox";
+
   if (input.resumeSessionId) {
     // Codex resume is a separate subcommand, not a flag. Spawner calls this
     // path only when resumeSessionId is set; the parser handles the same
     // event stream either way.
     return [
       "exec", "resume", input.resumeSessionId,
-      "--json", "--sandbox", "workspace-write", "--skip-git-repo-check",
+      "--json", sandboxBypass, "--skip-git-repo-check",
       "--cd", input.cwd,
       ...modelFlag,
     ];
@@ -42,13 +56,12 @@ export function buildCodexCliArgs(input: {
   return [
     "exec",
     "--json",
-    "--sandbox", "workspace-write",
+    sandboxBypass,
     // Codex refuses non-interactively when cwd isn't a git repo or one of
     // the user's configured trusted dirs ("Not inside a trusted directory
     // and --skip-git-repo-check was not specified"). Worktrees ARE git
     // repos so this is a no-op there; for TL chat in a fresh /workspace/*
     // dir it's the difference between a real run and an immediate exit.
-    // Actual write isolation still comes from --sandbox workspace-write.
     "--skip-git-repo-check",
     "--cd", input.cwd,
     ...modelFlag,

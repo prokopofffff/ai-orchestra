@@ -20,7 +20,8 @@ describe("mcp-config-generator", () => {
     const signalEnv = mcp.mcpServers["orchestra-signal-tool"].env!;
     expect(signalEnv.AGENT_ROLE).toBe("frontend");
     expect(signalEnv.AGENT_PROJECT_ID).toBe("proj-456");
-    expect(signalEnv.ORCHESTRA_URL).toBe("http://localhost:3000");
+    // 127.0.0.1 (not localhost) — forces IPv4 loopback. See mcp-config-generator.ts.
+    expect(signalEnv.ORCHESTRA_URL).toBe("http://127.0.0.1:3000");
   });
 
   it("generates config for all roles", () => {

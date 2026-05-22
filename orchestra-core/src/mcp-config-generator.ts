@@ -65,7 +65,15 @@ export function generateMcpConfig(
   agentJwt?: string,
 ): McpConfig {
   const tools = roleTools[role];
-  const orchestraUrl = `http://localhost:${config.port}`;
+  // Force IPv4 loopback rather than "localhost". In Alpine-based containers
+  // (and many distros) "localhost" resolves to ::1 first; Fastify binds to
+  // 0.0.0.0 only, so IPv6 lookups hit "connection refused" and every MCP
+  // tool callback into orchestra-core silently fails. Symptom: agents say
+  // "проверка отменена на стороне MCP-инструмента" and stop using the
+  // signal/task tools entirely. Hard-coding 127.0.0.1 sidesteps the dual-
+  // stack ambiguity for this loopback-only call. External callers still
+  // use the public hostname — this affects only the agent → orchestra path.
+  const orchestraUrl = `http://127.0.0.1:${config.port}`;
 
   const mcpServers: Record<string, McpServerConfig> = {};
 

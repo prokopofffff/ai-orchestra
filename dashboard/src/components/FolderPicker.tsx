@@ -3,6 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import * as api from "../api";
 import { Button } from "./ui/Button";
 
+// Tiny path.join shim — we render absolute posix-style paths from the
+// orchestra-core host (linux/macOS), so a bare string concat is enough.
+// Pulling in `path-browserify` for one call site isn't worth the dep.
+function path_join(base: string, rel: string): string {
+  if (!rel) return base;
+  return base.endsWith("/") ? base + rel : base + "/" + rel;
+}
+
 interface Props {
   /** Initial directory; defaults to the user's home on the server. */
   initialPath?: string;
@@ -70,7 +78,15 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
   }, [error, path]);
 
   const cwd = data?.cwd ?? "";
-  const segments = cwd ? cwd.split("/").filter(Boolean) : [];
+  const workspaceRoot = data?.workspaceRoot ?? null;
+  // When a workspace root is configured (server-clamped browsing), render
+  // breadcrumbs relative to it instead of from "/". The leftmost crumb is
+  // the workspace root itself; segments above the root never appear.
+  const allSegments = cwd ? cwd.split("/").filter(Boolean) : [];
+  const rootSegments = workspaceRoot ? workspaceRoot.split("/").filter(Boolean) : [];
+  const segments = workspaceRoot ? allSegments.slice(rootSegments.length) : allSegments;
+  const homeLabel = workspaceRoot ? "⌂ Рабочая директория" : "~ Домашняя папка";
+  const homePath = workspaceRoot ?? data?.home;
 
   return (
     <div
@@ -98,13 +114,15 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
         <div className="path-bar flex items-center gap-1 flex-wrap px-5 py-2 border-b border-border-subtle text-xs font-mono">
           <button
             type="button"
-            onClick={() => setPath("/")}
+            onClick={() => setPath(workspaceRoot ?? "/")}
             className="text-text-tertiary hover:text-text-primary"
+            title={workspaceRoot ?? "/"}
           >
-            /
+            {workspaceRoot ? "⌂" : "/"}
           </button>
           {segments.map((seg, i) => {
-            const next = "/" + segments.slice(0, i + 1).join("/");
+            const rel = segments.slice(0, i + 1).join("/");
+            const next = workspaceRoot ? path_join(workspaceRoot, rel) : "/" + rel;
             return (
               <span key={i} className="flex items-center gap-1">
                 <span className="text-text-tertiary">›</span>
@@ -118,13 +136,13 @@ export function FolderPicker({ initialPath, onSelect, onClose }: Props) {
               </span>
             );
           })}
-          {data?.home && (
+          {homePath && (
             <button
               type="button"
-              onClick={() => setPath(data.home)}
+              onClick={() => setPath(homePath)}
               className="ml-auto text-[11px] text-text-tertiary hover:text-text-primary px-2 py-0.5 border border-border-subtle"
             >
-~ Домашняя папка
+              {homeLabel}
             </button>
           )}
         </div>

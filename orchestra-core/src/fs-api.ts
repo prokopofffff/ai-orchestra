@@ -15,14 +15,40 @@ import os from "node:os";
  * No write access — listing only. The `requireAuth` preHandler in index.ts
  * gates this behind a logged-in user; single-tenant deployments treat
  * filesystem read as fine.
+ *
+ * Optional clamp: when `WORKSPACE_ROOT` is set (e.g. on a container deploy
+ * with a named volume mounted at /workspace), browse + mkdir refuse to
+ * leave that subtree. Stops users from picking a path that won't survive
+ * a container rebuild. On laptop/dev installs the env stays unset and the
+ * picker walks the whole filesystem like before.
  */
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT
+  ? path.resolve(process.env.WORKSPACE_ROOT)
+  : null;
+
+function isInsideWorkspaceRoot(target: string): boolean {
+  if (!WORKSPACE_ROOT) return true;
+  if (target === WORKSPACE_ROOT) return true;
+  const rel = path.relative(WORKSPACE_ROOT, target);
+  return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
 export const fsPlugin: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: { path?: string; showHidden?: string } }>(
     "/fs/browse",
     async (request, reply) => {
       const showHidden = request.query.showHidden === "true";
       const raw = request.query.path;
-      const requested = raw && raw.length > 0 ? path.resolve(raw) : os.homedir();
+      // Default landing dir: workspace root when configured, else $HOME.
+      // Means the picker drops the user inside the safe subtree without
+      // them having to navigate to it on first open.
+      const fallback = WORKSPACE_ROOT ?? os.homedir();
+      const requested = raw && raw.length > 0 ? path.resolve(raw) : fallback;
+
+      if (!isInsideWorkspaceRoot(requested)) {
+        return reply.code(403).send({
+          error: `Путь вне рабочей директории (${WORKSPACE_ROOT}). Выберите папку внутри неё.`,
+        });
+      }
 
       let stat;
       try {
@@ -59,11 +85,16 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
       }
 
       // Parent is null at the filesystem root so the UI can hide the "up"
-      // button there. `path.dirname("/")` returns "/" so we guard explicitly.
-      const parent = requested === path.parse(requested).root ? null : path.dirname(requested);
+      // button there. Also null when sitting on the workspace root — we
+      // don't want to let users navigate above it via "..".
+      // `path.dirname("/")` returns "/" so we guard explicitly.
+      const atWorkspaceRoot = WORKSPACE_ROOT !== null && requested === WORKSPACE_ROOT;
+      const parent = atWorkspaceRoot
+        ? null
+        : (requested === path.parse(requested).root ? null : path.dirname(requested));
       const home = os.homedir();
 
-      return { cwd: requested, parent, home, entries };
+      return { cwd: requested, parent, home, entries, workspaceRoot: WORKSPACE_ROOT };
     },
   );
 
@@ -85,6 +116,11 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: "Недопустимое имя папки" });
       }
       const parentPath = path.resolve(body.data.parent);
+      if (!isInsideWorkspaceRoot(parentPath)) {
+        return reply.code(403).send({
+          error: `Нельзя создать папку вне рабочей директории (${WORKSPACE_ROOT}).`,
+        });
+      }
       let parentStat;
       try {
         parentStat = await fs.stat(parentPath);

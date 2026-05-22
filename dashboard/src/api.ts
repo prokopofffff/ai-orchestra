@@ -405,6 +405,10 @@ const FsBrowseSchema = z.object({
   parent: z.string().nullable(),
   home: z.string(),
   entries: z.array(FsEntrySchema),
+  // Set on deployments that pin browsing to a single subtree (named docker
+  // volume etc.) so the user can't pick a path that won't survive a rebuild.
+  // Null on dev/laptop installs — picker walks the whole filesystem.
+  workspaceRoot: z.string().nullable().default(null),
 });
 export type FsBrowseResult = z.infer<typeof FsBrowseSchema>;
 export const browseFs = (path?: string, showHidden = false): Promise<FsBrowseResult> => {

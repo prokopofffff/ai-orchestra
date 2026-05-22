@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { type Config, getEffortForRole } from "./config";
 import {
   createSession,
@@ -84,6 +85,22 @@ export async function dispatchTechLead(
       workDir = await ensureRepo(provider.tokenizeCloneUrl(), slug);
     } else {
       workDir = ensureTempDir(slug);
+    }
+
+    // Filesystem preflight: the configured `local_path` may not exist in the
+    // container (typical failure: user typed a host path that was never
+    // mounted, or a container rebuild wiped a path that wasn't on a docker
+    // volume). Codex/Claude CLIs error cryptically when `--cd` points at a
+    // missing dir — bail here with an actionable chat message instead of
+    // burning a session row that produces no visible reply.
+    if (!fs.existsSync(workDir)) {
+      const reason =
+        `Рабочая директория \`${workDir}\` не существует. ` +
+        `Откройте Настройки проекта и выберите путь, который смонтирован в контейнер ` +
+        `(или очистите Локальный путь — тогда orchestra создаст временную папку).`;
+      notify({ projectId, text: reason, priority: "high", fromRole: "system" })
+        .catch(() => { /* best-effort */ });
+      return { action: "error", error: reason };
     }
 
     // Auth preflight + env resolution already happened in `resolved` above.

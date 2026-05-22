@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import { type Config, type AgentRole, getEffortForRole } from "./config";
 import {
   createSession,
@@ -143,6 +144,22 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   let authUrl: string | null = null;
   if (localPath) {
     repoDir = localPath as string;
+    // Filesystem preflight first — `isGitRepo` returns false for both
+    // "exists, not a git repo" AND "doesn't exist", which used to surface
+    // a misleading "не git-репозиторий" message when the real problem was
+    // a missing path (typical after a container rebuild wiped a non-volume
+    // mount). Split the two so the user gets the actionable message.
+    if (!fsSync.existsSync(repoDir)) {
+      const reason =
+        `Рабочая директория \`${repoDir}\` не существует. ` +
+        `Откройте Настройки проекта и выберите путь, который смонтирован в контейнер.`;
+      await escalate(projectId, taskId, reason, {
+        event: "workdir_missing",
+        path: repoDir,
+        role,
+      });
+      throw new PreflightError(`workdir missing: ${repoDir}`);
+    }
     // Preflight: agents work in git worktrees, so the local path has to
     // actually be a git repo. If it isn't, escalate to the user with an
     // actionable message (the dashboard surfaces an "Initialize git here"

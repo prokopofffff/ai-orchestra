@@ -46,6 +46,41 @@ export function providerFor(repoUrl: string, settings: ProjectSettings | null): 
 }
 
 /**
+ * Build the git-provider env vars an agent spawn should carry.
+ *
+ * Why: projects with a `local_path` skip the `ensureRepo` (HTTPS-with-token)
+ * code path — the workdir is taken as-is, often with an SSH remote that
+ * the container can't authenticate against ("Permission denied (publickey)").
+ * Without these env vars the agent has the project's token sitting in
+ * `settings.provider.token` but no way to use it: every `git fetch/push`
+ * against the configured remote fails. Setting per-provider env vars
+ * (`GITLAB_TOKEN` / `GITHUB_TOKEN`) is what conventional tooling expects
+ * — glab, gh, hub, ci scripts, `curl --header "PRIVATE-TOKEN: …"`, …
+ *
+ * Returns an empty record when no token is configured (agent runs as
+ * before, with no extra env).
+ */
+export function buildGitProviderEnv(
+  repoUrl: string | null,
+  settings: ProjectSettings | null | unknown,
+): Record<string, string> {
+  const token = (settings as { provider?: { token?: string } } | null)?.provider?.token;
+  if (!token) return {};
+  // Generic alias for tooling that doesn't care about the provider.
+  const env: Record<string, string> = { GIT_PROVIDER_TOKEN: token };
+  if (repoUrl) {
+    try {
+      const p = providerFor(repoUrl, settings as ProjectSettings | null);
+      if (p.kind === "gitlab") env.GITLAB_TOKEN = token;
+      else if (p.kind === "github") env.GITHUB_TOKEN = token;
+    } catch {
+      // Unknown host or missing token — the generic var stays available.
+    }
+  }
+  return env;
+}
+
+/**
  * Load the project by id, then resolve its provider.
  */
 export async function providerForProject(projectId: string): Promise<GitProvider> {

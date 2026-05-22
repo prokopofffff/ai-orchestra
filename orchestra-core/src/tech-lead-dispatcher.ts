@@ -12,7 +12,7 @@ import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir } from "./repo-manager";
-import { providerFor } from "./providers";
+import { providerFor, buildGitProviderEnv } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { resolveRuntimeForRole } from "./agents/runtime/resolver";
 import {
@@ -141,6 +141,16 @@ export async function dispatchTechLead(
     const agentJwt = await mintAgentJwt(projectId);
     const { mcpServers } = generateMcpConfig("tech-lead", config, projectId, agentJwt);
 
+    // Merge git-provider env vars (GITLAB_TOKEN / GITHUB_TOKEN / generic
+    // GIT_PROVIDER_TOKEN) into the spawn env so the agent can actually
+    // talk to its configured remote. Without this, local_path projects
+    // come in with an SSH origin and the agent can't fetch/push because
+    // no key is reachable from inside the container.
+    const spawnEnv = {
+      ...resolved.resolved.spawnEnv,
+      ...buildGitProviderEnv(repoUrl as string | null, settings),
+    };
+
     // Run the conversation in the background — the HTTP request that triggered
     // this returns immediately; the tech-lead's reply arrives via notify().
     void runTechLead({
@@ -148,7 +158,7 @@ export async function dispatchTechLead(
       userTurn, mcpServers, pencilEnabled: config.pencilEnabled,
       settings,
       runtime: resolved.resolved.runtime,
-      spawnEnv: resolved.resolved.spawnEnv,
+      spawnEnv,
     });
 
     return { action: "spawned", sessionId: session.id };

@@ -30,7 +30,7 @@ import {
   recordRuntimeCost,
   type ObserverContext,
 } from "./agents/runtime/observers";
-import { providerFor } from "./providers";
+import { providerFor, buildGitProviderEnv } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
 import { DONE_STATES } from "./dependency-engine";
@@ -239,7 +239,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       settings,
       resumeSessionId: params.resumeSessionId,
       abortSignal: abortController.signal,
-      spawnEnv: resolved.resolved.spawnEnv,
+      // Layer git-provider creds (GITLAB_TOKEN / GITHUB_TOKEN / generic
+      // GIT_PROVIDER_TOKEN) on top of the claude/codex auth env so the
+      // agent can hit its configured remote — see buildGitProviderEnv.
+      spawnEnv: { ...resolved.resolved.spawnEnv, ...buildGitProviderEnv(repoUrl, settings) },
     }, onEvent);
     capExceeded = outcome.capExceeded;
     if (capExceeded) {

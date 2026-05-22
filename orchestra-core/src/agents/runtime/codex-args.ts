@@ -26,7 +26,8 @@ export function buildCodexCliArgs(input: {
     // event stream either way.
     return [
       "exec", "resume", input.resumeSessionId,
-      "--json", "--sandbox", "workspace-write", "--cd", input.cwd,
+      "--json", "--sandbox", "workspace-write", "--skip-git-repo-check",
+      "--cd", input.cwd,
       "--model", input.model,
     ];
   }
@@ -34,12 +35,16 @@ export function buildCodexCliArgs(input: {
     "exec",
     "--json",
     "--sandbox", "workspace-write",
+    // Codex refuses non-interactively when cwd isn't a git repo or one of
+    // the user's configured trusted dirs ("Not inside a trusted directory
+    // and --skip-git-repo-check was not specified"). Worktrees ARE git
+    // repos so this is a no-op there; for TL chat in a fresh /workspace/*
+    // dir it's the difference between a real run and an immediate exit.
+    // Actual write isolation still comes from --sandbox workspace-write.
+    "--skip-git-repo-check",
     "--cd", input.cwd,
     "--model", input.model,
     "--ephemeral",
-    // Worktrees ARE git repos so we don't pass --skip-git-repo-check.
-    // TL chat workDir can be a non-git dir (ensureTempDir path); the
-    // runtime's caller decides whether to add it.
   ];
 }
 

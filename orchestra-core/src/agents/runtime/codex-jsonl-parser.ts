@@ -120,7 +120,18 @@ export function computeCodexCostUsd(
  *       for (const evt of norm.consume(raw)) yield evt;
  *     }
  */
-export function createCodexNormalizer(ctx: { model: string }) {
+export function createCodexNormalizer(ctx: {
+  model: string;
+  /**
+   * Names of MCP servers the runtime wired into $CODEX_HOME/config.toml for
+   * this spawn. Surfaced verbatim in the init event so the spawner
+   * observer's "MCP init: servers=..." log matches what's actually loaded.
+   * Codex never echoes its MCP wiring back in-stream, so without this
+   * pass-through the log always read "servers=[] orchestra_tools=[]" even
+   * though signal-tool and task-tool were running.
+   */
+  mcpServerNames?: string[];
+}) {
   let sessionId = "";
   let lastAssistantText = "";
   let firstTurn = true;
@@ -132,15 +143,23 @@ export function createCodexNormalizer(ctx: { model: string }) {
       switch (raw.type) {
         case "thread.started": {
           sessionId = (raw as ThreadStarted).thread_id;
+          // Mark every wired server as "connected" — Codex doesn't report
+          // per-server health so we'd never know otherwise. If a server
+          // actually failed to start, the model will surface it as a
+          // "tool not found" error at first call site.
+          const mcpServers = (ctx.mcpServerNames ?? []).map((name) => ({
+            name,
+            status: "connected",
+          }));
           out.push({
             type: "init",
             sessionId,
             model: ctx.model,
-            // Codex doesn't surface its tool list or MCP wiring in-stream.
-            // The runtime knows them but the spawner observer doesn't need
-            // them for cost/logging — leave empty.
+            // Codex doesn't surface its tool list in-stream — we'd need to
+            // crack the per-server tool/list response, which isn't worth
+            // it for a log line. Leave tools empty; servers carry the signal.
             tools: [],
-            mcpServers: [],
+            mcpServers,
           });
           return out;
         }

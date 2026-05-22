@@ -116,7 +116,10 @@ export const codexCliRuntime: AgentRuntime = {
       stderrTail = (stderrTail + chunk.toString("utf-8")).slice(-STDERR_TAIL_CAP);
     });
 
-    const normalizer = createCodexNormalizer({ model: input.model });
+    const normalizer = createCodexNormalizer({
+      model: input.model,
+      mcpServerNames: Object.keys(input.mcpServers),
+    });
     let resultSeen = false;
     let exitedNormally = false;
     let runningCostUsd = 0;

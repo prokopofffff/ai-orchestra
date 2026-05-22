@@ -58,13 +58,39 @@ export function AgentLogs({ projectId }: Props) {
     ? displayLogs.filter((l) => l.message.toLowerCase().includes(searchLower))
     : displayLogs;
 
+  const exportFiltered = (): void => {
+    if (!filtered.length) return;
+    // Mirror the on-screen format so the file matches what the user sees.
+    // ISO timestamps for grep/sort; one log line per row.
+    const body = filtered
+      .map((l) => `${l.createdAt}\t${l.role}\t${l.level}\t${l.message.replace(/\n/g, "\\n")}`)
+      .join("\n");
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const tag = [roleFilter, levelFilter, searchLower && "search"].filter(Boolean).join("-") || "all";
+    a.download = `orchestra-logs-${projectId.slice(0, 8)}-${tag}-${stamp}.tsv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="agent-logs flex flex-col gap-5 px-10 py-7 h-full min-h-0">
       <header className="logs-header flex items-center justify-between">
         <h2 className="text-[22px] font-semibold tracking-tight text-text-primary">
           Логи агентов
         </h2>
-        <Button variant="secondary" leadingIcon={<DownloadIcon size={14} />}>
+        <Button
+          variant="secondary"
+          leadingIcon={<DownloadIcon size={14} />}
+          disabled={!filtered.length}
+          onClick={exportFiltered}
+          title={filtered.length ? `Скачать ${filtered.length} записей` : "Нет логов для экспорта"}
+        >
           Экспорт
         </Button>
       </header>

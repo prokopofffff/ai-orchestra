@@ -44,6 +44,14 @@ export const claudeCliRuntime: AgentRuntime = {
       if (v === undefined) delete spawnEnv[k];
       else spawnEnv[k] = v;
     }
+    // Claude CLI refuses --permission-mode bypassPermissions when running as
+    // root unless this flag is set ("cannot be used with root/sudo
+    // privileges for security reasons"). The orchestra-core container runs
+    // as root by default; IS_SANDBOX is the documented escape hatch for
+    // containerized deployments. Setting it unconditionally is fine —
+    // orchestra ALWAYS spawns under sandboxing (docker on the server, the
+    // git worktree on dev machines).
+    spawnEnv.IS_SANDBOX = "1";
 
     // Bare mode = strictly env-var auth (no keychain, no OAuth). Use it
     // when this spawn has ANTHROPIC_API_KEY set; otherwise let the CLI

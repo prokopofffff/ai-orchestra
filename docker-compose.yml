@@ -42,6 +42,15 @@ services:
       MODEL_QA: ${MODEL_QA:-sonnet}
       MODEL_DEVOPS: ${MODEL_DEVOPS:-sonnet}
       DASHBOARD_PATH: /app/dashboard
+      # Volume-backed root the folder picker is clamped to (fs-api.ts).
+      # Users can't pick a path outside this subtree, so a local_path
+      # value can't accidentally point at a writable-layer dir that
+      # vanishes on the next rebuild.
+      WORKSPACE_ROOT: /workspace
+      # repo-manager.ts writes per-project worktrees (cloned repos and
+      # the temp-dir fallback for projects without repo_url) under this
+      # path — keep it inside the workspace volume too.
+      WORKSPACES_ROOT: /workspace/.tmp
     ports:
       - "3000:3000"
     volumes:
@@ -52,6 +61,15 @@ services:
       # the operator drops their credentials in — orchestra-core falls back
       # to CLAUDE_API_KEY when it's not present.
       - ${HOME}/.claude:/root/.claude:ro
+      # Per-project provider credentials (CLAUDE_CONFIG_DIR / CODEX_HOME).
+      # Must persist across container rebuilds — otherwise every redeploy
+      # forces every project to re-authorize Claude and Codex.
+      - orchestra_creds:/root/orchestra-creds
+      # Volume-backed root for project working directories (see WORKSPACE_ROOT
+      # env above). Without this volume, anything a user picks via the
+      # folder picker would live in the container's writable layer and
+      # vanish on the next rebuild.
+      - workspace_data:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,3 +77,5 @@ services:
 volumes:
   postgres_data:
   sessions_data:
+  orchestra_creds:
+  workspace_data:

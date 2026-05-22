@@ -106,8 +106,15 @@ export const codexCliRuntime: AgentRuntime = {
     if (input.abortSignal.aborted) onAbort();
     else input.abortSignal.addEventListener("abort", onAbort, { once: true });
 
-    // Drain stderr; codex --json puts diagnostics + retry logs there.
-    stderr.resume();
+    // Drain stderr; codex --json puts diagnostics + retry logs there. Keep
+    // the last ~4KB on hand for crash diagnostics — without it, a CLI that
+    // exits before emitting any result event surfaces as "exit code N" with
+    // no clue why (workspace path missing, model rejected, sandbox denied…).
+    const STDERR_TAIL_CAP = 4096;
+    let stderrTail = "";
+    stderr.on("data", (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString("utf-8")).slice(-STDERR_TAIL_CAP);
+    });
 
     const normalizer = createCodexNormalizer({ model: input.model });
     let resultSeen = false;
@@ -157,9 +164,11 @@ export const codexCliRuntime: AgentRuntime = {
     }
 
     if (!resultSeen && !outcome.capExceeded && exitedNormally) {
+      const tail = stderrTail.trim();
+      const suffix = tail ? ` — stderr: ${tail}` : "";
       await onEvent({
         type: "error",
-        message: `codex CLI exited without a result event (exit code ${child.exitCode ?? "unknown"})`,
+        message: `codex CLI exited without a result event (exit code ${child.exitCode ?? "unknown"})${suffix}`,
       });
     }
 

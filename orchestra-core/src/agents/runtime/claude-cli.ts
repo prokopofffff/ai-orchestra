@@ -101,10 +101,16 @@ export const claudeCliRuntime: AgentRuntime = {
     if (input.abortSignal.aborted) onAbort();
     else input.abortSignal.addEventListener("abort", onAbort, { once: true });
 
-    // Drain stderr to nothing useful but keep the pipe open — otherwise the
-    // child may block once its stderr buffer fills. The CLI emits `--verbose`
-    // diagnostics on stderr; the JSON event channel is stdout.
-    stderr.resume();
+    // Drain stderr but keep the last ~4KB on hand for crash diagnostics —
+    // when Claude exits non-zero before emitting a result event, the only
+    // signal we have is whatever it printed to stderr. Without this we
+    // surfaced "exit code 1" with no context. Cap the buffer so a chatty
+    // CLI run doesn't accumulate unbounded memory across long sessions.
+    const STDERR_TAIL_CAP = 4096;
+    let stderrTail = "";
+    stderr.on("data", (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString("utf-8")).slice(-STDERR_TAIL_CAP);
+    });
 
     let resultSeen = false;
     let exitedNormally = false;
@@ -150,9 +156,11 @@ export const claudeCliRuntime: AgentRuntime = {
     // abort, treat that as a CLI crash — surface it so the caller logs an
     // error rather than silently completing.
     if (!resultSeen && !outcome.capExceeded && exitedNormally) {
+      const tail = stderrTail.trim();
+      const suffix = tail ? ` — stderr: ${tail}` : "";
       await onEvent({
         type: "error",
-        message: `claude CLI exited without a result event (exit code ${child.exitCode ?? "unknown"})`,
+        message: `claude CLI exited without a result event (exit code ${child.exitCode ?? "unknown"})${suffix}`,
       });
     }
 

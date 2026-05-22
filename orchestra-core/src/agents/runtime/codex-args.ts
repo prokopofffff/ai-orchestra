@@ -20,6 +20,14 @@ export function buildCodexCliArgs(input: {
   model: string;
   resumeSessionId?: string;
 }): string[] {
+  // ChatGPT-subscription accounts reject every named model server-side
+  // (gpt-5, gpt-5-codex, gpt-4o, o3, …). The CLI only accepts the
+  // account-default in that case — selected by OMITTING --model. The
+  // resolver sets model to this sentinel when codex auth_mode === "chatgpt".
+  const modelFlag = input.model && input.model !== "chatgpt-default"
+    ? ["--model", input.model]
+    : [];
+
   if (input.resumeSessionId) {
     // Codex resume is a separate subcommand, not a flag. Spawner calls this
     // path only when resumeSessionId is set; the parser handles the same
@@ -28,7 +36,7 @@ export function buildCodexCliArgs(input: {
       "exec", "resume", input.resumeSessionId,
       "--json", "--sandbox", "workspace-write", "--skip-git-repo-check",
       "--cd", input.cwd,
-      "--model", input.model,
+      ...modelFlag,
     ];
   }
   return [
@@ -43,7 +51,7 @@ export function buildCodexCliArgs(input: {
     // Actual write isolation still comes from --sandbox workspace-write.
     "--skip-git-repo-check",
     "--cd", input.cwd,
-    "--model", input.model,
+    ...modelFlag,
     "--ephemeral",
   ];
 }

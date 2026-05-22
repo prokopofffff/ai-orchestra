@@ -4,15 +4,39 @@ import { claudeCliRuntime } from "./claude-cli";
 import { codexCliRuntime } from "./codex-cli";
 import { resolveClaudeAuth, type ClaudeAuthResolution } from "../../claude-auth";
 import { resolveCodexAuth, type CodexAuthResolution } from "../../codex-auth";
+import { codexAuthMode } from "../../per-project-creds";
 import { log } from "../../obs";
 import type { AgentRuntime } from "./types";
 
 /**
- * Fallback model when we auto-swap a Claude-configured role onto Codex
- * because Codex is the only authorized provider. Matches the canonical
- * model used by the cost normalizer (codex-jsonl-parser FALLBACK_RATE).
+ * Sentinel model that the codex-args builder maps to "omit --model". The
+ * Codex CLI accepts this for ChatGPT subscription accounts (where every
+ * named model — gpt-5, gpt-5-codex, gpt-5-mini, gpt-4o, o3, o4-mini, … —
+ * returns 400 "model is not supported when using Codex with a ChatGPT
+ * account"). For API-key accounts the CLI accepts named models normally.
  */
-const CODEX_FALLBACK_MODEL = "gpt-5-codex";
+const CODEX_CHATGPT_SENTINEL = "chatgpt-default";
+
+/**
+ * Codex model when auto-swapping a Claude-configured role onto Codex using
+ * an *API-key* account. Subscription accounts use CODEX_CHATGPT_SENTINEL.
+ * Matches the canonical model the cost normalizer prices by default
+ * (codex-jsonl-parser FALLBACK_RATE).
+ */
+const CODEX_APIKEY_FALLBACK_MODEL = "gpt-5-codex";
+
+/**
+ * Pick the right codex model for this project's auth mode. ChatGPT
+ * subscription gates ALL named models server-side — only the unnamed
+ * account-default works, which the CLI selects when --model is omitted.
+ */
+function pickCodexModel(projectId: string, requestedModel: string | null): string {
+  const mode = codexAuthMode(projectId);
+  if (mode === "chatgpt") return CODEX_CHATGPT_SENTINEL;
+  return requestedModel && requestedModel.length > 0
+    ? requestedModel
+    : CODEX_APIKEY_FALLBACK_MODEL;
+}
 
 /**
  * Resolve which provider+model+runtime+auth to use for a given (project, role)
@@ -52,7 +76,8 @@ export async function resolveRuntimeForRole(args: {
 
   const primary = await authFor(provider, args);
   if (!primary.reason) {
-    return { ok: true, resolved: { provider, model, runtime: RUNTIMES[provider], spawnEnv: primary.env } };
+    const finalModel = provider === "codex" ? pickCodexModel(args.projectId, model) : model;
+    return { ok: true, resolved: { provider, model: finalModel, runtime: RUNTIMES[provider], spawnEnv: primary.env } };
   }
 
   // Auto-swap: configured provider isn't authorized for this project. If
@@ -64,7 +89,7 @@ export async function resolveRuntimeForRole(args: {
   const fallback = await authFor(other, args);
   if (!fallback.reason) {
     const fallbackModel = other === "codex"
-      ? CODEX_FALLBACK_MODEL
+      ? pickCodexModel(args.projectId, null)
       // Bypass settings.models[role] (it points at the now-unavailable provider)
       // so we get the role's environment default model (opus/sonnet/haiku).
       : parseModelSpec(getModelForRole(args.config, args.role, undefined)).model;

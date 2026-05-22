@@ -158,7 +158,12 @@ export function createCodexNormalizer(ctx: { model: string }) {
           // and would duplicate the same event when .completed lands.
           if (raw.type !== "item.completed") return out;
 
-          if (item.type === "text") {
+          // Codex CLI 0.132 emits item.type="agent_message" for assistant
+          // text on subscription accounts; older versions / API-key accounts
+          // may use "text". Accept both so the dispatcher's notify() can
+          // forward the reply to chat. Silent symptom: dashboard shows the
+          // cost/result system line but no actual tech-lead message.
+          if (item.type === "agent_message" || item.type === "text") {
             const text = (item as { text?: string }).text ?? ev.text ?? "";
             if (text) {
               lastAssistantText = text;

@@ -26,6 +26,7 @@ import { onboardingPlugin } from "./onboarding-api";
 import { fsPlugin } from "./fs-api";
 import { providersPlugin } from "./providers-api";
 import { referencesPlugin } from "./references-api";
+import { contextCardsPlugin } from "./context-cards-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { setAgentJwtSigner } from "./agent-jwt";
 import { userCanAccessProject } from "./project-access";
@@ -122,6 +123,7 @@ async function main() {
   await app.register(fsPlugin, { prefix: "/api" });
   await app.register(providersPlugin, { prefix: "/api" });
   await app.register(referencesPlugin, { prefix: "/api" });
+  await app.register(contextCardsPlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
   const dashboardRoot = path.resolve(config.dashboardPath);

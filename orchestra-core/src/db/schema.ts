@@ -182,6 +182,26 @@ export const projectNotes = pgTable("project_notes", {
   index("idx_project_notes_project_kind").on(t.projectId, t.kind),
 ]);
 
+/**
+ * Pre-computed per-project context summaries (Phase 3 of the cross-project
+ * context plan). Inlined into the bootstrap prompt of OTHER projects that
+ * reference this one. UNIQUE (project_id, kind) — regenerate UPSERTs.
+ */
+export const projectContextCards = pgTable("project_context_cards", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  content: text("content").notNull(),
+  tokenCount: integer("token_count").notNull().default(0),
+  sourceSha: text("source_sha"),
+  generatorModel: text("generator_model"),
+  costUsd: doublePrecision("cost_usd").notNull().default(0),
+  generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("project_context_cards_project_kind_key").on(t.projectId, t.kind),
+  index("idx_project_context_cards_project").on(t.projectId),
+]);
+
 export const systemConfig = pgTable("system_config", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -310,3 +330,5 @@ export type NewUser = typeof users.$inferInsert;
 export type SystemConfig = typeof systemConfig.$inferSelect;
 export type ProjectNote = typeof projectNotes.$inferSelect;
 export type NewProjectNote = typeof projectNotes.$inferInsert;
+export type ProjectContextCard = typeof projectContextCards.$inferSelect;
+export type NewProjectContextCard = typeof projectContextCards.$inferInsert;

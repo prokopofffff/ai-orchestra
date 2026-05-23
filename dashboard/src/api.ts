@@ -423,6 +423,43 @@ const MkdirResultSchema = z.object({ path: z.string() });
 export const createFsDir = (parent: string, name: string): Promise<{ path: string }> =>
   postValidated("/fs/mkdir", { parent, name }, MkdirResultSchema);
 
+// Context cards (Phase 3 — per-project context summaries inlined into
+// the bootstrap of referencing projects).
+export const CardKindSchema = z.enum(["architecture", "decisions", "style", "recent_activity"]);
+export type CardKind = z.infer<typeof CardKindSchema>;
+const ContextCardSchema = z.object({
+  kind: z.string(),
+  content: z.string(),
+  tokenCount: z.number(),
+  sourceSha: z.string().nullable(),
+  generatorModel: z.string().nullable(),
+  costUsd: z.number(),
+  generatedAt: z.coerce.date(),
+});
+export type ContextCard = z.infer<typeof ContextCardSchema>;
+export const fetchContextCards = (projectId: string): Promise<ContextCard[]> =>
+  getValidated(`/projects/${projectId}/context-cards`, z.array(ContextCardSchema));
+
+const RegenerateResultSchema = z.object({
+  results: z.array(z.object({
+    kind: z.string(),
+    generated: z.boolean(),
+    reason: z.string().optional(),
+    card: z.object({
+      content: z.string(),
+      tokenCount: z.number(),
+      sourceSha: z.string().nullable(),
+      generatorModel: z.string().nullable(),
+      costUsd: z.number(),
+    }).optional(),
+  })),
+});
+export const regenerateContextCards = (
+  projectId: string,
+  opts?: { kind?: CardKind; force?: boolean },
+): Promise<z.infer<typeof RegenerateResultSchema>> =>
+  postValidated(`/projects/${projectId}/context-cards/regenerate`, opts ?? {}, RegenerateResultSchema);
+
 // Onboarding
 const OnboardingStepSchema = z.object({
   key: z.enum(["claude_auth", "project", "git_token", "telegram"]),

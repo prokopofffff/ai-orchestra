@@ -16,7 +16,35 @@ export interface ReferenceProject {
   absolutePath: string;
   /** First ~500 chars of the project's README, if one exists. */
   readmeExcerpt: string | null;
+  /**
+   * Pre-computed context cards for this project (Phase 3). Up to four kinds
+   * — architecture / decisions / style / recent_activity. Empty when none
+   * are generated yet; the agent falls back to README + dir tree in that case.
+   */
+  cards: ReferenceCard[];
 }
+
+export interface ReferenceCard {
+  kind: string;
+  content: string;
+  tokenCount: number;
+}
+
+/**
+ * Token budget for ALL context cards across ALL referenced projects in a
+ * single bootstrap. Cards are filled greedily by priority order (see
+ * CARD_KIND_PRIORITY); once the budget is exhausted later cards are
+ * dropped. 3000 tokens ≈ 12KB of prose — a few cards' worth without
+ * blowing the cache.
+ */
+const BOOTSTRAP_CARD_BUDGET_TOKENS = 3000;
+
+/**
+ * Order cards are considered for inclusion. Architecture lands first
+ * because it's the most decision-influencing; recent_activity last
+ * because it ages out fastest. Easy to tweak without a migration.
+ */
+const CARD_KIND_PRIORITY: string[] = ["architecture", "decisions", "style", "recent_activity"];
 
 export interface BootstrapContext {
   role: AgentRole;
@@ -158,7 +186,31 @@ async function loadReferenceProjects(
       description: (row.description as string | null) ?? null,
       absolutePath,
       readmeExcerpt: readReadmeExcerpt(absolutePath),
+      cards: [],  // populated below in one round-trip
     });
+  }
+
+  // Hydrate cards in a single query, then assign to each reference project.
+  // budgeting + ordering happens later in formatBootstrapPrompt.
+  if (loaded.length > 0) {
+    const ids = loaded.map((r) => r.id);
+    const { rows: cardRows } = await pool.query<{
+      project_id: string; kind: string; content: string; token_count: number;
+    }>(
+      `SELECT project_id, kind, content, token_count
+       FROM project_context_cards
+       WHERE project_id = ANY($1::uuid[])`,
+      [ids],
+    );
+    const byProject = new Map<string, ReferenceCard[]>();
+    for (const r of cardRows) {
+      const list = byProject.get(r.project_id) ?? [];
+      list.push({ kind: r.kind, content: r.content, tokenCount: r.token_count });
+      byProject.set(r.project_id, list);
+    }
+    for (const ref of loaded) {
+      ref.cards = byProject.get(ref.id) ?? [];
+    }
   }
 
   if (dropped.length > 0) {
@@ -247,6 +299,13 @@ export function formatBootstrapPrompt(ctx: BootstrapContext): string {
   }
 
   if (ctx.references.length) {
+    // Cards first (pre-computed summaries — high information density),
+    // then the filesystem hint (raw paths + README excerpt as fallback).
+    const cardsBlock = renderReferenceCardsBlock(ctx.references, BOOTSTRAP_CARD_BUDGET_TOKENS);
+    if (cardsBlock) {
+      lines.push(cardsBlock);
+      lines.push("");
+    }
     lines.push(`## Reference projects (read-only)`);
     lines.push(
       "Inspect these for context only — examples of conventions, prior decisions, " +
@@ -272,4 +331,77 @@ export function formatBootstrapPrompt(ctx: BootstrapContext): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Greedy-budget render of reference-project context cards. Walks the
+ * reference list once per priority kind (architecture first, then
+ * decisions, style, recent_activity), including each card whose
+ * tokenCount fits inside the remaining budget. Cards that don't fit are
+ * silently dropped — the agent still has the filesystem fallback.
+ *
+ * Returns null when nothing was rendered (no references have cards, or
+ * the budget is zero). Exported for tests.
+ */
+export function renderReferenceCardsBlock(
+  references: ReferenceProject[],
+  budgetTokens: number,
+): string | null {
+  if (budgetTokens <= 0) return null;
+  // Index for quick lookup: { projectId → { kind → card } }
+  const byProject = new Map<string, Map<string, ReferenceCard>>();
+  let anyCards = false;
+  for (const r of references) {
+    if (!r.cards.length) continue;
+    anyCards = true;
+    const m = new Map<string, ReferenceCard>();
+    for (const c of r.cards) m.set(c.kind, c);
+    byProject.set(r.id, m);
+  }
+  if (!anyCards) return null;
+
+  // Greedy fill in priority order across all projects. Picks
+  // "architecture for every ref" first, then "decisions for every ref",
+  // etc. Means under tight budgets EVERY ref gets a card before any
+  // single ref gets two.
+  const picked = new Map<string, ReferenceCard[]>();
+  let remaining = budgetTokens;
+  for (const kind of CARD_KIND_PRIORITY) {
+    for (const ref of references) {
+      const card = byProject.get(ref.id)?.get(kind);
+      if (!card) continue;
+      if (card.tokenCount > remaining) continue;
+      const list = picked.get(ref.id) ?? [];
+      list.push(card);
+      picked.set(ref.id, list);
+      remaining -= card.tokenCount;
+    }
+  }
+
+  if (picked.size === 0) return null;
+
+  const lines: string[] = [];
+  lines.push("## Context cards (from referenced projects)");
+  lines.push(
+    "Pre-computed summaries — use these to ground decisions and conventions. " +
+    "Each card was generated from the source project's own files; treat them as " +
+    "current as of the last regeneration timestamp.",
+  );
+  lines.push("");
+  for (const ref of references) {
+    const cards = picked.get(ref.id);
+    if (!cards || !cards.length) continue;
+    lines.push(`### ${ref.name}`);
+    for (const c of cards) {
+      lines.push(`**${capitalize(c.kind)}**`);
+      lines.push("");
+      lines.push(c.content);
+      lines.push("");
+    }
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1).replace(/_/g, " ");
 }

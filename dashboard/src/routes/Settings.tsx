@@ -50,6 +50,7 @@ export default function Settings() {
             <ProjectTab project={project} onSaved={refresh} />
             <ProjectIntroSection project={project} />
             <ProjectReferencesSection project={project} onSaved={refresh} />
+            <ProjectContextCardsSection project={project} />
             <ProjectClaudeSection project={project} onSaved={refresh} />
             <ProjectCodexSection project={project} onSaved={refresh} />
             <ProjectGitTokenSection project={project} onSaved={refresh} />
@@ -1083,6 +1084,91 @@ function ProjectReferencesSection({ project, onSaved }: { project: Project; onSa
               </li>
             );
           })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * "AI summary" — pre-computed context cards (Phase 3 of cross-project
+ * context). Lists what's stored, shows generation metadata, and exposes
+ * a manual regenerate button. Cards are inlined into the bootstrap of
+ * OTHER projects that link to this one.
+ */
+function ProjectContextCardsSection({ project }: { project: Project }) {
+  const queryClient = useQueryClient();
+  const { data: cards = [], isLoading } = useQuery({
+    queryKey: ["context-cards", project.id],
+    queryFn: () => api.fetchContextCards(project.id),
+  });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function regen(force: boolean): Promise<void> {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await api.regenerateContextCards(project.id, { force });
+      const generated = res.results.filter((r) => r.generated);
+      const skipped = res.results.filter((r) => !r.generated);
+      setMsg(`Готово: ${generated.length} обновлено, ${skipped.length} пропущено.`);
+      await queryClient.invalidateQueries({ queryKey: ["context-cards", project.id] });
+    } catch (e) {
+      setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-semibold text-text-primary">AI summary (контекст-карточки)</h3>
+          <p className="text-xs text-text-secondary">
+            Краткие сводки по проекту, которые orchestra встраивает в bootstrap-промпт
+            других проектов, ссылающихся на этот. Дешёвый способ передать контекст
+            (архитектура, решения, стиль, активность) без чтения файлов заново на каждом запуске.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 pt-1">
+          {msg && <span className="text-xs text-text-tertiary max-w-[260px] text-right">{msg}</span>}
+          <Button variant="secondary" size="sm" onClick={() => regen(false)} disabled={busy}>
+            {busy ? "Генерация…" : "Обновить (если изменилось)"}
+          </Button>
+          <Button variant="primary-red" size="sm" onClick={() => regen(true)} disabled={busy}>
+            {busy ? "Генерация…" : "Регенерировать все"}
+          </Button>
+        </div>
+      </div>
+
+      {isLoading && <div className="text-xs text-text-tertiary">Загрузка…</div>}
+      {!isLoading && cards.length === 0 && (
+        <div className="text-xs text-text-tertiary">
+          Карточек пока нет. Нажмите <code>Регенерировать все</code>, чтобы создать первый набор.
+          Стоимость одной карточки ≈ $0.001 (haiku) или $0 (codex по подписке).
+        </div>
+      )}
+      {!isLoading && cards.length > 0 && (
+        <ul className="flex flex-col gap-3">
+          {cards.map((c) => (
+            <li key={c.kind} className="border border-border-subtle p-3 flex flex-col gap-2">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-xs font-mono uppercase tracking-wider text-text-secondary">
+                  {c.kind.replace(/_/g, " ")}
+                </span>
+                <span className="text-[11px] text-text-tertiary">
+                  {c.tokenCount} токенов · ${c.costUsd.toFixed(4)} · {c.generatorModel ?? "—"}
+                </span>
+              </div>
+              <pre className="text-xs text-text-primary whitespace-pre-wrap font-sans">{c.content}</pre>
+              <div className="text-[11px] text-text-tertiary">
+                Сгенерировано {new Date(c.generatedAt).toLocaleString("ru")}
+                {c.sourceSha ? ` · ${c.sourceSha.slice(0, 8)}` : ""}
+              </div>
+            </li>
+          ))}
         </ul>
       )}
     </section>

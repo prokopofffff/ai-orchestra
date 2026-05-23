@@ -168,6 +168,7 @@ describe("session-context", () => {
             description: "Shared tokens and components",
             absolutePath: "/workspace/design-system",
             readmeExcerpt: "# Design System\nShared button + form styles.",
+            cards: [],
           },
         ],
       });

@@ -2,5 +2,6 @@ packages:
   - orchestra-core
   - mcp-tools/signal-tool
   - mcp-tools/task-tool
+  - mcp-tools/reference-tool
   - dashboard
   - shared

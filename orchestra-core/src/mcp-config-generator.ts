@@ -38,14 +38,18 @@ const MCP_TOOLS_ROOT = (() => {
   return candidates[0]; // best guess — fails loudly via init-log status
 })();
 
-// Which MCP tools each role gets
+// Which MCP tools each role gets. reference-tool is included for every role
+// — it's read-only (backend enforces the ACL); irrelevant for roles in
+// projects with no referenceProjects configured (the tools just return
+// "no references" and add no run-cost). Easier than per-role gating which
+// would surprise users who later link a project for the qa/devops agent.
 const roleTools: Record<AgentRole, string[]> = {
-  "tech-lead": ["signal-tool", "task-tool"],
-  designer: ["signal-tool", "task-tool"],
-  frontend: ["signal-tool", "task-tool"],
-  backend: ["signal-tool", "task-tool"],
-  qa: ["signal-tool", "task-tool"],
-  devops: ["signal-tool", "task-tool"],
+  "tech-lead": ["signal-tool", "task-tool", "reference-tool"],
+  designer: ["signal-tool", "task-tool", "reference-tool"],
+  frontend: ["signal-tool", "task-tool", "reference-tool"],
+  backend: ["signal-tool", "task-tool", "reference-tool"],
+  qa: ["signal-tool", "task-tool", "reference-tool"],
+  devops: ["signal-tool", "task-tool", "reference-tool"],
 };
 
 // Pencil MCP is loaded automatically via Claude Code plugin (frontend-design@claude-plugins-official).

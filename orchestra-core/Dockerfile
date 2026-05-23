@@ -27,6 +27,7 @@ COPY orchestra-core/package.json orchestra-core/package.json
 COPY dashboard/package.json dashboard/package.json
 COPY mcp-tools/signal-tool/package.json mcp-tools/signal-tool/package.json
 COPY mcp-tools/task-tool/package.json mcp-tools/task-tool/package.json
+COPY mcp-tools/reference-tool/package.json mcp-tools/reference-tool/package.json
 
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
@@ -62,6 +63,7 @@ COPY shared/package.json shared/package.json
 COPY orchestra-core/package.json orchestra-core/package.json
 COPY mcp-tools/signal-tool/package.json mcp-tools/signal-tool/package.json
 COPY mcp-tools/task-tool/package.json mcp-tools/task-tool/package.json
+COPY mcp-tools/reference-tool/package.json mcp-tools/reference-tool/package.json
 RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store \
     pnpm install --frozen-lockfile --prod --filter='!dashboard'
 
@@ -74,6 +76,7 @@ COPY shared/src shared/src
 # Built JS for mcp-tools (spawned as stdio child processes by node, not tsx).
 COPY --from=builder /workspace/mcp-tools/signal-tool/dist mcp-tools/signal-tool/dist
 COPY --from=builder /workspace/mcp-tools/task-tool/dist mcp-tools/task-tool/dist
+COPY --from=builder /workspace/mcp-tools/reference-tool/dist mcp-tools/reference-tool/dist
 
 # Built dashboard, served as static by orchestra-core (DASHBOARD_PATH env).
 COPY --from=builder /workspace/dashboard/dist dashboard

@@ -250,13 +250,15 @@ export function formatBootstrapPrompt(ctx: BootstrapContext): string {
     lines.push(`## Reference projects (read-only)`);
     lines.push(
       "Inspect these for context only — examples of conventions, prior decisions, " +
-      "or code you're being asked to draw from. Use the standard `Read` / `Grep` " +
-      "tools against the absolute paths below. **Do not modify any file outside " +
-      "your own workspace.**",
+      "or code you're being asked to draw from. **Prefer the `mcp__orchestra-reference__*` " +
+      "tools** (`list_reference_projects`, `list_reference_files`, `read_reference_file`, " +
+      "`grep_reference`) — they enforce per-call ACLs and survive any future sandbox " +
+      "tightening. The standard `Read` / `Grep` tools also work against the absolute paths " +
+      "below as a fallback. **Do not modify any file outside your own workspace.**",
     );
     lines.push("");
     for (const r of ctx.references) {
-      lines.push(`### ${r.name} — \`${r.absolutePath}\``);
+      lines.push(`### ${r.name} — \`${r.absolutePath}\` (id: \`${r.id}\`)`);
       if (r.description) lines.push(r.description);
       if (r.readmeExcerpt) {
         lines.push("");

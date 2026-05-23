@@ -56,3 +56,36 @@ services:
       - ./prompts:/workspace/prompts
       - ./templates:/workspace/templates
     # Inherits the Dockerfile dev-stage CMD (`tsx watch src/index.ts`).
+
+  # Vite dev server with HMR — runs in a container so `pnpm dev` is a
+  # single command. Re-uses the same `deps` Dockerfile stage (pnpm
+  # workspace already installed dashboard's deps there), bind-mounts
+  # the source files Vite watches, and proxies `/api` to the
+  # orchestra-core service over the Docker network. The browser hits
+  # http://localhost:5173 on the host.
+  dashboard:
+    build:
+      context: .
+      dockerfile: orchestra-core/Dockerfile
+      target: deps
+    working_dir: /workspace/dashboard
+    command: ["pnpm", "exec", "vite", "--host", "0.0.0.0", "--port", "5173"]
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      # Vite reads this at startup; lets us change the API target without
+      # touching vite.config.ts. Default points at the orchestra-core
+      # service over the docker network.
+      VITE_API_PROXY: http://orchestra-core:3000
+    ports:
+      - "5173:5173"
+    volumes:
+      # Only the source + config files Vite touches. node_modules stays
+      # the image's (pnpm symlinks would break if the host's copy
+      # overlaid them — symlinks point at .pnpm/ in the workspace root).
+      - ./dashboard/src:/workspace/dashboard/src
+      - ./dashboard/index.html:/workspace/dashboard/index.html
+      - ./dashboard/vite.config.ts:/workspace/dashboard/vite.config.ts
+      - ./dashboard/tsconfig.json:/workspace/dashboard/tsconfig.json
+      - ./shared/src:/workspace/shared/src
+    depends_on:
+      - orchestra-core

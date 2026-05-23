@@ -5,8 +5,14 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    // Allow non-localhost hosts when Vite runs inside Docker — without
+    // this Vite 5 blocks requests whose Host header isn't allowlisted.
+    host: true,
     proxy: {
-      "/api": "http://localhost:3000",
+      // VITE_API_PROXY lets docker-compose.dev.yml point Vite at the
+      // orchestra-core service over the docker network. Falls back to
+      // localhost:3000 for the host-tsx ("legacy") dev path.
+      "/api": process.env.VITE_API_PROXY ?? "http://localhost:3000",
     },
   },
   build: {

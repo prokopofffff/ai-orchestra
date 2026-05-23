@@ -50,14 +50,14 @@ export const conversationPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.projectId;
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const query_ = request.query as Record<string, string>;
     const limit = Math.min(Number(query_.limit) || 50, 200);
     const before = query_.before;
 
     const convId = await conversationIdFor(projectId);
-    if (!convId) return reply.code(404).send({ error: "No conversation for this project" });
+    if (!convId) return reply.code(404).send({ error: "У этого проекта нет беседы" });
 
     const conds = [eq(messages.conversationId, convId)];
     if (before) conds.push(lt(messages.createdAt, new Date(before)));
@@ -83,7 +83,7 @@ export const conversationPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.projectId;
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const db = getDb();
 
@@ -137,7 +137,7 @@ export const conversationPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.projectId;
     if (!(await userCanEditProject(userId, projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions on project" });
+      return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
     }
     const stopped = await interruptTechLead(projectId);
     return { stopped };
@@ -149,7 +149,7 @@ export const conversationPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.projectId;
     if (!(await userCanEditProject(userId, projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions on project" });
+      return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
     }
     const body = z.object({
       text: z.string().min(1),
@@ -159,7 +159,7 @@ export const conversationPlugin: FastifyPluginAsync = async (app) => {
     }).parse(request.body);
 
     const convId = await conversationIdFor(projectId);
-    if (!convId) return reply.code(404).send({ error: "No conversation for this project" });
+    if (!convId) return reply.code(404).send({ error: "У этого проекта нет беседы" });
 
     const [row] = await getDb()
       .insert(messages)

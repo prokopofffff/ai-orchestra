@@ -22,17 +22,17 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: { projectId: string } }>("/usage/today", async (request, reply) => {
     const userId = currentUserId(request);
     const projectId = request.query.projectId;
-    if (!projectId) return reply.code(400).send({ error: "projectId required" });
+    if (!projectId) return reply.code(400).send({ error: "Обязательное поле: projectId" });
 
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const [row] = await getDb()
       .select({ settings: projects.settings })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
-    if (!row) return reply.code(404).send({ error: "Project not found" });
+    if (!row) return reply.code(404).send({ error: "Проект не найден" });
 
     const breakdown = await getDailyCostBreakdown(projectId);
     const cap = resolveDailyCostCap(row.settings);
@@ -52,7 +52,7 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
     const opts = parsed.data;
 
     if (opts.projectId && !(await userCanAccessProject(userId, opts.projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const visible = opts.projectId ? [opts.projectId] : await visibleProjectIds(userId);
     if (!visible.length) return { total: 0, rows: [] };
@@ -69,14 +69,14 @@ export const usagePlugin: FastifyPluginAsync = async (app) => {
     const projectId = request.query.projectId;
     const days = Number(request.query.days ?? 7);
     if (!Number.isFinite(days) || days < 1) {
-      return reply.code(400).send({ error: "days must be a positive integer" });
+      return reply.code(400).send({ error: "Параметр days должен быть положительным целым числом" });
     }
     if (projectId && !/^[0-9a-f-]{36}$/i.test(projectId)) {
-      return reply.code(400).send({ error: "projectId must be a UUID" });
+      return reply.code(400).send({ error: "Параметр projectId должен быть UUID" });
     }
     if (projectId) {
       if (!(await userCanAccessProject(userId, projectId))) {
-        return reply.code(404).send({ error: "Project not found" });
+        return reply.code(404).send({ error: "Проект не найден" });
       }
       const series = await getDailyCostSeries({ projectId, days });
       return { days: series };

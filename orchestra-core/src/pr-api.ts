@@ -23,8 +23,8 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
       "SELECT repo_url FROM projects WHERE id = $1",
       [body.projectId],
     );
-    if (!projRows.length) return reply.code(404).send({ error: "Project not found" });
-    if (!projRows[0].repo_url) return reply.code(400).send({ error: "Project has no repository URL" });
+    if (!projRows.length) return reply.code(404).send({ error: "Проект не найден" });
+    if (!projRows[0].repo_url) return reply.code(400).send({ error: "У проекта не указан URL репозитория" });
 
     let provider;
     try {
@@ -53,7 +53,7 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
           const violations = checkFilesScope(agentRole as AgentRole, files);
           if (violations.length > 0) {
             return reply.code(403).send({
-              error: "Scope violation: PR contains out-of-scope files",
+              error: "Нарушение области ответственности: PR содержит файлы вне зоны ответственности агента",
               violations: formatViolations(agentRole as AgentRole, violations),
             });
           }
@@ -104,7 +104,7 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
 
   app.post("/pr/diff", async (request, reply) => {
     const { prUrl, projectId } = request.body as { prUrl?: string; projectId?: string };
-    if (!prUrl || !projectId) return reply.code(400).send({ error: "prUrl and projectId required" });
+    if (!prUrl || !projectId) return reply.code(400).send({ error: "Обязательные поля: prUrl и projectId" });
 
     const provider = await providerForProject(projectId);
     const diff = await provider.getPRDiff(prUrl);
@@ -121,7 +121,7 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
       body: string;
       comments?: Array<{ path: string; line: number; body: string }>;
     };
-    if (!body.projectId || !body.prUrl) return reply.code(400).send({ error: "projectId and prUrl required" });
+    if (!body.projectId || !body.prUrl) return reply.code(400).send({ error: "Обязательные поля: projectId и prUrl" });
 
     const provider = await providerForProject(body.projectId);
     const result = await provider.submitReview({
@@ -137,7 +137,7 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
 
   app.post("/pr/reviews", async (request, reply) => {
     const { prUrl, projectId } = request.body as { prUrl?: string; projectId?: string };
-    if (!prUrl || !projectId) return reply.code(400).send({ error: "prUrl and projectId required" });
+    if (!prUrl || !projectId) return reply.code(400).send({ error: "Обязательные поля: prUrl и projectId" });
 
     const provider = await providerForProject(projectId);
     const payload = await provider.getReviews(prUrl);

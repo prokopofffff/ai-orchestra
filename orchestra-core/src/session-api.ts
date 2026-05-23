@@ -22,7 +22,7 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const q = (request.query as Record<string, string>).projectId;
     if (q && !(await userCanAccessProject(userId, q))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const visible = q ? [q] : await visibleProjectIds(userId);
     if (!visible.length) return [];
@@ -43,7 +43,7 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const session = await getSession(request.params.id);
     if (!session || !(await userCanAccessProject(userId, session.projectId))) {
-      return reply.code(404).send({ error: "Session not found" });
+      return reply.code(404).send({ error: "Сессия не найдена" });
     }
     return session;
   });
@@ -60,7 +60,7 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
     }).parse(request.body);
 
     if (!(await userCanEditProject(userId, body.projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions on project" });
+      return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
     }
 
     const config = loadConfig();
@@ -89,10 +89,10 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const session = await getSession(request.params.id);
     if (!session || !(await userCanAccessProject(userId, session.projectId))) {
-      return reply.code(404).send({ error: "Session not found" });
+      return reply.code(404).send({ error: "Сессия не найдена" });
     }
     if (!(await userCanEditProject(userId, session.projectId))) {
-      return reply.code(403).send({ error: "Insufficient permissions" });
+      return reply.code(403).send({ error: "Недостаточно прав" });
     }
 
     // Mid-flight SDK runs can't be killed via PID (they're in-process).
@@ -112,7 +112,7 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
       const userId = currentUserId(request);
       const session = await getSession(request.params.id);
       if (!session || !(await userCanAccessProject(userId, session.projectId))) {
-        return reply.code(404).send({ error: "Session not found" });
+        return reply.code(404).send({ error: "Сессия не найдена" });
       }
     }
     await updateHeartbeat(request.params.id);

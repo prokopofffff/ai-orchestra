@@ -56,7 +56,7 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
     );
     if (existing.length) {
       return reply.code(409).send({
-        error: existing[0].field === "email" ? "Email already in use" : "Username already taken",
+        error: existing[0].field === "email" ? "Этот email уже используется" : "Это имя пользователя уже занято",
       });
     }
 
@@ -100,10 +100,10 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
        WHERE lower(email) = lower($1)`,
       [body.email],
     );
-    if (!rows.length) return reply.code(401).send({ error: "Invalid email or password" });
+    if (!rows.length) return reply.code(401).send({ error: "Неверный email или пароль" });
 
     const valid = await verifyPassword(body.password, rows[0].password_hash);
-    if (!valid) return reply.code(401).send({ error: "Invalid email or password" });
+    if (!valid) return reply.code(401).send({ error: "Неверный email или пароль" });
 
     const user = toUser(rows[0]);
     const token = await reply.jwtSign({ id: user.id, email: user.email, username: user.username });
@@ -125,7 +125,7 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
     );
     if (!rows.length) {
       reply.clearCookie(SESSION_COOKIE, { path: "/" });
-      return reply.code(401).send({ error: "Unauthorized" });
+      return reply.code(401).send({ error: "Не авторизован" });
     }
     return toUser(rows[0]);
   });

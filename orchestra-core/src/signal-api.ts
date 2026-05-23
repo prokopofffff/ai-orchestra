@@ -50,7 +50,7 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
       const userId = currentUserId(request);
       if (!(await userCanEditProject(userId, signal.projectId))) {
         await logAudit(signal, "rejected", "no project access");
-        return reply.code(403).send({ error: "Insufficient permissions on project" });
+        return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
       }
     }
 
@@ -309,7 +309,7 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
     const unreadOnly = q.unread === "true";
 
     if (q.projectId && !(await userCanAccessProject(userId, q.projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
     const visible = q.projectId ? [q.projectId] : await visibleProjectIds(userId);
     if (!visible.length) return [];
@@ -382,7 +382,7 @@ async function listAudit(
   const limit = Math.min(Number(q.limit) || 50, 200);
 
   if (q.projectId && !(await userCanAccessProject(userId, q.projectId))) {
-    return reply.code(404).send({ error: "Project not found" });
+    return reply.code(404).send({ error: "Проект не найден" });
   }
   const visible = q.projectId ? [q.projectId] : await visibleProjectIds(userId);
   if (!visible.length) return [];

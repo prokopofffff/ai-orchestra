@@ -24,7 +24,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanAccessProject(userId, projectId))) {
-      return reply.code(404).send({ error: "Project not found" });
+      return reply.code(404).send({ error: "Проект не найден" });
     }
 
     const db = getDb();
@@ -33,7 +33,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
-    if (!proj) return reply.code(404).send({ error: "Project not found" });
+    if (!proj) return reply.code(404).send({ error: "Проект не найден" });
 
     // Members + their basic user info. Owner returned alongside as a
     // synthetic role="owner" entry so the UI doesn't need a second fetch.
@@ -75,7 +75,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
     const userId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanAdminProject(userId, projectId))) {
-      return reply.code(403).send({ error: "Only project owner/admin can invite" });
+      return reply.code(403).send({ error: "Только владелец или администратор проекта может приглашать" });
     }
     const body = inviteSchema.parse(request.body);
     const ident = body.identifier.trim().toLowerCase();
@@ -86,13 +86,13 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
       .from(users)
       .where(sql`lower(${users.email}) = ${ident} OR lower(${users.username}) = ${ident}`)
       .limit(1);
-    if (!target) return reply.code(404).send({ error: "User not found" });
+    if (!target) return reply.code(404).send({ error: "Пользователь не найден" });
 
     // Don't add the owner as a member — they already have full access via
     // owner_id, a member row would be a no-op duplicate of state.
     const role = await getProjectRole(target.id, projectId);
     if (role === "owner") {
-      return reply.code(400).send({ error: "User is already the project owner" });
+      return reply.code(400).send({ error: "Этот пользователь уже является владельцем проекта" });
     }
 
     await db
@@ -115,7 +115,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
     const callerId = currentUserId(request);
     const projectId = request.params.id;
     if (!(await userCanAdminProject(callerId, projectId))) {
-      return reply.code(403).send({ error: "Only project owner/admin can change roles" });
+      return reply.code(403).send({ error: "Только владелец или администратор проекта может изменять роли" });
     }
     const body = roleSchema.parse(request.body);
     const db = getDb();
@@ -127,7 +127,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
         eq(projectMembers.userId, request.params.userId),
       ))
       .returning();
-    if (!row) return reply.code(404).send({ error: "Membership not found" });
+    if (!row) return reply.code(404).send({ error: "Членство не найдено" });
     return row;
   });
 
@@ -138,7 +138,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
 
     // Self-removal is fine: any member can leave a project. Otherwise admin only.
     if (callerId !== targetUserId && !(await userCanAdminProject(callerId, projectId))) {
-      return reply.code(403).send({ error: "Only project owner/admin can remove members" });
+      return reply.code(403).send({ error: "Только владелец или администратор проекта может удалять участников" });
     }
     const db = getDb();
     const r = await db
@@ -148,7 +148,7 @@ export const membersPlugin: FastifyPluginAsync = async (app) => {
         eq(projectMembers.userId, targetUserId),
       ));
     if (!(r as { rowCount?: number }).rowCount) {
-      return reply.code(404).send({ error: "Membership not found" });
+      return reply.code(404).send({ error: "Членство не найдено" });
     }
     return { removed: true };
   });

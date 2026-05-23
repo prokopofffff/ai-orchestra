@@ -312,11 +312,27 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
   }
 
   async function submitCode() {
-    if (!loginSession || !pasteCode.trim()) return;
+    if (!loginSession) return;
+    // Tolerate the user pasting the whole callback URL by mistake — most
+    // browsers' address bar is the easiest thing to copy from the
+    // `platform.claude.com/oauth/code/callback?code=…` page. Extract the
+    // `code` query param when we see one. Otherwise treat the input as
+    // the bare code Claude expects.
+    const raw = pasteCode.trim();
+    if (!raw) return;
+    let code = raw;
+    try {
+      if (raw.startsWith("http")) {
+        const params = new URL(raw).searchParams;
+        const c = params.get("code");
+        if (c) code = c;
+      }
+    } catch { /* leave raw as-is */ }
+
     setSubmittingCode(true);
     setStatus(null);
     try {
-      await api.submitProviderLoginCode(project.id, "claude", loginSession.sessionId, pasteCode.trim());
+      await api.submitProviderLoginCode(project.id, "claude", loginSession.sessionId, code);
       setStatus("Код отправлен — ждём подтверждения от Claude…");
       // Status poll will flip loggedIn → true once CLI writes creds.
     } catch (e) {
@@ -391,36 +407,65 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
             </Button>
           )}
           {loginSession && (
-            <div className="flex flex-col gap-2 p-3 border border-border rounded bg-surface-secondary">
-              <p className="text-xs text-text-secondary">
-                1. Перейдите по{" "}
-                <a href={loginSession.url} target="_blank" rel="noopener noreferrer" className="underline">
-                  ссылке
-                </a>{" "}и авторизуйтесь в Claude.
-              </p>
-              <p className="text-xs text-text-secondary">
-                2. Скопируйте код, который выдаст claude.com, и вставьте его сюда:
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  className={INPUT}
-                  type="text"
-                  value={pasteCode}
-                  onChange={(e) => setPasteCode(e.target.value)}
-                  placeholder="вставьте код от claude.com"
-                  autoComplete="off"
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitCode(); } }}
-                />
-                <Button
-                  variant="primary-red"
-                  size="sm"
-                  type="button"
-                  onClick={submitCode}
-                  disabled={submittingCode || !pasteCode.trim()}
-                >
-                  {submittingCode ? "Отправка…" : "Подтвердить"}
-                </Button>
+            <div className="flex flex-col gap-4 p-4 border-2 border-accent-blue/40 bg-accent-blue/5">
+              <div className="flex items-baseline gap-2">
+                <span className="text-[10px] uppercase tracking-wider font-semibold text-accent-blue">
+                  Авторизация Claude · 2 шага
+                </span>
               </div>
+
+              {/* Step 1 */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-5 h-5 bg-accent-blue text-white text-[11px] font-bold rounded-full shrink-0">1</span>
+                  <span className="text-xs font-semibold text-text-primary">Откройте ссылку и авторизуйтесь</span>
+                </div>
+                <a
+                  href={loginSession.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-accent-blue underline break-all pl-7"
+                >
+                  {loginSession.url}
+                </a>
+              </div>
+
+              {/* Step 2 — visually loud because this is the step users miss */}
+              <div className="flex flex-col gap-2 p-3 bg-bg-surface border border-border">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-5 h-5 bg-accent-red text-white text-[11px] font-bold rounded-full shrink-0">2</span>
+                  <span className="text-xs font-semibold text-text-primary">
+                    Скопируйте код с открывшейся страницы и вставьте сюда
+                  </span>
+                </div>
+                <p className="text-[11px] text-text-secondary pl-7">
+                  После авторизации claude.com перенаправит вас на <code>platform.claude.com/oauth/code/callback</code>.
+                  На этой странице — короткий код. Скопируйте его (или сам адрес страницы целиком — мы вытащим код)
+                  и вставьте в поле ниже. <strong>Без этого шага orchestra не получит токен.</strong>
+                </p>
+                <div className="flex items-center gap-2 pl-7">
+                  <input
+                    className={INPUT}
+                    type="text"
+                    value={pasteCode}
+                    onChange={(e) => setPasteCode(e.target.value)}
+                    placeholder="вставьте код или URL c platform.claude.com"
+                    autoComplete="off"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitCode(); } }}
+                  />
+                  <Button
+                    variant="primary-red"
+                    size="sm"
+                    type="button"
+                    onClick={submitCode}
+                    disabled={submittingCode || !pasteCode.trim()}
+                  >
+                    {submittingCode ? "Отправка…" : "Подтвердить"}
+                  </Button>
+                </div>
+              </div>
+
               <Button variant="secondary" size="sm" type="button" onClick={cancelLogin}>
                 Отменить
               </Button>

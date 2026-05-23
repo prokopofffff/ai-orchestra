@@ -1,0 +1,58 @@
+# Local dev override — keeps prod's docker-compose.yml as the source of
+# truth and only changes what dev needs different:
+#
+#   - Build the `dev` Dockerfile stage instead of `runtime` (no source
+#     COPY; that comes from bind mounts below so host edits hot-reload).
+#   - Bind-mount source dirs from the host into /workspace so tsx watch
+#     sees changes immediately.
+#   - Pre-build mcp-tools dist/ on startup so the first agent spawn finds
+#     `node mcp-tools/*/dist/index.js`. Mounted source means rebuilding
+#     when those tools change is the dev's job (`pnpm -r build`).
+#   - Polling file-watch (CHOKIDAR_USEPOLLING) — VirtioFS on Mac handles
+#     inotify well in newer Docker Desktops, but polling is the safe
+#     default across Mac/Linux/WSL.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   (or just `pnpm dev` — the root package.json wraps this.)
+#
+# The dashboard isn't dockerized in dev. Vite's HMR + browser dev-tools
+# round-trip is enough faster on the host that it earns the small
+# divergence — and Vite already proxies /api → :3000 which forwards into
+# the orchestra-core container thanks to the port mapping below.
+
+services:
+  orchestra-core:
+    build:
+      context: .
+      dockerfile: orchestra-core/Dockerfile
+      target: dev
+    # Override prod env where dev needs different shape — keep everything
+    # else inherited from docker-compose.yml.
+    environment:
+      NODE_ENV: development
+      # Polling is the cross-platform safe default for file watch over a
+      # bind mount. Drop this once everyone's on Docker Desktop ≥ 4.6
+      # (VirtioFS by default) and we've confirmed native inotify works.
+      CHOKIDAR_USEPOLLING: "true"
+      # Pino-pretty for human-readable logs while developing. Drops back
+      # to JSON in prod (NODE_ENV != development).
+      LOG_PRETTY: "true"
+    # Bind-mount source dirs so tsx watch picks up host edits. Do NOT
+    # mount node_modules — they're installed in the image at the deps
+    # stage and host/container OS mismatches (esp. native modules) would
+    # break the install otherwise.
+    #
+    # Only orchestra-core src + tsconfig + shared src are mounted because
+    # those are what tsx watches. mcp-tools is pre-built into the image
+    # (see Dockerfile `dev` stage) — editing an mcp-tool needs a `pnpm
+    # dev` re-run, but they change rarely. prompts/templates are mounted
+    # because role-definitions / session-context resolve them at runtime
+    # via process.cwd().
+    volumes:
+      - ./orchestra-core/src:/workspace/orchestra-core/src
+      - ./orchestra-core/tsconfig.json:/workspace/orchestra-core/tsconfig.json
+      - ./shared/src:/workspace/shared/src
+      - ./prompts:/workspace/prompts
+      - ./templates:/workspace/templates
+    # Inherits the Dockerfile dev-stage CMD (`tsx watch src/index.ts`).

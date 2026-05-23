@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -126,12 +127,24 @@ async function main() {
   await app.register(contextCardsPlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
+  // Skip when the directory is missing — dev runs with Vite on the host
+  // (proxying /api into this container), so the orchestra-core image
+  // doesn't bake a dashboard build in. fastifyStatic.register would
+  // throw on a non-existent root, killing the dev container at startup.
   const dashboardRoot = path.resolve(config.dashboardPath);
-  await app.register(fastifyStatic, { root: dashboardRoot });
+  const dashboardAvailable = fs.existsSync(dashboardRoot);
+  if (dashboardAvailable) {
+    await app.register(fastifyStatic, { root: dashboardRoot });
+  } else {
+    log.warn({ dashboardRoot }, "dashboard dir not found — skipping static + SPA fallback (dev?)");
+  }
 
-  // SPA fallback — serve index.html for non-API routes
+  // SPA fallback — serve index.html for non-API routes, but only if the
+  // dashboard was registered above. Otherwise 404 the route — there's no
+  // file to fall back to.
   app.setNotFoundHandler(async (request, reply) => {
     if (request.url.startsWith("/api")) return reply.code(404).send({ error: "не найдено" });
+    if (!dashboardAvailable) return reply.code(404).send({ error: "Dashboard not served — start Vite on host" });
     return reply.sendFile("index.html");
   });
 

@@ -39,6 +39,18 @@ export async function userCanAccessProject(userId: string, projectId: string): P
   return (await getProjectRole(userId, projectId)) !== null;
 }
 
+/**
+ * Permission to LINK a project as a context reference from another project.
+ * Read access (any membership level) is enough — a viewer can show their
+ * project as inspiration material to a project they edit. Distinct from
+ * userCanAccessProject only by intent: call this at the call site that
+ * checks "can I add this as a referenceProjects entry?" so future tightening
+ * (e.g. requiring editor instead of viewer) has one place to change.
+ */
+export async function userCanReferenceProject(userId: string, projectId: string): Promise<boolean> {
+  return userCanAccessProject(userId, projectId);
+}
+
 export async function userCanEditProject(userId: string, projectId: string): Promise<boolean> {
   const role = await getProjectRole(userId, projectId);
   return role === "owner" || role === "admin" || role === "editor";

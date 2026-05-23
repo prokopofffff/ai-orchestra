@@ -49,6 +49,7 @@ export default function Settings() {
           <div className="flex flex-col">
             <ProjectTab project={project} onSaved={refresh} />
             <ProjectIntroSection project={project} />
+            <ProjectReferencesSection project={project} onSaved={refresh} />
             <ProjectClaudeSection project={project} onSaved={refresh} />
             <ProjectCodexSection project={project} onSaved={refresh} />
             <ProjectGitTokenSection project={project} onSaved={refresh} />
@@ -975,6 +976,114 @@ function ProjectIntroSection({ project }: { project: Project }) {
           Сканирование ещё не запускалось. Нажмите <code>Сканировать</code>, чтобы Tech Lead
           осмотрел репозиторий.
         </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * "Reference projects" — other projects the agents in this one may READ for
+ * context (conventions, prior decisions, etc.). Persisted to
+ * `settings.referenceProjects`. The backend re-checks access at each spawn
+ * and silently drops links whose target the project owner no longer reaches.
+ */
+function ProjectReferencesSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  const { data: allProjects } = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.fetchProjects,
+  });
+  const initial = ((project.settings as { referenceProjects?: string[] }).referenceProjects ?? []);
+  const [selected, setSelected] = useState<string[]>(initial);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelected(((project.settings as { referenceProjects?: string[] }).referenceProjects ?? []));
+  }, [project]);
+
+  // Candidates = every other project the current user can see. We can't link
+  // to ourselves, and we filter the current project out client-side so the
+  // list doesn't show it.
+  const candidates = (allProjects ?? []).filter((p) => p.id !== project.id);
+  const selectedSet = new Set(selected);
+
+  function toggle(id: string): void {
+    setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await api.updateProject(project.id, {
+        settings: {
+          ...project.settings,
+          referenceProjects: selected,
+        },
+      } as Partial<Project>);
+      setStatus("Сохранено");
+      onSaved();
+    } catch (e) {
+      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const dirty = selected.length !== initial.length
+    || selected.some((id, i) => id !== initial[i]);
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-semibold text-text-primary">Референс-проекты</h3>
+          <p className="text-xs text-text-secondary">
+            Проекты, которые агенты этого проекта могут читать для контекста — конвенции,
+            архитектурные решения, примеры. Пути добавляются в системный промпт как
+            <em> read-only</em>: изменять файлы вне своего workspace агентам запрещено.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 pt-1">
+          {status && <span className="text-xs text-text-tertiary">{status}</span>}
+          <Button variant="primary-red" size="sm" onClick={save} disabled={saving || !dirty}>
+            {saving ? "Сохранение…" : "Сохранить"}
+          </Button>
+        </div>
+      </div>
+
+      {candidates.length === 0 ? (
+        <div className="text-xs text-text-tertiary">
+          Других доступных проектов нет — создайте ещё один проект, чтобы его можно было
+          подключить как референс.
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-1.5 border border-border-subtle">
+          {candidates.map((p) => {
+            const checked = selectedSet.has(p.id);
+            return (
+              <li key={p.id}>
+                <label className="flex items-center gap-3 px-3 py-2 hover:bg-bg-hover/40 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(p.id)}
+                    className="accent-accent-red"
+                  />
+                  <span className="flex-1 min-w-0 flex items-baseline gap-2">
+                    <span className="text-sm text-text-primary truncate">{p.name}</span>
+                    <code className="text-[11px] text-text-tertiary truncate">{p.slug}</code>
+                  </span>
+                  {p.localPath && (
+                    <code className="text-[11px] text-text-tertiary truncate max-w-[240px]" title={p.localPath}>
+                      {p.localPath}
+                    </code>
+                  )}
+                </label>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </section>
   );

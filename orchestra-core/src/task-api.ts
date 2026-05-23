@@ -11,7 +11,7 @@ import { notify } from "./notification-hub";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
 import { currentUserId } from "./auth";
 import {
-  userCanAccessProject, userCanEditProject,
+  userCanAccessProject, userCanEditProject, userCanReferenceProject,
   visibilityFilter, visibleProjectIds, projectIdOf,
 } from "./project-access";
 import { createIntroTask } from "./intro-task";
@@ -169,6 +169,30 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
           });
         }
       }
+    }
+
+    // Reference projects: every UUID in settings.referenceProjects must be a
+    // project the current user can actually read. Without this check, a
+    // user could leak file contents from a project they can't see by linking
+    // it as a reference, since the bootstrap injector reads files at
+    // dispatch time. Self-references are disallowed (pointless + would
+    // recurse on future card features).
+    if (body.settings && Array.isArray((body.settings as { referenceProjects?: unknown }).referenceProjects)) {
+      const refs = ((body.settings as { referenceProjects: unknown[] }).referenceProjects)
+        .filter((x): x is string => typeof x === "string");
+      const deduped = Array.from(new Set(refs));
+      if (deduped.includes(request.params.id)) {
+        return reply.code(400).send({ error: "Проект не может ссылаться сам на себя" });
+      }
+      for (const refId of deduped) {
+        if (!(await userCanReferenceProject(userId, refId))) {
+          return reply.code(403).send({
+            error: `Нет доступа к проекту ${refId} — нельзя добавить его как референс`,
+          });
+        }
+      }
+      // Normalize stored value (dedupe applied above).
+      (body.settings as { referenceProjects: string[] }).referenceProjects = deduped;
     }
 
     const updates: Record<string, unknown> = {};

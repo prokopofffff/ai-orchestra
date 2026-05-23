@@ -177,6 +177,20 @@ export const ProjectSettingsSchema = z.object({
    * notification and merges manually via the provider's UI.
    */
   autoMerge: z.boolean().optional(),
+  /**
+   * Other project IDs the agents in this project may read for context (e.g.
+   * "build a new app following the conventions of projects X and Y"). The
+   * bootstrap prompt lists their absolute workspace paths so the agent can
+   * grep / read them via the normal Read tool; writes outside the agent's
+   * own workspace are still disallowed by the system prompt and (where
+   * configured) by sandbox/scope-hook layers.
+   *
+   * Linkage is validated at PATCH time — the caller must have access to
+   * every referenced project. Revocations are re-checked at each spawn:
+   * inaccessible refs are silently dropped and a system message is posted
+   * so the user notices the link is dead.
+   */
+  referenceProjects: z.array(z.string().uuid()).optional(),
 }).catchall(z.unknown());
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

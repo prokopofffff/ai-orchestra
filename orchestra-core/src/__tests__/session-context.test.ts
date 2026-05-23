@@ -123,6 +123,7 @@ describe("session-context", () => {
         pendingSignals: [{ from: "tech-lead", action: "answer", message: "Use bcrypt" }],
         currentTasks: [],
         lastSummary: null,
+        references: [],
       });
 
       expect(prompt).toContain("Pending Signals");
@@ -140,11 +141,42 @@ describe("session-context", () => {
         pendingSignals: [],
         currentTasks: [],
         lastSummary: null,
+        references: [],
       });
 
       expect(prompt).not.toContain("Pending Signals");
       expect(prompt).not.toContain("Project Tasks");
       expect(prompt).not.toContain("Previous Session Summary");
+      expect(prompt).not.toContain("Reference projects");
+    });
+
+    it("renders reference projects when populated", () => {
+      const prompt = formatBootstrapPrompt({
+        role: "tech-lead",
+        projectName: "Test",
+        taskTitle: null,
+        taskDescription: null,
+        acceptanceCriteria: null,
+        pendingSignals: [],
+        currentTasks: [],
+        lastSummary: null,
+        references: [
+          {
+            id: "00000000-0000-0000-0000-000000000001",
+            slug: "design-system",
+            name: "Design System",
+            description: "Shared tokens and components",
+            absolutePath: "/workspace/design-system",
+            readmeExcerpt: "# Design System\nShared button + form styles.",
+          },
+        ],
+      });
+
+      expect(prompt).toContain("## Reference projects (read-only)");
+      expect(prompt).toContain("Design System");
+      expect(prompt).toContain("/workspace/design-system");
+      expect(prompt).toContain("Shared button + form styles");
+      expect(prompt).toContain("Do not modify any file outside your own workspace");
     });
   });
 });

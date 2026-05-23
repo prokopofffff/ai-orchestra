@@ -135,9 +135,9 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
     if (params.provider !== "claude") {
       return reply.code(400).send({ error: "Этот провайдер не использует paste-режим" });
     }
-    const ok = submitProviderLoginCode(params.sessionId, body.code);
-    if (!ok) {
-      return reply.code(404).send({ error: "Сессия логина не найдена или уже завершена" });
+    const result = submitProviderLoginCode(params.sessionId, body.code);
+    if (!result.ok) {
+      return reply.code(404).send({ error: result.reason });
     }
     return { ok: true };
   });

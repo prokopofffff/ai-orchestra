@@ -391,6 +391,10 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
         </select>
       </Field>
 
+      {!claudeStatus?.loggedIn && claudeStatus?.hostHint && (
+        <HostCredsHint hint={claudeStatus.hostHint} kind="claude" />
+      )}
+
       {auth === "max" && (
         <div className="flex flex-col gap-2">
           {!loginSession && (
@@ -632,6 +636,10 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
           <option value="api">API-ключ — оплата по токенам (от platform.openai.com)</option>
         </select>
       </Field>
+
+      {!codexStatus?.loggedIn && codexStatus?.hostHint && (
+        <HostCredsHint hint={codexStatus.hostHint} kind="codex" />
+      )}
 
       {auth === "subscription" && (
         <div className="flex flex-col gap-2">
@@ -1692,6 +1700,63 @@ function SystemTab() {
           />
         </Field>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Surfaces what orchestra-core actually found at `~/.<provider>/<file>`
+ * when the user picked "(наследовать)" but the badge stays "не настроено".
+ * Never displays the token itself — only structural facts (existence,
+ * parse errors, which schema branches passed/failed).
+ */
+function HostCredsHint({ hint, kind }: { hint: api.HostHint; kind: "claude" | "codex" }) {
+  const expectedFlags = kind === "claude"
+    ? [
+        { label: "claudeAiOauth.accessToken", value: hint.hasOauthAccessToken },
+        { label: "accessToken (top-level)", value: hint.hasTopLevelAccessToken },
+        { label: "apiKey", value: hint.hasApiKey },
+      ]
+    : [
+        { label: "OPENAI_API_KEY", value: hint.hasOpenAiKey },
+        { label: "tokens.access_token / id_token", value: hint.hasCodexTokens },
+      ];
+  const anyValid = expectedFlags.some((f) => f.value);
+
+  const status = !hint.home
+    ? "process.env.HOME пустой — orchestra-core не знает, где искать."
+    : !hint.exists
+      ? `Файла нет: ${hint.path}. Если ${kind} CLI авторизован у вас локально, проверьте, что credentials лежат именно по этому пути (а не в keychain).`
+      : hint.empty
+        ? `Файл пустой: ${hint.path}.`
+        : hint.parseError
+          ? `JSON не парсится (${hint.parseError}).`
+          : anyValid
+            ? "Файл валиден — badge ниже должен показать «✓ авторизован (хост)». Если этого не происходит, проверьте, что orchestra-core перезапущен после последнего git pull."
+            : "Файл найден и распарсен, но ни один из ожидаемых ключей не выставлен — возможно, новый формат credentials.";
+
+  return (
+    <div className="flex flex-col gap-2 px-3 py-2.5 border border-border-subtle bg-bg-card text-[11px] text-text-secondary">
+      <div className="font-semibold text-text-primary">Хост-учётка ({kind})</div>
+      <code className="text-text-tertiary truncate" title={hint.path ?? "—"}>{hint.path ?? "—"}</code>
+      <div>{status}</div>
+      {hint.topLevelKeys && hint.topLevelKeys.length > 0 && (
+        <div className="text-text-tertiary">
+          top-level keys: <code>{hint.topLevelKeys.join(", ")}</code>
+        </div>
+      )}
+      {hint.exists && !hint.empty && !hint.parseError && (
+        <ul className="flex flex-col gap-0.5">
+          {expectedFlags.map((f) => (
+            <li key={f.label}>
+              <span className={f.value ? "text-accent-green" : "text-text-tertiary"}>
+                {f.value ? "✓" : "·"}
+              </span>{" "}
+              {f.label}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

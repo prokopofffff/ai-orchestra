@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import { getPool } from "./db";
 import { currentUserId } from "./auth";
@@ -76,12 +78,14 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
         source: claudePerProject ? "per-project" : claudeViaHost ? "host" : null,
         configDir: getClaudeConfigDir(params.id),
         effectiveMode: claudeMode,
+        hostHint: probeHostCredsFile(".claude", ".credentials.json"),
       },
       codex: {
         loggedIn: codexPerProject || codexViaHost,
         source: codexPerProject ? "per-project" : codexViaHost ? "host" : null,
         mode: codexAuthMode(params.id),
         codexHome: getCodexHome(params.id),
+        hostHint: probeHostCredsFile(".codex", "auth.json"),
       },
     };
   });
@@ -256,6 +260,62 @@ function persistCodexApiKey(projectId: string, apiKey: string): Promise<void> {
     });
     child.stdin?.end(apiKey + "\n");
   });
+}
+
+/**
+ * Diagnostic on what the orchestra process actually finds at the user's
+ * `~/.<dir>/<file>` (claude/credentials.json or codex/auth.json). The UI
+ * surfaces this so a user who picked "(наследовать)" but sees the
+ * "не настроено" badge can tell whether the file is missing, empty,
+ * unreadable, or simply doesn't match the schema the validator expects.
+ *
+ * NEVER returns the token itself — only structural facts about the file.
+ * That keeps the response safe to render in the dashboard even though the
+ * underlying file is highly sensitive.
+ */
+function probeHostCredsFile(
+  dirName: string,
+  fileName: string,
+): {
+  home: string | null;
+  path: string | null;
+  exists: boolean;
+  empty?: boolean;
+  parseError?: string;
+  /** Top-level JSON keys (NOT values) so the user can see the shape. */
+  topLevelKeys?: string[];
+  /** Per-schema validation flags so the user can see which validator branch fired. */
+  hasOauthAccessToken?: boolean;
+  hasTopLevelAccessToken?: boolean;
+  hasApiKey?: boolean;
+  hasCodexTokens?: boolean;
+  hasOpenAiKey?: boolean;
+} {
+  const home = process.env.HOME ?? null;
+  if (!home) return { home: null, path: null, exists: false };
+  const full = path.join(home, dirName, fileName);
+  if (!fs.existsSync(full)) return { home, path: full, exists: false };
+  let raw: string;
+  try { raw = fs.readFileSync(full, "utf-8"); }
+  catch (err) { return { home, path: full, exists: true, parseError: `read failed: ${(err as Error).message}` }; }
+  if (!raw.trim()) return { home, path: full, exists: true, empty: true };
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
+  catch (err) { return { home, path: full, exists: true, parseError: (err as Error).message }; }
+  const obj = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
+  const tokens = obj.tokens as Record<string, unknown> | undefined;
+  const oauth = obj.claudeAiOauth as Record<string, unknown> | undefined;
+  return {
+    home,
+    path: full,
+    exists: true,
+    topLevelKeys: Object.keys(obj),
+    hasOauthAccessToken: typeof oauth?.accessToken === "string" && (oauth.accessToken as string).length > 0,
+    hasTopLevelAccessToken: typeof obj.accessToken === "string" && (obj.accessToken as string).length > 0,
+    hasApiKey: typeof obj.apiKey === "string" && (obj.apiKey as string).length > 0,
+    hasCodexTokens: typeof tokens?.access_token === "string" || typeof tokens?.id_token === "string",
+    hasOpenAiKey: typeof obj.OPENAI_API_KEY === "string" && (obj.OPENAI_API_KEY as string).length > 0,
+  };
 }
 
 /**

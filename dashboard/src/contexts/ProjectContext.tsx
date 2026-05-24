@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
 import type { Project } from "../types";
@@ -20,9 +20,31 @@ interface ProjectContextValue {
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
 
+/**
+ * Local key for the last project the user opened. Survives page reloads
+ * so the user doesn't get yanked to "most recently created" — the previous
+ * behaviour, since the projects query returns newest first and the
+ * fallback picks `projects[0]`. Per-browser, not per-user, but the dashboard
+ * is single-tenant in practice so name collisions don't matter.
+ */
+const SELECTED_PROJECT_KEY = "orchestra:selectedProjectId";
+
+function readPersistedProjectId(): string | null {
+  try { return window.localStorage.getItem(SELECTED_PROJECT_KEY); }
+  catch { return null; }
+}
+
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  // Read the persisted choice during state init so the very first render
+  // already has the right id — avoids a one-frame flash of "wrong project".
+  const [selectedProjectId, setSelectedProjectIdState] = useState<string | null>(readPersistedProjectId);
+
+  const setSelectedProjectId = useCallback((id: string) => {
+    setSelectedProjectIdState(id);
+    try { window.localStorage.setItem(SELECTED_PROJECT_KEY, id); }
+    catch { /* private mode / storage quota — best-effort persistence */ }
+  }, []);
 
   const { data: projects } = useQuery({
     queryKey: ["projects"],
@@ -30,11 +52,18 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     refetchInterval: 10_000,
   });
 
+  // When projects load, pin the selection to whatever the user actually has
+  // access to. Three cases:
+  //   - persisted id is still valid → keep it (no-op)
+  //   - persisted id is gone (project deleted, lost access) → fall to projects[0]
+  //   - nothing persisted → fall to projects[0] (first-time visit)
   useEffect(() => {
-    if (!selectedProjectId && projects?.length) {
+    if (!projects?.length) return;
+    const stillValid = selectedProjectId && projects.some((p) => p.id === selectedProjectId);
+    if (!stillValid) {
       setSelectedProjectId(projects[0].id);
     }
-  }, [projects, selectedProjectId]);
+  }, [projects, selectedProjectId, setSelectedProjectId]);
 
   const project = projects?.find((p) => p.id === selectedProjectId) ?? null;
 

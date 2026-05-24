@@ -113,18 +113,39 @@ const RescanSchema = z.object({ introTaskId: z.string().uuid() });
 
 /** Where the current "logged in" status came from. `null` ⇒ not logged in. */
 export const CredSourceSchema = z.enum(["per-project", "host"]).nullable();
+/**
+ * Structural probe of `~/.<provider>/<file>` on the orchestra-core host.
+ * Surfaced so the user can debug "I picked inherit but the badge stays
+ * unset" without ssh'ing into the box.
+ */
+const HostHintSchema = z.object({
+  home: z.string().nullable(),
+  path: z.string().nullable(),
+  exists: z.boolean(),
+  empty: z.boolean().optional(),
+  parseError: z.string().optional(),
+  topLevelKeys: z.array(z.string()).optional(),
+  hasOauthAccessToken: z.boolean().optional(),
+  hasTopLevelAccessToken: z.boolean().optional(),
+  hasApiKey: z.boolean().optional(),
+  hasCodexTokens: z.boolean().optional(),
+  hasOpenAiKey: z.boolean().optional(),
+});
+export type HostHint = z.infer<typeof HostHintSchema>;
 const ProvidersStatusSchema = z.object({
   claude: z.object({
     loggedIn: z.boolean(),
     source: CredSourceSchema.default(null),
     configDir: z.string(),
     effectiveMode: z.enum(["max", "api"]).optional(),
+    hostHint: HostHintSchema.optional(),
   }),
   codex: z.object({
     loggedIn: z.boolean(),
     source: CredSourceSchema.default(null),
     mode: z.enum(["apikey", "chatgpt"]).nullable(),
     codexHome: z.string(),
+    hostHint: HostHintSchema.optional(),
   }),
 });
 export type ProvidersStatus = z.infer<typeof ProvidersStatusSchema>;

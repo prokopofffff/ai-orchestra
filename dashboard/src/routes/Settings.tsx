@@ -358,9 +358,17 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
                   ? "bg-green-500/10 text-green-600"
                   : "bg-amber-500/10 text-amber-600"
               }`}
-              title={claudeStatus.configDir}
+              title={
+                claudeStatus.source === "host"
+                  ? `Будут унаследованы с хоста (~/.claude) при первом запуске агента — ${claudeStatus.configDir}`
+                  : claudeStatus.configDir
+              }
             >
-              {claudeStatus.loggedIn ? "✓ авторизован" : "не настроено"}
+              {!claudeStatus.loggedIn
+                ? "не настроено"
+                : claudeStatus.source === "host"
+                  ? "✓ авторизован (хост)"
+                  : "✓ авторизован"}
             </span>
           )}
         </div>
@@ -590,11 +598,19 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
                   ? "bg-green-500/10 text-green-600"
                   : "bg-amber-500/10 text-amber-600"
               }`}
-              title={codexStatus.codexHome}
+              title={
+                codexStatus.source === "host"
+                  ? `Будут унаследованы с хоста (~/.codex) при первом запуске агента — ${codexStatus.codexHome}`
+                  : codexStatus.codexHome
+              }
             >
-              {codexStatus.loggedIn
-                ? codexStatus.mode === "apikey" ? "✓ API-ключ" : "✓ Подписка ChatGPT"
-                : "не настроено"}
+              {!codexStatus.loggedIn
+                ? "не настроено"
+                : codexStatus.source === "host"
+                  ? "✓ авторизован (хост)"
+                  : codexStatus.mode === "apikey"
+                    ? "✓ API-ключ"
+                    : "✓ Подписка ChatGPT"}
             </span>
           )}
         </div>

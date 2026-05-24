@@ -11,6 +11,8 @@ import {
   claudeLoggedIn,
   codexLoggedIn,
   codexAuthMode,
+  hostClaudeAuthAvailable,
+  hostCodexAuthAvailable,
   logoutClaude,
   logoutCodex,
 } from "./per-project-creds";
@@ -20,6 +22,7 @@ import {
   submitProviderLoginCode,
 } from "./provider-login-manager";
 import { resolveCodexBin } from "./bin-resolver";
+import { loadConfig } from "./config";
 import { log } from "./obs";
 
 /**
@@ -50,13 +53,33 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
     if (!(await userCanEditProject(userId, params.id))) {
       return reply.code(403).send({ error: "Недостаточно прав" });
     }
+    // The badge has to match what `resolveClaudeAuth` will actually do at
+    // spawn time, not just "is a creds file already in the per-project dir".
+    // When the user picks "(наследовать)", no per-project file exists yet —
+    // the first spawn would call `seedClaudeCredsFromHost`, which copies
+    // `~/.claude/.credentials.json` into place. If the host has valid
+    // creds, the next spawn WILL be authorized, so the badge should say
+    // so now rather than confusingly waiting for an agent run.
+    //
+    // API mode skips this fallback: host OAuth creds are useless when
+    // the project is configured to bill via an API key it doesn't have.
+    const claudeMode = await resolveEffectiveClaudeMode(params.id);
+    const claudePerProject = claudeLoggedIn(params.id);
+    const claudeViaHost = !claudePerProject && claudeMode === "max" && hostClaudeAuthAvailable();
+
+    const codexPerProject = codexLoggedIn(params.id);
+    const codexViaHost = !codexPerProject && hostCodexAuthAvailable();
+
     return {
       claude: {
-        loggedIn: claudeLoggedIn(params.id),
+        loggedIn: claudePerProject || claudeViaHost,
+        source: claudePerProject ? "per-project" : claudeViaHost ? "host" : null,
         configDir: getClaudeConfigDir(params.id),
+        effectiveMode: claudeMode,
       },
       codex: {
-        loggedIn: codexLoggedIn(params.id),
+        loggedIn: codexPerProject || codexViaHost,
+        source: codexPerProject ? "per-project" : codexViaHost ? "host" : null,
         mode: codexAuthMode(params.id),
         codexHome: getCodexHome(params.id),
       },
@@ -233,4 +256,30 @@ function persistCodexApiKey(projectId: string, apiKey: string): Promise<void> {
     });
     child.stdin?.end(apiKey + "\n");
   });
+}
+
+/**
+ * Mirror of `resolveClaudeAuth`'s mode resolution without the side-effect
+ * of seeding host creds. Used by the status endpoint to figure out which
+ * auth mode the next spawn WOULD pick, so we can predict whether host
+ * fallback applies. Same precedence: project settings → system_config →
+ * env default.
+ */
+async function resolveEffectiveClaudeMode(projectId: string): Promise<"max" | "api"> {
+  const pool = getPool();
+  const { rows: projRows } = await pool.query(
+    "SELECT settings FROM projects WHERE id = $1 LIMIT 1",
+    [projectId],
+  );
+  const projAuth = (projRows[0]?.settings as { claude?: { auth?: "max" | "api" } } | null)?.claude?.auth;
+  if (projAuth === "max" || projAuth === "api") return projAuth;
+
+  const { rows: sysRows } = await pool.query(
+    "SELECT value FROM system_config WHERE key = 'claude_auth' LIMIT 1",
+  ).catch(() => ({ rows: [] }));
+  const sys = sysRows[0]?.value as string | undefined;
+  if (sys === "max" || sys === "api") return sys;
+
+  const cfg = loadConfig();
+  return (cfg.claudeAuth === "api" ? "api" : "max");
 }

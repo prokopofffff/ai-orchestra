@@ -111,13 +111,18 @@ const RescanSchema = z.object({ introTaskId: z.string().uuid() });
 
 // ─── Providers (per-project Claude / Codex credentials) ───────────────────
 
+/** Where the current "logged in" status came from. `null` ⇒ not logged in. */
+export const CredSourceSchema = z.enum(["per-project", "host"]).nullable();
 const ProvidersStatusSchema = z.object({
   claude: z.object({
     loggedIn: z.boolean(),
+    source: CredSourceSchema.default(null),
     configDir: z.string(),
+    effectiveMode: z.enum(["max", "api"]).optional(),
   }),
   codex: z.object({
     loggedIn: z.boolean(),
+    source: CredSourceSchema.default(null),
     mode: z.enum(["apikey", "chatgpt"]).nullable(),
     codexHome: z.string(),
   }),

@@ -3,6 +3,34 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
 import type { Project } from "../types";
 
+/**
+ * localStorage key holding the most recently selected project id. Restored
+ * on mount so a page reload doesn't snap to the API-default project (which
+ * is the newest, surprising users who were working on something older).
+ */
+const SELECTED_PROJECT_STORAGE_KEY = "orchestra:selectedProjectId";
+
+function readStoredProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(SELECTED_PROJECT_STORAGE_KEY);
+  } catch {
+    // Storage may be disabled (private mode, quota exceeded, etc.) — fall
+    // back to the auto-pick path instead of crashing the provider.
+    return null;
+  }
+}
+
+function writeStoredProjectId(id: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (id) window.localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, id);
+    else window.localStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
+  } catch {
+    // Same reason as readStoredProjectId — best-effort.
+  }
+}
+
 interface ProjectContextValue {
   projects: Project[] | undefined;
   selectedProjectId: string | null;
@@ -20,30 +48,16 @@ interface ProjectContextValue {
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
 
-/**
- * Local key for the last project the user opened. Survives page reloads
- * so the user doesn't get yanked to "most recently created" — the previous
- * behaviour, since the projects query returns newest first and the
- * fallback picks `projects[0]`. Per-browser, not per-user, but the dashboard
- * is single-tenant in practice so name collisions don't matter.
- */
-const SELECTED_PROJECT_KEY = "orchestra:selectedProjectId";
-
-function readPersistedProjectId(): string | null {
-  try { return window.localStorage.getItem(SELECTED_PROJECT_KEY); }
-  catch { return null; }
-}
-
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  // Read the persisted choice during state init so the very first render
-  // already has the right id — avoids a one-frame flash of "wrong project".
-  const [selectedProjectId, setSelectedProjectIdState] = useState<string | null>(readPersistedProjectId);
+  // Initialise from localStorage so a reload restores the user's last
+  // selection. Validity against the actual project list is checked once
+  // projects load, below.
+  const [selectedProjectId, setSelectedProjectIdState] = useState<string | null>(() => readStoredProjectId());
 
-  const setSelectedProjectId = useCallback((id: string) => {
+  const setSelectedProjectId = useCallback((id: string): void => {
     setSelectedProjectIdState(id);
-    try { window.localStorage.setItem(SELECTED_PROJECT_KEY, id); }
-    catch { /* private mode / storage quota — best-effort persistence */ }
+    writeStoredProjectId(id);
   }, []);
 
   const { data: projects } = useQuery({
@@ -52,18 +66,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     refetchInterval: 10_000,
   });
 
-  // When projects load, pin the selection to whatever the user actually has
-  // access to. Three cases:
-  //   - persisted id is still valid → keep it (no-op)
-  //   - persisted id is gone (project deleted, lost access) → fall to projects[0]
-  //   - nothing persisted → fall to projects[0] (first-time visit)
   useEffect(() => {
     if (!projects?.length) return;
-    const stillValid = selectedProjectId && projects.some((p) => p.id === selectedProjectId);
-    if (!stillValid) {
-      setSelectedProjectId(projects[0].id);
+    // If the persisted / current selection isn't in the visible list
+    // (project deleted, switched users, link from outside), fall back to
+    // the first project so the UI never lands on a non-existent state.
+    const exists = selectedProjectId && projects.some((p) => p.id === selectedProjectId);
+    if (!exists) {
+      setSelectedProjectIdState(projects[0].id);
+      writeStoredProjectId(projects[0].id);
     }
-  }, [projects, selectedProjectId, setSelectedProjectId]);
+  }, [projects, selectedProjectId]);
 
   const project = projects?.find((p) => p.id === selectedProjectId) ?? null;
 
@@ -76,7 +89,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const others = (old ?? []).filter((p) => p.id !== created.id);
       return [created, ...others];
     });
-    setSelectedProjectId(created.id);
+    setSelectedProjectId(created.id);  // also persists via the wrapped setter
     return created;
   };
 

@@ -1,5 +1,4 @@
 import dotenv from "dotenv";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +13,11 @@ import fastifyJwt from "@fastify/jwt";
 import { loadConfig } from "./config";
 import { log, requestHook, installProcessTraps } from "./obs";
 import { waitForDatabase, runMigrations, getPool } from "./db";
+import {
+  migratePlaintextProjectTokens,
+  backfillLegacyLocalPaths,
+  migrateLegacyReposToUserScope,
+} from "./project-secrets";
 import { taskPlugin } from "./task-api";
 import { signalPlugin } from "./signal-api";
 import { sessionPlugin } from "./session-api";
@@ -28,6 +32,7 @@ import { fsPlugin } from "./fs-api";
 import { providersPlugin } from "./providers-api";
 import { referencesPlugin } from "./references-api";
 import { contextCardsPlugin } from "./context-cards-api";
+import { clonePlugin } from "./clone-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { setAgentJwtSigner } from "./agent-jwt";
 import { userCanAccessProject } from "./project-access";
@@ -125,26 +130,15 @@ async function main() {
   await app.register(providersPlugin, { prefix: "/api" });
   await app.register(referencesPlugin, { prefix: "/api" });
   await app.register(contextCardsPlugin, { prefix: "/api" });
+  await app.register(clonePlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───
-  // Skip when the directory is missing — dev runs with Vite on the host
-  // (proxying /api into this container), so the orchestra-core image
-  // doesn't bake a dashboard build in. fastifyStatic.register would
-  // throw on a non-existent root, killing the dev container at startup.
   const dashboardRoot = path.resolve(config.dashboardPath);
-  const dashboardAvailable = fs.existsSync(dashboardRoot);
-  if (dashboardAvailable) {
-    await app.register(fastifyStatic, { root: dashboardRoot });
-  } else {
-    log.warn({ dashboardRoot }, "dashboard dir not found — skipping static + SPA fallback (dev?)");
-  }
+  await app.register(fastifyStatic, { root: dashboardRoot });
 
-  // SPA fallback — serve index.html for non-API routes, but only if the
-  // dashboard was registered above. Otherwise 404 the route — there's no
-  // file to fall back to.
+  // SPA fallback — serve index.html for non-API routes
   app.setNotFoundHandler(async (request, reply) => {
     if (request.url.startsWith("/api")) return reply.code(404).send({ error: "не найдено" });
-    if (!dashboardAvailable) return reply.code(404).send({ error: "Dashboard not served — start Vite on host" });
     return reply.sendFile("index.html");
   });
 
@@ -163,6 +157,22 @@ async function main() {
 
   log.info("running migrations");
   await runMigrations(config.databaseUrl);
+
+  // One-shot data migration: encrypt any leftover plaintext git PATs from
+  // pre-secrets installs. Cheap (one SELECT + write per affected row) and
+  // idempotent — projects with already-encrypted tokens are skipped.
+  await migratePlaintextProjectTokens();
+
+  // Backfill local_path for legacy projects that relied on auto-derived
+  // <workspaces_root>/<slug>/repo. New "clone into local_path" model needs
+  // the path explicit on the row. Pure DB op — no files are moved.
+  await backfillLegacyLocalPaths();
+
+  // Move legacy <workspaces_root>/<slug>/repo checkouts under their owner's
+  // per-user scope dir (<workspaces_root>/<ownerId>/<slug>). Must run AFTER
+  // backfillLegacyLocalPaths so the row carries a path to move. Idempotent;
+  // survives partial migrations across restarts.
+  await migrateLegacyReposToUserScope();
 
   // Create first project if configured
   await createFirstProject();

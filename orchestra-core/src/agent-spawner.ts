@@ -15,6 +15,7 @@ import { generateMcpConfig } from "./mcp-config-generator";
 import { getPool } from "./db";
 import {
   ensureRepo,
+  defaultRepoDir,
   createWorktree,
   cleanupWorktree,
   configureRemoteAuth,
@@ -177,7 +178,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   } else {
     const provider = providerFor(repoUrl, settings as ProjectSettings | null);
     authUrl = provider.tokenizeCloneUrl();
-    repoDir = await ensureRepo(authUrl, slug);
+    // Legacy projects without local_path: fall back to the auto-derived
+    // `<root>/<slug>/repo` location so existing checkouts stay valid until
+    // the boot migration backfills local_path on every row.
+    repoDir = await ensureRepo(authUrl, defaultRepoDir(slug));
   }
   const branch = branchName(role, taskId);
   const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);

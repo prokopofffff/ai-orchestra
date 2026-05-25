@@ -2,7 +2,13 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { currentUserId } from "./auth";
+import {
+  assertPathInUserScope,
+  getUserWorkspaceRoot,
+  isPathInUserScope,
+  ScopeViolationError,
+} from "./workspace-scope";
 
 /**
  * Server-side directory browser. Backs the dashboard's folder picker: the
@@ -12,41 +18,28 @@ import os from "node:os";
  * their native folder pickers, so the dashboard renders its own modal and
  * walks the filesystem through this endpoint.
  *
- * No write access — listing only. The `requireAuth` preHandler in index.ts
- * gates this behind a logged-in user; single-tenant deployments treat
- * filesystem read as fine.
- *
- * Optional clamp: when `WORKSPACE_ROOT` is set (e.g. on a container deploy
- * with a named volume mounted at /workspace), browse + mkdir refuse to
- * leave that subtree. Stops users from picking a path that won't survive
- * a container rebuild. On laptop/dev installs the env stays unset and the
- * picker walks the whole filesystem like before.
+ * No write access here — listing only (mkdir below is the one exception).
+ * Per-user scope: every request is clamped to `<root>/<userId>/`. Other
+ * users' subtrees are invisible — the picker can't even attempt to stat
+ * them. The user's own scope dir is auto-created on first browse so a
+ * fresh signup lands in an existing empty directory instead of a 404.
  */
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT
-  ? path.resolve(process.env.WORKSPACE_ROOT)
-  : null;
-
-function isInsideWorkspaceRoot(target: string): boolean {
-  if (!WORKSPACE_ROOT) return true;
-  if (target === WORKSPACE_ROOT) return true;
-  const rel = path.relative(WORKSPACE_ROOT, target);
-  return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel);
-}
 export const fsPlugin: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: { path?: string; showHidden?: string } }>(
     "/fs/browse",
     async (request, reply) => {
+      const userId = currentUserId(request);
+      const userScope = getUserWorkspaceRoot(userId);
+      // Lazily create the user's scope dir so first-time browse doesn't 404.
+      await fs.mkdir(userScope, { recursive: true, mode: 0o700 });
+
       const showHidden = request.query.showHidden === "true";
       const raw = request.query.path;
-      // Default landing dir: workspace root when configured, else $HOME.
-      // Means the picker drops the user inside the safe subtree without
-      // them having to navigate to it on first open.
-      const fallback = WORKSPACE_ROOT ?? os.homedir();
-      const requested = raw && raw.length > 0 ? path.resolve(raw) : fallback;
+      const requested = raw && raw.length > 0 ? path.resolve(raw) : userScope;
 
-      if (!isInsideWorkspaceRoot(requested)) {
+      if (!isPathInUserScope(userId, requested)) {
         return reply.code(403).send({
-          error: `Путь вне рабочей директории (${WORKSPACE_ROOT}). Выберите папку внутри неё.`,
+          error: `Путь вне вашей рабочей директории (${userScope}). Выберите папку внутри неё.`,
         });
       }
 
@@ -84,17 +77,11 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
         return reply.code(403).send({ error: `Cannot read ${requested}: ${(err as Error).message}` });
       }
 
-      // Parent is null at the filesystem root so the UI can hide the "up"
-      // button there. Also null when sitting on the workspace root — we
-      // don't want to let users navigate above it via "..".
-      // `path.dirname("/")` returns "/" so we guard explicitly.
-      const atWorkspaceRoot = WORKSPACE_ROOT !== null && requested === WORKSPACE_ROOT;
-      const parent = atWorkspaceRoot
-        ? null
-        : (requested === path.parse(requested).root ? null : path.dirname(requested));
-      const home = os.homedir();
+      // Parent is null when sitting on the user's scope root — there's
+      // nothing meaningful above it for the picker to navigate into.
+      const parent = requested === userScope ? null : path.dirname(requested);
 
-      return { cwd: requested, parent, home, entries, workspaceRoot: WORKSPACE_ROOT };
+      return { cwd: requested, parent, home: userScope, entries, workspaceRoot: userScope };
     },
   );
 
@@ -107,6 +94,7 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
   app.post<{ Body: { parent: string; name: string } }>(
     "/fs/mkdir",
     async (request, reply) => {
+      const userId = currentUserId(request);
       const body = MkdirBodySchema.safeParse(request.body);
       if (!body.success) {
         return reply.code(400).send({ error: "parent и name обязательны" });
@@ -116,10 +104,11 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: "Недопустимое имя папки" });
       }
       const parentPath = path.resolve(body.data.parent);
-      if (!isInsideWorkspaceRoot(parentPath)) {
-        return reply.code(403).send({
-          error: `Нельзя создать папку вне рабочей директории (${WORKSPACE_ROOT}).`,
-        });
+      try {
+        assertPathInUserScope(userId, parentPath);
+      } catch (err) {
+        if (err instanceof ScopeViolationError) return reply.code(403).send({ error: err.message });
+        throw err;
       }
       let parentStat;
       try {

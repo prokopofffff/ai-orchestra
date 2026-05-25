@@ -8,6 +8,7 @@ import {
   codexLoggedIn,
   codexAuthMode,
 } from "./per-project-creds";
+import { getProjectCodexApiKey } from "./project-secrets";
 
 /**
  * Per-spawn auth resolution for Codex. Mirrors claude-auth.
@@ -31,7 +32,7 @@ export async function resolveCodexAuth(
   projectId: string,
   settings: unknown,
 ): Promise<CodexAuthResolution> {
-  const projCodex = (settings as { codex?: { auth?: "subscription" | "api"; apiKey?: string } } | null)?.codex;
+  const projCodex = (settings as { codex?: { auth?: "subscription" | "api" } } | null)?.codex;
   // Subscription is the default — most early adopters will have a ChatGPT
   // subscription before they have an OpenAI API key.
   const mode = projCodex?.auth ?? "subscription";
@@ -40,7 +41,7 @@ export async function resolveCodexAuth(
   ensureCredsDir(codexHome);
 
   if (mode === "api") {
-    const apiKey = projCodex?.apiKey;
+    const apiKey = getProjectCodexApiKey(settings);
     if (!apiKey) {
       return {
         env: {},

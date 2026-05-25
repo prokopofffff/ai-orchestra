@@ -28,11 +28,15 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://orchestra:${POSTGRES_PASSWORD:-orchestra_secret}@postgres:5432/orchestra
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      # AES-256 key (base64, 32 bytes) used to encrypt per-project secrets
+      # at rest (git PATs etc). Without it orchestra-core boots into a
+      # noisy ephemeral-key mode in dev and refuses to boot in prod.
+      # Generate one with: openssl rand -base64 32
+      ORCHESTRA_SECRETS_KEY: ${ORCHESTRA_SECRETS_KEY:?ORCHESTRA_SECRETS_KEY must be set in .env}
       CLAUDE_AUTH: ${CLAUDE_AUTH:-max}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_DEFAULT_ORG: ${GITHUB_DEFAULT_ORG:-}
       GITHUB_DEFAULT_BRANCH: ${GITHUB_DEFAULT_BRANCH:-main}
       MODEL_TECH_LEAD: ${MODEL_TECH_LEAD:-opus}
@@ -42,15 +46,13 @@ services:
       MODEL_QA: ${MODEL_QA:-sonnet}
       MODEL_DEVOPS: ${MODEL_DEVOPS:-sonnet}
       DASHBOARD_PATH: /app/dashboard
-      # Volume-backed root the folder picker is clamped to (fs-api.ts).
-      # Users can't pick a path outside this subtree, so a local_path
-      # value can't accidentally point at a writable-layer dir that
-      # vanishes on the next rebuild.
-      WORKSPACE_ROOT: /workspace
-      # repo-manager.ts writes per-project worktrees (cloned repos and
-      # the temp-dir fallback for projects without repo_url) under this
-      # path — keep it inside the workspace volume too.
-      WORKSPACES_ROOT: /workspace/.tmp
+      # Volume-backed root for per-user workspaces. Each user's projects
+      # land under /workspace/<userId>/… — FolderPicker clamps browsing to
+      # the requesting user's subtree (fs-api.ts) and the clone endpoint
+      # refuses targets outside it. Without this volume, anything users
+      # write would live in the container's writable layer and vanish on
+      # the next rebuild.
+      ORCHESTRA_WORKSPACES_ROOT: /workspace
     ports:
       - "3000:3000"
     volumes:

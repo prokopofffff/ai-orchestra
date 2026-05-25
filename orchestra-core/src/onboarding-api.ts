@@ -10,6 +10,11 @@ import {
   hostClaudeAuthAvailable,
   hostCodexAuthAvailable,
 } from "./per-project-creds";
+import {
+  getProjectClaudeApiKey,
+  getProjectCodexApiKey,
+  getProjectGitToken,
+} from "./project-secrets";
 
 /**
  * Onboarding tracks one piece of explicit state — whether the user has
@@ -160,15 +165,16 @@ export async function computeOnboarding(userId: string) {
   const claudeDefaultMode = (sysMap.claude_auth ?? "max") as "max" | "api";
 
   const projectAiProviderReady = (p: { id: string; settings: unknown }): boolean => {
-    // Claude side
-    const claude = (p.settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
+    // Claude side. API-key check goes through project-secrets so a project
+    // whose plaintext was migrated to apiKeyEncrypted still ticks the step.
+    const claude = (p.settings as { claude?: { auth?: "max" | "api" } } | null)?.claude;
     const claudeMode = (claude?.auth ?? claudeDefaultMode) as "max" | "api";
-    if (claudeMode === "api" && claude?.apiKey) return true;
+    if (claudeMode === "api" && getProjectClaudeApiKey(p.settings)) return true;
     if (claudeMode === "max" && (claudeLoggedIn(p.id) || hostClaudeReady)) return true;
 
-    // Codex side
-    const codex = (p.settings as { codex?: { auth?: "subscription" | "api"; apiKey?: string } } | null)?.codex;
-    if (codex?.auth === "api" && codex?.apiKey) return true;
+    // Codex side — same: read through the helper so the encrypted form counts.
+    const codex = (p.settings as { codex?: { auth?: "subscription" | "api" } } | null)?.codex;
+    if (codex?.auth === "api" && getProjectCodexApiKey(p.settings)) return true;
     if (codex?.auth === "subscription" && (codexLoggedIn(p.id) || hostCodexReady)) return true;
 
     return false;
@@ -176,18 +182,15 @@ export async function computeOnboarding(userId: string) {
 
   const aiProviderDone = hasProject && visibleProjects.some(projectAiProviderReady);
 
-  // Git token: every project that talks to a remote MUST have its own
-  // token in settings.provider.token. local_path-only projects don't
-  // need one. The step is "done" when every remote-using project has a
-  // token configured (or all projects are local-only).
-  const projectsNeedingToken = visibleProjects.filter((p) => !p.localPath && p.repoUrl);
+  // Git token: every project with a remote MUST have its own encrypted
+  // token (no env fallback in multi-tenant). Path-only projects without a
+  // repoUrl skip the requirement — they don't talk to a provider.
+  // Goes through getProjectGitToken so the encrypted form counts.
+  const projectsNeedingToken = visibleProjects.filter((p) => p.repoUrl);
   const gitTokenDone =
     hasProject &&
     (projectsNeedingToken.length === 0 ||
-      projectsNeedingToken.every((p) => {
-        const s = (p.settings as { provider?: { token?: string } } | null)?.provider;
-        return !!s?.token;
-      }));
+      projectsNeedingToken.every((p) => getProjectGitToken(p.settings) !== null));
 
   // Telegram is optional — auto-tick once the user has a project and at
   // least one of their projects has a bot wired up. Don't pre-tick for
@@ -214,14 +217,14 @@ export async function computeOnboarding(userId: string) {
       title: "Создать первый проект",
       done: hasProject,
       href: "/settings",
-      hint: "Укажите AI Orchestra на git-репозиторий или локальную папку.",
+      hint: "Кнопка «+ Проект» на канбане: выберите готовый локальный путь или склонируйте репозиторий из URL.",
     },
     {
       key: "git_token" as const,
       title: "Указать токен GitHub или GitLab",
       done: gitTokenDone,
       href: "/settings",
-      hint: "Нужен для операций с PR на удалённых репозиториях. Можно пропустить, если используете только локальные пути.",
+      hint: "Обязателен для каждого проекта с удалённым репозиторием — нужен для клона, пушей и PR. Можно пропустить только для проектов без repoUrl (локальная папка без remote).",
     },
     {
       key: "telegram" as const,

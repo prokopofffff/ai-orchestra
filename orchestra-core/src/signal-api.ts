@@ -14,7 +14,7 @@ import {
 import { checkUnblocked, DONE_STATES } from "./dependency-engine";
 import { dispatchSignal } from "./dispatcher";
 import { loadConfig } from "./config";
-import { notify, escalate } from "./notification-hub";
+import { notify, escalate, notifyPrReady } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { tryAutoMerge } from "./auto-merger";
 import { validateSignalSender } from "./agent-auth";
@@ -266,12 +266,45 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
     if (signal.to === "user" || ["pr_approved", "task_done", "escalate"].includes(signal.action)) {
       const payload = signal.payload as Record<string, unknown> | undefined;
       const message = (payload?.message as string) ?? `${signal.from}: ${signal.action}`;
-      notify({
-        projectId: signal.projectId,
-        text: message,
-        priority: signal.action === "escalate" ? "high" : "normal",
-        fromRole: signal.from === "tech-lead" ? "tech-lead" : "system",
-      }).catch((err) => logBackgroundError("signal:notify", err, signal.projectId));
+
+      // pr_approved special case: pull the canonical pr_url from tasks and
+      // route through notifyPrReady so the user always gets the link in the
+      // Telegram message, even if the TL forgot to include it in payload.
+      // Without this, the URL only lives in the dashboard's task view —
+      // anyone reading the notification has to switch context to find it.
+      if (signal.action === "pr_approved" && signal.taskId) {
+        background(
+          (async () => {
+            const { rows } = await getPool().query<{ pr_url: string | null; title: string | null }>(
+              "SELECT pr_url, title FROM tasks WHERE id = $1 LIMIT 1",
+              [signal.taskId],
+            );
+            const prUrl = rows[0]?.pr_url ?? null;
+            const taskTitle = rows[0]?.title ?? "PR";
+            if (prUrl) {
+              await notifyPrReady(signal.projectId, taskTitle, prUrl);
+            } else {
+              // No URL recorded (e.g. PR was created out-of-band) — fall back
+              // to whatever the TL put in payload so we don't drop the signal.
+              await notify({
+                projectId: signal.projectId,
+                text: message,
+                priority: "normal",
+                fromRole: "tech-lead",
+              });
+            }
+          })(),
+          "signal:notify-pr-ready",
+          signal.projectId,
+        );
+      } else {
+        notify({
+          projectId: signal.projectId,
+          text: message,
+          priority: signal.action === "escalate" ? "high" : "normal",
+          fromRole: signal.from === "tech-lead" ? "tech-lead" : "system",
+        }).catch((err) => logBackgroundError("signal:notify", err, signal.projectId));
+      }
     }
 
     // 7b. Auto-merge (opt-in per project). The actual merge happens in a

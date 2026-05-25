@@ -117,8 +117,8 @@ export async function generateCard(
   let result: { content: string; costUsd: number; model: string };
   try {
     result = resolved.resolved.provider === "claude"
-      ? await runOneShotClaude(prompt, resolved.resolved.spawnEnv)
-      : await runOneShotCodex(prompt, resolved.resolved.spawnEnv);
+      ? await runOneShotClaude(prompt, resolved.resolved.spawnEnv, project.localPath)
+      : await runOneShotCodex(prompt, resolved.resolved.spawnEnv, project.localPath);
   } catch (err) {
     return { kind, generated: false, reason: `LLM call failed: ${(err as Error).message}` };
   }
@@ -308,6 +308,14 @@ function buildPrompt(kind: CardKind, projectName: string, inputs: CardInputs): s
   }
 
   lines.push("");
+  lines.push(
+    "You are running with your working directory set to the project root and have read-only " +
+    "tools available (Read, Glob, Grep, Bash for ls/cat/find). Use them to explore any " +
+    "subdirectory whose contents you need before writing the card. Never ask clarifying " +
+    "questions — if a path doesn't exist, infer what you can from what does and write the " +
+    "best card the available evidence supports.",
+  );
+  lines.push("");
   lines.push("Output ONLY the card content — no preamble, no `Here is the card:` header.");
   return lines.join("\n");
 }
@@ -355,6 +363,7 @@ interface OneShotResult { content: string; costUsd: number; model: string; }
 function runOneShotClaude(
   prompt: string,
   spawnEnvOverrides: Record<string, string | undefined>,
+  projectRoot: string,
 ): Promise<OneShotResult> {
   return new Promise((resolve, reject) => {
     let bin: string;
@@ -368,14 +377,25 @@ function runOneShotClaude(
     // Bypass-root-as-sandbox: same reasoning as agent runs (see claude-cli).
     env.IS_SANDBOX = "1";
 
-    // Cheap model (haiku) for cards. Per-run budget is a hard cap.
+    // Cheap model (haiku) for cards. No --max-budget-usd: tool-using
+    // exploration (Read/Glob/Bash) routinely needs >$0.05 across 10+ turns
+    // when the project is non-trivial; the budget cap caused decisions/style
+    // cards to fail with error_max_budget_usd. Haiku still keeps the real
+    // spend at a few cents per card.
+    //
+    // `bypassPermissions` is required for headless --print so tool calls
+    // (Read/Glob/Grep/Bash) actually fire instead of being auto-denied —
+    // without it haiku replies "I don't have access to the filesystem".
+    // `--disallowedTools` keeps the run read-only: a summary task should
+    // never mutate the project.
     const args = [
       "--print",
       "--output-format", "json",
       "--model", "haiku",
-      "--max-budget-usd", "0.05",
+      "--permission-mode", "bypassPermissions",
+      "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit",
     ];
-    const child = spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(bin, args, { env, cwd: projectRoot, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = ""; let stderr = "";
     child.stdout.on("data", (b: Buffer) => { stdout += b.toString(); });
     child.stderr.on("data", (b: Buffer) => { stderr += b.toString(); });
@@ -413,6 +433,7 @@ function runOneShotClaude(
 function runOneShotCodex(
   prompt: string,
   spawnEnvOverrides: Record<string, string | undefined>,
+  projectRoot: string,
 ): Promise<OneShotResult> {
   return new Promise((resolve, reject) => {
     let bin: string;
@@ -433,7 +454,7 @@ function runOneShotCodex(
       "--skip-git-repo-check",
       "--ephemeral",
     ];
-    const child = spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(bin, args, { env, cwd: projectRoot, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = ""; let stderr = "";
     child.stdout.on("data", (b: Buffer) => { stdout += b.toString(); });
     child.stderr.on("data", (b: Buffer) => { stderr += b.toString(); });

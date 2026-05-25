@@ -1,5 +1,6 @@
 import type { ProjectSettings } from "@ai-orchestra/shared";
 import { getPool } from "../db";
+import { getProjectGitToken } from "../project-secrets";
 import type { GitProvider, GitProviderKind } from "./types";
 import { GitHubProvider } from "./github";
 import { GitLabProvider } from "./gitlab";
@@ -27,7 +28,7 @@ export function providerFor(repoUrl: string, settings: ProjectSettings | null): 
   const cfg = settings?.provider;
   const kind: GitProviderKind = cfg?.type ?? detectKind(repoUrl, cfg?.baseUrl);
 
-  const token = cfg?.token;
+  const token = getProjectGitToken(settings);
   if (!token) {
     const which = kind === "github" ? "GitHub" : "GitLab";
     throw new Error(
@@ -64,7 +65,7 @@ export function buildGitProviderEnv(
   repoUrl: string | null,
   settings: ProjectSettings | null | unknown,
 ): Record<string, string> {
-  const token = (settings as { provider?: { token?: string } } | null)?.provider?.token;
+  const token = getProjectGitToken(settings);
   if (!token) return {};
   // Generic alias for tooling that doesn't care about the provider.
   const env: Record<string, string> = { GIT_PROVIDER_TOKEN: token };

@@ -11,7 +11,7 @@ import { generateMcpConfig } from "./mcp-config-generator";
 import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
-import { ensureRepo, ensureTempDir } from "./repo-manager";
+import { ensureRepo, ensureTempDir, defaultRepoDir } from "./repo-manager";
 import { providerFor, buildGitProviderEnv } from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { resolveRuntimeForRole } from "./agents/runtime/resolver";
@@ -82,7 +82,7 @@ export async function dispatchTechLead(
       workDir = localPath as string;
     } else if (repoUrl) {
       const provider = providerFor(repoUrl, settings as ProjectSettings | null);
-      workDir = await ensureRepo(provider.tokenizeCloneUrl(), slug);
+      workDir = await ensureRepo(provider.tokenizeCloneUrl(), defaultRepoDir(slug));
     } else {
       workDir = ensureTempDir(slug);
     }

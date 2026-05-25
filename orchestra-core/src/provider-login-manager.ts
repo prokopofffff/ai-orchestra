@@ -57,28 +57,8 @@ type LoginSession = {
   timeoutHandle: NodeJS.Timeout;
 };
 
-/**
- * Why a session is no longer in `sessions`. Kept in a parallel map so a
- * /code POST that misses can tell the user "the CLI exited with code 1
- * (stderr: …)" rather than the opaque "session not found". Retained for
- * REASON_TTL_MS after the session dies — enough for a user retry,
- * dropped before unbounded growth.
- */
-type SessionDeathReason = {
-  cause: "exit" | "signal" | "timeout" | "cancelled" | "url_capture_failed";
-  exitCode: number | null;
-  signal: string | null;
-  stderrTail: string;
-  diedAt: number;
-};
-
-const REASON_TTL_MS = 30 * 60 * 1000;
-const STDERR_TAIL_CAP = 4096;
-
 const sessions = new Map<string, LoginSession>();
 const byProjectProvider = new Map<string, string>();
-const recentReasons = new Map<string, SessionDeathReason>();
-const stderrTails = new Map<string, string>();
 
 /** 5-minute hard limit on a login attempt — frees resources if the user walks away. */
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
@@ -140,7 +120,6 @@ export async function startProviderLogin(
   const sessionId = randomUUID();
   const timeoutHandle = setTimeout(() => {
     log.info({ sessionId, provider, projectId }, "provider login timed out — killing CLI");
-    recordReason(sessionId, "timeout", null, null);
     try { child.kill("SIGTERM"); } catch { /* gone */ }
     cleanup(sessionId);
   }, LOGIN_TIMEOUT_MS);
@@ -152,29 +131,18 @@ export async function startProviderLogin(
   sessions.set(sessionId, session);
   byProjectProvider.set(key(projectId, provider), sessionId);
 
-  // Keep DRAINING stdout/stderr after the URL was captured. Without this
-  // the OS pipe buffer (~64KB) fills with any further CLI output (status
-  // prints, retry counters, progress dots) and the child blocks on write
-  // — eventually exiting. Symptom: dashboard's /code POST returns "session
-  // not found" because the close handler ran before the user could paste.
-  // Maintain a rolling stderr tail for diagnostics on unexpected exits.
+  // Drain stdout/stderr after URL capture: without an attached reader the
+  // OS pipe buffer (~64KB) fills if the CLI prints anything further (errors
+  // from a bad code paste, status updates, version warnings) and the child
+  // blocks on write — making the failure invisible to the user. Log stderr
+  // so debug logs surface why a paste was rejected.
   child.stdout?.on("data", () => { /* drain only */ });
   child.stderr?.on("data", (b: Buffer) => {
-    const prev = stderrTails.get(sessionId) ?? "";
-    stderrTails.set(sessionId, (prev + b.toString("utf-8")).slice(-STDERR_TAIL_CAP));
+    log.info({ sessionId, provider, projectId, stderr: b.toString("utf-8").trim() }, "provider login stderr");
   });
 
   child.once("close", (code, signal) => {
-    const tail = stderrTails.get(sessionId) ?? "";
-    log.info(
-      { sessionId, provider, projectId, code, signal, stderrTail: tail.slice(-400) },
-      "provider login CLI exited",
-    );
-    // Only record an exit reason if we haven't already classified (e.g. via
-    // timeout / cancel). Lets the death-cause string stay accurate.
-    if (!recentReasons.has(sessionId)) {
-      recordReason(sessionId, signal ? "signal" : "exit", code, signal);
-    }
+    log.info({ sessionId, provider, projectId, code, signal }, "provider login CLI exited");
     cleanup(sessionId);
   });
 
@@ -185,47 +153,25 @@ export async function startProviderLogin(
 }
 
 /**
- * Outcome of a /code submission. `ok=true` → bytes written to CLI stdin.
- * `ok=false` → session not found; `reason` carries the actionable
- * "why" (exit code, stderr tail, …) when we still have it cached.
- */
-export type SubmitCodeResult =
-  | { ok: true }
-  | { ok: false; reason: string };
-
-/**
  * Pipe a user-supplied code into the running Claude CLI. Codex doesn't need
  * this — its device-auth flow polls OpenAI directly, so we don't wire the
- * endpoint for it. Returns an actionable reason when the session is gone.
+ * endpoint for it. Returns false if the session is gone or already finished.
  */
-export function submitProviderLoginCode(sessionId: string, code: string): SubmitCodeResult {
+export function submitProviderLoginCode(sessionId: string, code: string): boolean {
   const s = sessions.get(sessionId);
-  if (!s) {
-    const past = recentReasons.get(sessionId);
-    if (!past) return { ok: false, reason: "Сессия логина не найдена (или истёк срок хранения причины)" };
-    const ageMin = Math.round((Date.now() - past.diedAt) / 60_000);
-    const tail = past.stderrTail ? ` — stderr: ${past.stderrTail.slice(-300).trim()}` : "";
-    const code = past.exitCode !== null ? `exit=${past.exitCode}` : past.signal ? `signal=${past.signal}` : past.cause;
-    return {
-      ok: false,
-      reason: `Сессия логина завершилась ${ageMin}мин назад (${code})${tail}`,
-    };
-  }
-  if (s.provider !== "claude") return { ok: false, reason: "Этот провайдер не использует paste-режим" };
-  if (!s.child.stdin || s.child.stdin.destroyed) {
-    return { ok: false, reason: "stdin CLI уже закрыт" };
-  }
+  if (!s) return false;
+  if (s.provider !== "claude") return false;
+  if (!s.child.stdin || s.child.stdin.destroyed) return false;
   // Claude's prompt is line-buffered — a single write with a trailing newline
   // is enough. Don't end the stream; the CLI may print follow-up prompts on
   // bad codes and we want it to stay alive to surface them.
   s.child.stdin.write(code.trim() + "\n");
-  return { ok: true };
+  return true;
 }
 
 export function cancelProviderLogin(sessionId: string): boolean {
   const s = sessions.get(sessionId);
   if (!s) return false;
-  recordReason(sessionId, "cancelled", null, null);
   try { s.child.kill("SIGTERM"); } catch { /* gone */ }
   cleanup(sessionId);
   return true;
@@ -238,30 +184,6 @@ function cleanup(sessionId: string): void {
   sessions.delete(sessionId);
   if (byProjectProvider.get(key(s.projectId, s.provider)) === sessionId) {
     byProjectProvider.delete(key(s.projectId, s.provider));
-  }
-  // Drop the stderr tail buffer — recordReason already snapshotted it.
-  stderrTails.delete(sessionId);
-}
-
-function recordReason(
-  sessionId: string,
-  cause: SessionDeathReason["cause"],
-  exitCode: number | null,
-  signal: string | null,
-): void {
-  const tail = stderrTails.get(sessionId) ?? "";
-  recentReasons.set(sessionId, {
-    cause, exitCode, signal,
-    stderrTail: tail,
-    diedAt: Date.now(),
-  });
-  // Cheap GC — keep recentReasons bounded so a long-running orchestra
-  // doesn't accumulate dead-session debris.
-  if (recentReasons.size > 50) {
-    const cutoff = Date.now() - REASON_TTL_MS;
-    for (const [id, r] of recentReasons) {
-      if (r.diedAt < cutoff) recentReasons.delete(id);
-    }
   }
 }
 

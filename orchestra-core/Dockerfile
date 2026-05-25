@@ -32,31 +32,6 @@ COPY mcp-tools/reference-tool/package.json mcp-tools/reference-tool/package.json
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
-# ─── dev: hot-reload target used by docker-compose.dev.yml ─────────────
-# Source for orchestra-core + shared is bind-mounted from the host so
-# `tsx watch` picks up edits without an image rebuild. mcp-tools is
-# pre-built in this stage because the agent spawn path runs them as
-# `node mcp-tools/<name>/dist/index.js` — rebuilding them inside the
-# dev container at every startup would (a) need their tsconfig + src
-# present and (b) add 10+ seconds to every `pnpm dev`. When mcp-tools
-# code changes, dev re-runs `docker compose -f ... up --build`.
-#
-# Runtime CLIs (git, claude, codex) match the prod runtime stage so a
-# developer spawning an agent locally runs against the SAME binaries
-# the server does — closes the "works on server, fails locally" drift
-# class.
-FROM deps AS dev
-RUN apk add --no-cache git \
- && npm i -g @openai/codex @anthropic-ai/claude-code
-# Pre-build mcp-tools dist + shared types into the image. Source is
-# baked here; if dev edits them they rebuild via `pnpm dev` (image
-# rebuild) or `docker compose exec orchestra-core pnpm -r build`.
-COPY shared shared
-COPY mcp-tools mcp-tools
-RUN pnpm --filter @ai-orchestra/shared --filter './mcp-tools/*' build
-WORKDIR /workspace/orchestra-core
-CMD ["pnpm", "exec", "tsx", "watch", "src/index.ts"]
-
 # ─── builder: type-check + build shared / mcp-tools / dashboard ─────────
 # orchestra-core's "build" script is tsc with noEmit=true — type-check only.
 FROM deps AS builder

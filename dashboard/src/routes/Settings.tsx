@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjectContext } from "../contexts/ProjectContext";
 import { ProjectChecks } from "../components/ProjectChecks";
 import { EmptyProjects } from "../components/EmptyProjects";
 import { Button } from "../components/ui/Button";
 import { FolderPicker } from "../components/FolderPicker";
+import { TokenHelp } from "../components/TokenHelp";
 import * as api from "../api";
-import type { SystemConfig } from "../api";
 import type { Project } from "../types";
 
-type Tab = "project" | "agents" | "checks" | "members" | "limits" | "system";
+type Tab = "project" | "agents" | "checks" | "members" | "limits";
 
 export default function Settings() {
   const { project } = useProjectContext();
@@ -23,7 +23,7 @@ export default function Settings() {
   return (
     <div className="settings flex flex-col h-full">
       <nav data-tour="settings.tabs" className="settings-tabs flex items-center gap-0 px-16 border-b border-border bg-bg-surface shrink-0">
-        {(["project", "agents", "checks", "members", "limits", "system"] as Tab[]).map((t) => (
+        {(["project", "agents", "checks", "members", "limits"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -38,8 +38,7 @@ export default function Settings() {
               : t === "agents" ? "Агенты"
               : t === "checks" ? "Проверки агентов"
               : t === "members" ? "Участники"
-              : t === "limits" ? "Лимиты"
-              : "Система"}
+              : "Лимиты"}
           </button>
         ))}
       </nav>
@@ -61,7 +60,6 @@ export default function Settings() {
         {tab === "checks" && <ProjectChecks projectId={project.id} />}
         {tab === "members" && <MembersTab projectId={project.id} />}
         {tab === "limits" && <LimitsTab project={project} onSaved={refresh} />}
-        {tab === "system" && <SystemTab />}
       </div>
     </div>
   );
@@ -176,6 +174,8 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
               placeholder="https://github.com/org/repo"
             />
           </Field>
+
+          <RepoPullInline projectId={project.id} />
         </div>
       </section>
     </div>
@@ -189,16 +189,125 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
     queryFn: () => api.fetchRepoStatus(projectId),
     refetchInterval: 10_000,
   });
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<null | "clone" | "pull" | "init">(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  if (!data?.needsInit) return null;
+  if (!data) return null;
+  // Banner is for problem states only — when the repo isn't usable as-is.
+  // The steady-state "Pull from main" action lives inline next to the
+  // localPath field instead (see RepoPullInline below) so we don't shout
+  // a yellow box at the user on every settings visit.
+  if (!data.canClone && !data.needsInit) return null;
+
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ["repo-status", projectId] });
+  }
+
+  async function clone() {
+    setBusy("clone"); setMsg("Клонирование запущено…");
+    try {
+      const res = await api.cloneProjectFromSettings(projectId);
+      // The clone runs in the background; we poll the dedicated /clone/status
+      // endpoint until it settles so the user sees success/error without
+      // refreshing the page.
+      if (res.state === "running") {
+        const start = Date.now();
+        // Cap polling at 10 min so a hung clone doesn't loop forever.
+        while (Date.now() - start < 10 * 60 * 1000) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const s = await api.fetchProjectCloneStatus(projectId);
+          if (s.state === "success") { setMsg("✓ Репозиторий склонирован."); break; }
+          if (s.state === "error") { setMsg(`Ошибка клона: ${s.error}`); break; }
+        }
+      } else if (res.state === "success") {
+        setMsg("✓ Репозиторий склонирован.");
+      } else if (res.state === "error") {
+        setMsg(`Ошибка клона: ${res.error}`);
+      }
+      await refresh();
+    } catch (e) {
+      setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function pull() {
+    setBusy("pull"); setMsg(null);
+    try {
+      const res = await api.pullProject(projectId);
+      setMsg(`✓ Обновлено: ${res.branch} → ${res.head.slice(0, 7)}`);
+      await refresh();
+    } catch (e) {
+      setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function init() {
-    setBusy(true); setMsg(null);
+    setBusy("init"); setMsg(null);
     try {
       await api.initProjectGit(projectId);
       setMsg(`✓ Инициализирован в ${data?.localPath}. Агенты могут запускаться.`);
+      await refresh();
+    } catch (e) {
+      setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 bg-[color:var(--color-accent-yellow,#f59e0b)]/10 border border-[color:var(--color-accent-yellow,#f59e0b)]/30 text-xs text-text-secondary">
+      <span className="shrink-0 font-semibold text-accent-yellow mt-0.5">!</span>
+      <div className="flex-1 flex flex-col gap-2">
+        <div>
+          {data.canClone && (
+            <>Удалённый репозиторий не склонирован в <code className="text-text-primary">{data.localPath}</code>. Нажмите «Клонировать», чтобы orchestra сама подтянула код.</>
+          )}
+          {!data.canClone && data.needsInit && (
+            <><code className="text-text-primary">{data.localPath}</code> не является git-репозиторием. Агенты создают ветки через <code>git worktree</code>, поэтому путь нужно сначала инициализировать.</>
+          )}
+        </div>
+        {msg && <span className="text-[11px] text-text-tertiary">{msg}</span>}
+      </div>
+      <div className="flex gap-2 shrink-0">
+        {data.canClone && (
+          <Button variant="primary-blue" size="sm" onClick={clone} disabled={busy !== null} type="button">
+            {busy === "clone" ? "Клонирование…" : "Клонировать"}
+          </Button>
+        )}
+        {!data.canClone && data.needsInit && (
+          <Button variant="primary-blue" size="sm" onClick={init} disabled={busy !== null} type="button">
+            {busy === "init" ? "Инициализация…" : "Инициализировать git здесь"}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Compact "Pull from main" button rendered inline under the localPath field
+// when the repo is in a working state. Keeps the everyday refresh action
+// one click away without turning every Settings visit into a yellow banner.
+function RepoPullInline({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["repo-status", projectId],
+    queryFn: () => api.fetchRepoStatus(projectId),
+    refetchInterval: 10_000,
+  });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  if (!data?.canPull) return null;
+
+  async function pull() {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await api.pullProject(projectId);
+      setMsg(`✓ ${res.branch} → ${res.head.slice(0, 7)}`);
       await queryClient.invalidateQueries({ queryKey: ["repo-status", projectId] });
     } catch (e) {
       setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -208,19 +317,11 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 bg-[color:var(--color-accent-yellow,#f59e0b)]/10 border border-[color:var(--color-accent-yellow,#f59e0b)]/30 text-xs text-text-secondary">
-      <span className="shrink-0 font-semibold text-accent-yellow mt-0.5">!</span>
-      <div className="flex-1 flex flex-col gap-2">
-        <div>
-          <code className="text-text-primary">{data.localPath}</code> не является
-          git-репозиторием. Агенты создают ветки через <code>git worktree</code>, поэтому
-          путь нужно сначала инициализировать.
-        </div>
-        {msg && <span className="text-[11px] text-text-tertiary">{msg}</span>}
-      </div>
-      <Button variant="primary-blue" size="sm" onClick={init} disabled={busy} type="button">
-        {busy ? "Инициализация…" : "Инициализировать git здесь"}
+    <div className="flex items-center gap-3 text-[11px] text-text-tertiary">
+      <Button variant="secondary" size="sm" onClick={pull} disabled={busy} type="button">
+        {busy ? "Pull…" : "Pull from main"}
       </Button>
+      {msg && <span>{msg}</span>}
     </div>
   );
 }
@@ -231,10 +332,14 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
   // each other's logged-in session. First spawn seeds from ~/.claude/ if
   // present (preserves the pre-refactor UX); otherwise the user runs
   // `claude /login` with the dir pre-set — the command is surfaced below.
-  type ClaudeSettings = { auth?: "max" | "api"; apiKey?: string };
+  type ClaudeSettings = { auth?: "max" | "api"; apiKey?: string; apiKeyEncrypted?: string };
   const initial = (project.settings as { claude?: ClaudeSettings } | undefined)?.claude;
+  const hasApiKey = Boolean(initial?.apiKeyEncrypted || initial?.apiKey);
   const [auth, setAuth] = useState<"" | "max" | "api">(initial?.auth ?? "");
-  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  // Always start blank — the API key is encrypted on the server and never
+  // returned in clear. `hasApiKey` drives the "saved" indicator instead.
+  const [apiKey, setApiKey] = useState("");
+  const [clearRequested, setClearRequested] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -265,26 +370,32 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
 
   useEffect(() => {
     setAuth(initial?.auth ?? "");
-    setApiKey(initial?.apiKey ?? "");
+    setApiKey("");
+    setClearRequested(false);
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save() {
     setSaving(true);
     setStatus(null);
     try {
-      // Build a settings.claude object that only includes set fields. An
-      // empty value here means "delete the per-project override and fall
-      // back to orchestra-wide" — PATCH sends undefined for the key.
       const claude: ClaudeSettings = {};
       if (auth) claude.auth = auth;
+      // Only touch apiKey when the user typed something or clicked Clear —
+      // sending `""` on every save would wipe the encrypted token whenever
+      // someone tweaks `auth` alone.
       if (apiKey.trim()) claude.apiKey = apiKey.trim();
+      else if (clearRequested) claude.apiKey = "";
       const payload = Object.keys(claude).length ? claude : { auth: undefined, apiKey: undefined };
       await api.updateProject(project.id, { settings: { claude: payload } } as never);
       setStatus(
-        Object.keys(claude).length
-          ? "Сохранено — агенты этого проекта при следующем запуске будут использовать эти учётные данные."
-          : "Очищено — используются настройки уровня Orchestra из вкладки Система.",
+        apiKey.trim()
+          ? "Сохранено — агенты при следующем запуске будут использовать новый ключ."
+          : clearRequested
+            ? "API-ключ удалён."
+            : "Сохранено.",
       );
+      setApiKey("");
+      setClearRequested(false);
       onSaved();
     } catch (e) {
       setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -358,17 +469,9 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
                   ? "bg-green-500/10 text-green-600"
                   : "bg-amber-500/10 text-amber-600"
               }`}
-              title={
-                claudeStatus.source === "host"
-                  ? `Будут унаследованы с хоста (~/.claude) при первом запуске агента — ${claudeStatus.configDir}`
-                  : claudeStatus.configDir
-              }
+              title={claudeStatus.configDir}
             >
-              {!claudeStatus.loggedIn
-                ? "не настроено"
-                : claudeStatus.source === "host"
-                  ? "✓ авторизован (хост)"
-                  : "✓ авторизован"}
+              {claudeStatus.loggedIn ? "✓ авторизован" : "не настроено"}
             </span>
           )}
         </div>
@@ -379,7 +482,7 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
         </p>
       </div>
 
-      <Field label="Аутентификация" optional hint="Оставьте пустым, чтобы наследовать из вкладки Система.">
+      <Field label="Аутентификация" optional hint="Оставьте пустым, чтобы использовать значение по умолчанию из переменных окружения orchestra.">
         <select
           value={auth}
           onChange={(e) => setAuth(e.target.value as "" | "max" | "api")}
@@ -390,10 +493,6 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
           <option value="api">API-ключ — оплата по токенам</option>
         </select>
       </Field>
-
-      {!claudeStatus?.loggedIn && claudeStatus?.hostHint && (
-        <HostCredsHint hint={claudeStatus.hostHint} kind="claude" />
-      )}
 
       {auth === "max" && (
         <div className="flex flex-col gap-2">
@@ -449,15 +548,19 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
       {auth === "api" && (
         <Field
           label="API-ключ"
-          hint="С console.anthropic.com. Начинается с sk-ant-. Хранится в настройках проекта; виден только участникам проекта."
+          hint={
+            hasApiKey
+              ? "Ключ уже сохранён (шифрован). Введите новый чтобы перезаписать, или нажмите «Удалить»."
+              : "С console.anthropic.com. Начинается с sk-ant-. Хранится в настройках проекта, шифруется на стороне сервера."
+          }
         >
           <div className="flex items-center gap-2">
             <input
               className={INPUT}
               type={revealed ? "text" : "password"}
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-ant-…"
+              onChange={(e) => { setApiKey(e.target.value); setClearRequested(false); }}
+              placeholder={hasApiKey ? "•••••••••••• (введите новый, чтобы заменить)" : "sk-ant-…"}
               autoComplete="off"
             />
             <Button
@@ -468,7 +571,19 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
             >
               {revealed ? "Скрыть" : "Показать"}
             </Button>
+            {hasApiKey && (
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => { setApiKey(""); setClearRequested(true); }}
+                disabled={clearRequested}
+              >
+                {clearRequested ? "Удалится при сохранении" : "Удалить"}
+              </Button>
+            )}
           </div>
+          <TokenHelp kind="claude-api" />
         </Field>
       )}
 
@@ -490,10 +605,13 @@ function ProjectClaudeSection({ project, onSaved }: { project: Project; onSaved:
  * in their own terminal. After OAuth, the status badge auto-updates.
  */
 function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
-  type CodexSettings = { auth?: "subscription" | "api"; apiKey?: string };
+  type CodexSettings = { auth?: "subscription" | "api"; apiKey?: string; apiKeyEncrypted?: string };
   const initial = (project.settings as { codex?: CodexSettings } | undefined)?.codex;
+  const hasApiKey = Boolean(initial?.apiKeyEncrypted || initial?.apiKey);
   const [auth, setAuth] = useState<"" | "subscription" | "api">(initial?.auth ?? "");
-  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  // Same encrypt-at-rest UX as Claude — start blank, drive "saved" via hasApiKey.
+  const [apiKey, setApiKey] = useState("");
+  const [clearRequested, setClearRequested] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -513,7 +631,8 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
 
   useEffect(() => {
     setAuth(initial?.auth ?? "");
-    setApiKey(initial?.apiKey ?? "");
+    setApiKey("");
+    setClearRequested(false);
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The CLI is polling OpenAI's device-auth endpoint server-side; once the
@@ -533,9 +652,13 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
       const codex: CodexSettings = {};
       if (auth) codex.auth = auth;
       if (apiKey.trim()) codex.apiKey = apiKey.trim();
+      else if (clearRequested) codex.apiKey = "";
 
-      // For API-mode we ALSO need to persist the key into the per-project
-      // codex auth.json. The dedicated endpoint does both at once.
+      // For API-mode + a newly-entered key we ALSO need to prime the
+      // per-project codex auth.json (the dedicated endpoint encrypts and
+      // does that in one shot). Other paths (mode flips, clearing the key,
+      // no-op saves) go through the generic PATCH which encrypts via
+      // normalizeProjectSecretsForWrite.
       if (auth === "api" && apiKey.trim()) {
         await api.saveProviderApiKey(project.id, "codex", apiKey.trim());
       } else {
@@ -543,10 +666,14 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
         await api.updateProject(project.id, { settings: { codex: payload } } as never);
       }
       setStatus(
-        Object.keys(codex).length
-          ? "Сохранено — агенты, использующие Codex, при следующем запуске возьмут эти учётные данные."
-          : "Очищено — Codex для проекта не настроен.",
+        apiKey.trim()
+          ? "Сохранено — агенты, использующие Codex, при следующем запуске возьмут новый ключ."
+          : clearRequested
+            ? "API-ключ Codex удалён."
+            : "Сохранено.",
       );
+      setApiKey("");
+      setClearRequested(false);
       onSaved();
       refetchStatus();
     } catch (e) {
@@ -602,19 +729,11 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
                   ? "bg-green-500/10 text-green-600"
                   : "bg-amber-500/10 text-amber-600"
               }`}
-              title={
-                codexStatus.source === "host"
-                  ? `Будут унаследованы с хоста (~/.codex) при первом запуске агента — ${codexStatus.codexHome}`
-                  : codexStatus.codexHome
-              }
+              title={codexStatus.codexHome}
             >
-              {!codexStatus.loggedIn
-                ? "не настроено"
-                : codexStatus.source === "host"
-                  ? "✓ авторизован (хост)"
-                  : codexStatus.mode === "apikey"
-                    ? "✓ API-ключ"
-                    : "✓ Подписка ChatGPT"}
+              {codexStatus.loggedIn
+                ? codexStatus.mode === "apikey" ? "✓ API-ключ" : "✓ Подписка ChatGPT"
+                : "не настроено"}
             </span>
           )}
         </div>
@@ -636,10 +755,6 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
           <option value="api">API-ключ — оплата по токенам (от platform.openai.com)</option>
         </select>
       </Field>
-
-      {!codexStatus?.loggedIn && codexStatus?.hostHint && (
-        <HostCredsHint hint={codexStatus.hostHint} kind="codex" />
-      )}
 
       {auth === "subscription" && (
         <div className="flex flex-col gap-2">
@@ -689,15 +804,19 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
       {auth === "api" && (
         <Field
           label="OpenAI API-ключ"
-          hint="С platform.openai.com. Начинается с sk-. При сохранении ключ сохраняется в настройках и регистрируется через `codex login --with-api-key` (codex игнорирует переменную среды OPENAI_API_KEY)."
+          hint={
+            hasApiKey
+              ? "Ключ уже сохранён (шифрован). Введите новый чтобы перезаписать, или нажмите «Удалить»."
+              : "С platform.openai.com. Начинается с sk-. Хранится зашифрованным; на первом запуске регистрируется через `codex login --with-api-key`."
+          }
         >
           <div className="flex items-center gap-2">
             <input
               className={INPUT}
               type={revealed ? "text" : "password"}
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-…"
+              onChange={(e) => { setApiKey(e.target.value); setClearRequested(false); }}
+              placeholder={hasApiKey ? "•••••••••••• (введите новый, чтобы заменить)" : "sk-…"}
               autoComplete="off"
             />
             <Button
@@ -708,7 +827,19 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
             >
               {revealed ? "Скрыть" : "Показать"}
             </Button>
+            {hasApiKey && (
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => { setApiKey(""); setClearRequested(true); }}
+                disabled={clearRequested}
+              >
+                {clearRequested ? "Удалится при сохранении" : "Удалить"}
+              </Button>
+            )}
           </div>
+          <TokenHelp kind="openai-api" />
         </Field>
       )}
 
@@ -723,21 +854,30 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
 }
 
 function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
-  // Per-project Git provider token override. Empty → falls back to the
-  // orchestra-wide GITHUB_TOKEN (System tab / .env). The provider type +
-  // baseUrl (for self-hosted) are currently only editable as raw JSON;
-  // 95% of users just need a token, so that's all we surface here.
-  type ProviderSettings = { type?: "github" | "gitlab"; token?: string; baseUrl?: string };
+  // Per-project Git provider token. Required for private repos — orchestra
+  // has no global GITHUB_TOKEN fallback in multi-tenant mode (cross-user leak).
+  // Token is stored encrypted at rest; the dashboard never receives the
+  // plaintext back. `hasToken` reflects whether tokenEncrypted is set on
+  // the project — drives placeholder copy + the "save empty = clear" guard.
+  type ProviderSettings = {
+    type?: "github" | "gitlab";
+    token?: string;
+    tokenEncrypted?: string;
+    baseUrl?: string;
+  };
   const initial = (project.settings as { provider?: ProviderSettings } | undefined)?.provider;
-  const [token, setToken] = useState(initial?.token ?? "");
+  const hasToken = Boolean(initial?.tokenEncrypted);
+  const [token, setToken] = useState("");
   const [type, setType] = useState<"" | "github" | "gitlab">(initial?.type ?? "");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [clearRequested, setClearRequested] = useState(false);
 
   useEffect(() => {
-    setToken(initial?.token ?? "");
+    setToken("");
     setType(initial?.type ?? "");
+    setClearRequested(false);
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save() {
@@ -745,19 +885,23 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
     setStatus(null);
     try {
       const provider: ProviderSettings = {};
+      // Only send `token` when the user actually typed something or clicked
+      // "Clear" — sending `""` on every save would wipe the existing token
+      // any time someone tweaks the provider type alone.
       if (token.trim()) provider.token = token.trim();
+      else if (clearRequested) provider.token = "";
       if (type) provider.type = type;
-      // Preserve any existing baseUrl the user set via JSON elsewhere.
       if (initial?.baseUrl) provider.baseUrl = initial.baseUrl;
-      const payload = Object.keys(provider).length
-        ? provider
-        : { type: undefined, token: undefined, baseUrl: undefined };
-      await api.updateProject(project.id, { settings: { provider: payload } } as never);
+      await api.updateProject(project.id, { settings: { provider } } as never);
       setStatus(
         token.trim()
           ? "Сохранено — клоны и пуши для этого проекта будут использовать этот токен."
-          : "Очищено — используется общий GITHUB_TOKEN уровня Orchestra.",
+          : clearRequested
+            ? "Токен удалён."
+            : "Сохранено.",
       );
+      setToken("");
+      setClearRequested(false);
       onSaved();
     } catch (e) {
       setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -771,10 +915,11 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
       <div className="border-t border-border pt-6 flex flex-col gap-1">
         <h3 className="text-sm font-semibold text-text-primary">Токен Git-провайдера</h3>
         <p className="text-xs text-text-secondary">
-          Необязательно. Переопределение токена GitHub / GitLab для клонирования, пуша
-          и открытия PR для этого проекта. Если пусто, используется значение из вкладки{" "}
-          <strong>Система</strong>. Тип провайдера определяется автоматически по
-          URL репозитория — указывайте его явно только для self-hosted инстансов.
+          Обязателен для приватных репозиториев — orchestra использует его для клона,
+          пушей веток и открытия PR. Токен шифруется на стороне сервера; в дашборд он
+          обратно не возвращается, поэтому поле всегда показывается пустым. Тип провайдера
+          определяется автоматически по URL репозитория — указывайте его явно только для
+          self-hosted инстансов.
         </p>
       </div>
 
@@ -792,15 +937,19 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
 
       <Field
         label="Токен доступа"
-        hint="GitHub: fine-grained PAT с правами repo + pull-request на этот репозиторий. GitLab: project access token."
+        hint={
+          hasToken
+            ? "Токен уже сохранён (шифрован). Введите новый чтобы перезаписать, или нажмите «Удалить»."
+            : "GitHub: fine-grained PAT с правами Contents: Read+Write, Pull requests: Read+Write на этот репозиторий. GitLab: project access token."
+        }
       >
         <div className="flex items-center gap-2">
           <input
             className={INPUT}
             type={revealed ? "text" : "password"}
             value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="ghp_… или glpat-…"
+            onChange={(e) => { setToken(e.target.value); setClearRequested(false); }}
+            placeholder={hasToken ? "•••••••••••• (введите новый, чтобы заменить)" : "ghp_… или glpat-…"}
             autoComplete="off"
           />
           <Button
@@ -811,7 +960,19 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
           >
             {revealed ? "Скрыть" : "Показать"}
           </Button>
+          {hasToken && (
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => { setToken(""); setClearRequested(true); }}
+              disabled={clearRequested}
+            >
+              {clearRequested ? "Удалится при сохранении" : "Удалить"}
+            </Button>
+          )}
         </div>
+        <TokenHelp kind="git-pat" />
       </Field>
 
       <div className="flex items-center gap-3">
@@ -911,6 +1072,7 @@ function ProjectTelegramSection({ project, onSaved }: { project: Project; onSave
             {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </div>
+        <TokenHelp kind="telegram-bot" />
       </Field>
 
       {savedToken && (
@@ -1158,9 +1320,6 @@ function ProjectContextCardsSection({ project }: { project: Project }) {
         </div>
         <div className="flex items-center gap-3 shrink-0 pt-1">
           {msg && <span className="text-xs text-text-tertiary max-w-[260px] text-right">{msg}</span>}
-          <Button variant="secondary" size="sm" onClick={() => regen(false)} disabled={busy}>
-            {busy ? "Генерация…" : "Обновить (если изменилось)"}
-          </Button>
           <Button variant="primary-red" size="sm" onClick={() => regen(true)} disabled={busy}>
             {busy ? "Генерация…" : "Регенерировать все"}
           </Button>
@@ -1176,26 +1335,47 @@ function ProjectContextCardsSection({ project }: { project: Project }) {
       )}
       {!isLoading && cards.length > 0 && (
         <ul className="flex flex-col gap-3">
-          {cards.map((c) => (
-            <li key={c.kind} className="border border-border-subtle p-3 flex flex-col gap-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-xs font-mono uppercase tracking-wider text-text-secondary">
-                  {c.kind.replace(/_/g, " ")}
-                </span>
-                <span className="text-[11px] text-text-tertiary">
-                  {c.tokenCount} токенов · ${c.costUsd.toFixed(4)} · {c.generatorModel ?? "—"}
-                </span>
-              </div>
-              <pre className="text-xs text-text-primary whitespace-pre-wrap font-sans">{c.content}</pre>
-              <div className="text-[11px] text-text-tertiary">
-                Сгенерировано {new Date(c.generatedAt).toLocaleString("ru")}
-                {c.sourceSha ? ` · ${c.sourceSha.slice(0, 8)}` : ""}
-              </div>
-            </li>
-          ))}
+          {cards.map((c) => <ContextCardItem key={c.kind} card={c} />)}
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * Single context card row with collapse/expand. Default collapsed — these
+ * cards are 300-500+ tokens of prose each and four of them stacked turns
+ * the Settings page into a wall of text.
+ */
+function ContextCardItem({ card }: { card: api.ContextCard }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <li className="border border-border-subtle p-3 flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-xs font-mono uppercase tracking-wider text-text-secondary">
+          {card.kind.replace(/_/g, " ")}
+        </span>
+        <span className="text-[11px] text-text-tertiary">
+          {card.tokenCount} токенов · ${card.costUsd.toFixed(4)} · {card.generatorModel ?? "—"}
+        </span>
+      </div>
+      {expanded && (
+        <pre className="text-xs text-text-primary whitespace-pre-wrap font-sans">{card.content}</pre>
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[11px] text-text-tertiary">
+          Сгенерировано {new Date(card.generatedAt).toLocaleString("ru")}
+          {card.sourceSha ? ` · ${card.sourceSha.slice(0, 8)}` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-[11px] text-accent-blue hover:underline shrink-0"
+        >
+          {expanded ? "Скрыть" : "Показать"}
+        </button>
+      </div>
+    </li>
   );
 }
 
@@ -1578,185 +1758,6 @@ function LimitsTab({ project, onSaved }: { project: Project; onSaved: () => void
           <input className={INPUT} value={maxConcurrentSessions} onChange={(e) => setMaxConcurrentSessions(e.target.value)} placeholder="4" />
         </Field>
       </section>
-    </div>
-  );
-}
-
-function SystemTab() {
-  const [config, setConfig] = useState<SystemConfig>({});
-  const [claudeAuth, setClaudeAuth] = useState<"max" | "api">("max");
-  const [orgDailyCap, setOrgDailyCap] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const c = await api.fetchSystemConfig();
-      setConfig(c);
-      setClaudeAuth(c.claude_auth ?? "max");
-      setOrgDailyCap(c.orchestra_daily_cost_cap_usd ?? "");
-    } catch {
-      // system_config table may not exist yet (migration pending)
-    }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-
-  async function save() {
-    setSaving(true);
-    setStatus(null);
-    try {
-      const patch: SystemConfig = { claude_auth: claudeAuth };
-      if (orgDailyCap.trim()) patch.orchestra_daily_cost_cap_usd = orgDailyCap.trim();
-      await api.updateSystemConfig(patch);
-      setStatus("Сохранено — применится при следующем запуске агента");
-      setConfig({ ...config, ...patch });
-    } catch (e) {
-      setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="px-16 py-12 flex flex-col gap-8 max-w-[700px]">
-      <header className="flex items-start justify-between gap-8">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-[28px] font-semibold tracking-tight text-text-primary">
-            Системные настройки
-          </h2>
-          <p className="text-sm text-text-secondary">
-            Значения по умолчанию для всей Orchestra. Учётные данные (API-ключ Claude, токен GitHub / GitLab)
-            хранятся в каждом проекте в <strong>Настройках проекта</strong> — эти значения
-            не общие между проектами и пользователями.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 shrink-0 pt-1">
-          {status && <span className="text-xs text-text-tertiary">{status}</span>}
-          <Button variant="primary-red" size="lg" onClick={save} disabled={saving}>
-            {saving ? "Сохранение…" : "Сохранить"}
-          </Button>
-        </div>
-      </header>
-
-      <section className="flex flex-col gap-5">
-        <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Режим Claude по умолчанию
-        </p>
-
-        <p className="text-xs text-text-secondary -mt-2">
-          Используется, если проект не переопределяет его в Настройках проекта → Учётные данные Claude.
-        </p>
-
-        <div className="flex flex-col gap-3">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="radio"
-              name="claudeAuth"
-              value="max"
-              checked={claudeAuth === "max"}
-              onChange={() => setClaudeAuth("max")}
-              className="accent-accent-blue"
-            />
-            <div>
-              <span className="text-sm font-medium text-text-primary">Подписка Max</span>
-              <p className="text-xs text-text-secondary">Использует локальный логин Claude Code — API-ключ не требуется.</p>
-            </div>
-          </label>
-
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="radio"
-              name="claudeAuth"
-              value="api"
-              checked={claudeAuth === "api"}
-              onChange={() => setClaudeAuth("api")}
-              className="accent-accent-blue"
-            />
-            <div>
-              <span className="text-sm font-medium text-text-primary">API-ключ</span>
-              <p className="text-xs text-text-secondary">
-                Оплата по токенам. Каждый проект должен вставить свой ключ в Настройках проекта →
-                Учётные данные Claude — общего ключа нет.
-              </p>
-            </div>
-          </label>
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-5">
-        <p className="text-xs font-mono uppercase tracking-wider text-text-tertiary border-b border-border pb-2">
-          Лимит стоимости для всей Orchestra
-        </p>
-        <Field
-          label="Дневной лимит (USD)"
-          hint="Сумма по всем проектам. Пусто / 0 = отключено. Переменная окружения ORCHESTRA_DAILY_COST_CAP_USD переопределяет это, если задана."
-        >
-          <input
-            className={INPUT}
-            value={orgDailyCap}
-            onChange={(e) => setOrgDailyCap(e.target.value)}
-            placeholder="0"
-          />
-        </Field>
-      </section>
-    </div>
-  );
-}
-
-/**
- * Surfaces what orchestra-core actually found at `~/.<provider>/<file>`
- * when the user picked "(наследовать)" but the badge stays "не настроено".
- * Never displays the token itself — only structural facts (existence,
- * parse errors, which schema branches passed/failed).
- */
-function HostCredsHint({ hint, kind }: { hint: api.HostHint; kind: "claude" | "codex" }) {
-  const expectedFlags = kind === "claude"
-    ? [
-        { label: "claudeAiOauth.accessToken", value: hint.hasOauthAccessToken },
-        { label: "accessToken (top-level)", value: hint.hasTopLevelAccessToken },
-        { label: "apiKey", value: hint.hasApiKey },
-      ]
-    : [
-        { label: "OPENAI_API_KEY", value: hint.hasOpenAiKey },
-        { label: "tokens.access_token / id_token", value: hint.hasCodexTokens },
-      ];
-  const anyValid = expectedFlags.some((f) => f.value);
-
-  const status = !hint.home
-    ? "process.env.HOME пустой — orchestra-core не знает, где искать."
-    : !hint.exists
-      ? `Файла нет: ${hint.path}. Если ${kind} CLI авторизован у вас локально, проверьте, что credentials лежат именно по этому пути (а не в keychain).`
-      : hint.empty
-        ? `Файл пустой: ${hint.path}.`
-        : hint.parseError
-          ? `JSON не парсится (${hint.parseError}).`
-          : anyValid
-            ? "Файл валиден — badge ниже должен показать «✓ авторизован (хост)». Если этого не происходит, проверьте, что orchestra-core перезапущен после последнего git pull."
-            : "Файл найден и распарсен, но ни один из ожидаемых ключей не выставлен — возможно, новый формат credentials.";
-
-  return (
-    <div className="flex flex-col gap-2 px-3 py-2.5 border border-border-subtle bg-bg-card text-[11px] text-text-secondary">
-      <div className="font-semibold text-text-primary">Хост-учётка ({kind})</div>
-      <code className="text-text-tertiary truncate" title={hint.path ?? "—"}>{hint.path ?? "—"}</code>
-      <div>{status}</div>
-      {hint.topLevelKeys && hint.topLevelKeys.length > 0 && (
-        <div className="text-text-tertiary">
-          top-level keys: <code>{hint.topLevelKeys.join(", ")}</code>
-        </div>
-      )}
-      {hint.exists && !hint.empty && !hint.parseError && (
-        <ul className="flex flex-col gap-0.5">
-          {expectedFlags.map((f) => (
-            <li key={f.label}>
-              <span className={f.value ? "text-accent-green" : "text-text-tertiary"}>
-                {f.value ? "✓" : "·"}
-              </span>{" "}
-              {f.label}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

@@ -1,7 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
 import { spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
 import { getPool } from "./db";
 import { currentUserId } from "./auth";
@@ -13,8 +11,6 @@ import {
   claudeLoggedIn,
   codexLoggedIn,
   codexAuthMode,
-  hostClaudeAuthAvailable,
-  hostCodexAuthAvailable,
   logoutClaude,
   logoutCodex,
 } from "./per-project-creds";
@@ -24,7 +20,7 @@ import {
   submitProviderLoginCode,
 } from "./provider-login-manager";
 import { resolveCodexBin } from "./bin-resolver";
-import { loadConfig } from "./config";
+import { normalizeProjectSecretsForWrite } from "./project-secrets";
 import { log } from "./obs";
 
 /**
@@ -55,37 +51,15 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
     if (!(await userCanEditProject(userId, params.id))) {
       return reply.code(403).send({ error: "Недостаточно прав" });
     }
-    // The badge has to match what `resolveClaudeAuth` will actually do at
-    // spawn time, not just "is a creds file already in the per-project dir".
-    // When the user picks "(наследовать)", no per-project file exists yet —
-    // the first spawn would call `seedClaudeCredsFromHost`, which copies
-    // `~/.claude/.credentials.json` into place. If the host has valid
-    // creds, the next spawn WILL be authorized, so the badge should say
-    // so now rather than confusingly waiting for an agent run.
-    //
-    // API mode skips this fallback: host OAuth creds are useless when
-    // the project is configured to bill via an API key it doesn't have.
-    const claudeMode = await resolveEffectiveClaudeMode(params.id);
-    const claudePerProject = claudeLoggedIn(params.id);
-    const claudeViaHost = !claudePerProject && claudeMode === "max" && hostClaudeAuthAvailable();
-
-    const codexPerProject = codexLoggedIn(params.id);
-    const codexViaHost = !codexPerProject && hostCodexAuthAvailable();
-
     return {
       claude: {
-        loggedIn: claudePerProject || claudeViaHost,
-        source: claudePerProject ? "per-project" : claudeViaHost ? "host" : null,
+        loggedIn: claudeLoggedIn(params.id),
         configDir: getClaudeConfigDir(params.id),
-        effectiveMode: claudeMode,
-        hostHint: probeHostCredsFile(".claude", ".credentials.json"),
       },
       codex: {
-        loggedIn: codexPerProject || codexViaHost,
-        source: codexPerProject ? "per-project" : codexViaHost ? "host" : null,
+        loggedIn: codexLoggedIn(params.id),
         mode: codexAuthMode(params.id),
         codexHome: getCodexHome(params.id),
-        hostHint: probeHostCredsFile(".codex", "auth.json"),
       },
     };
   });
@@ -162,9 +136,9 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
     if (params.provider !== "claude") {
       return reply.code(400).send({ error: "Этот провайдер не использует paste-режим" });
     }
-    const result = submitProviderLoginCode(params.sessionId, body.code);
-    if (!result.ok) {
-      return reply.code(404).send({ error: result.reason });
+    const ok = submitProviderLoginCode(params.sessionId, body.code);
+    if (!ok) {
+      return reply.code(404).send({ error: "Сессия логина не найдена или уже завершена" });
     }
     return { ok: true };
   });
@@ -198,11 +172,13 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
     if (params.provider === "claude") {
       const claude = (settings.claude ?? {}) as Record<string, unknown>;
       claude.auth = "api";
-      claude.apiKey = body.apiKey;
+      claude.apiKey = body.apiKey; // re-encrypted below via normalize
       settings.claude = claude;
     } else {
       // Persist the key in settings AND prime the codex auth.json so the
-      // first spawn doesn't need to provision it.
+      // first spawn doesn't need to provision it. The plaintext key flows
+      // into normalize → encrypted form; the priming spawn below uses the
+      // plaintext directly from `body.apiKey`, never reads it back from DB.
       const codex = (settings.codex ?? {}) as Record<string, unknown>;
       codex.auth = "api";
       codex.apiKey = body.apiKey;
@@ -214,9 +190,13 @@ export const providersPlugin: FastifyPluginAsync = async (app) => {
         // Settings still get saved — the next spawn will retry persistence.
       }
     }
+    // Encrypt the plaintext apiKey we just dropped into settings before it
+    // hits the DB. normalizeProjectSecretsForWrite handles both claude and
+    // codex buckets and never persists the plaintext field.
+    const normalized = normalizeProjectSecretsForWrite(settings);
     await pool.query(
       "UPDATE projects SET settings = $1, updated_at = now() WHERE id = $2",
-      [settings, params.id],
+      [normalized, params.id],
     );
     return { ok: true };
   });
@@ -260,86 +240,4 @@ function persistCodexApiKey(projectId: string, apiKey: string): Promise<void> {
     });
     child.stdin?.end(apiKey + "\n");
   });
-}
-
-/**
- * Diagnostic on what the orchestra process actually finds at the user's
- * `~/.<dir>/<file>` (claude/credentials.json or codex/auth.json). The UI
- * surfaces this so a user who picked "(наследовать)" but sees the
- * "не настроено" badge can tell whether the file is missing, empty,
- * unreadable, or simply doesn't match the schema the validator expects.
- *
- * NEVER returns the token itself — only structural facts about the file.
- * That keeps the response safe to render in the dashboard even though the
- * underlying file is highly sensitive.
- */
-function probeHostCredsFile(
-  dirName: string,
-  fileName: string,
-): {
-  home: string | null;
-  path: string | null;
-  exists: boolean;
-  empty?: boolean;
-  parseError?: string;
-  /** Top-level JSON keys (NOT values) so the user can see the shape. */
-  topLevelKeys?: string[];
-  /** Per-schema validation flags so the user can see which validator branch fired. */
-  hasOauthAccessToken?: boolean;
-  hasTopLevelAccessToken?: boolean;
-  hasApiKey?: boolean;
-  hasCodexTokens?: boolean;
-  hasOpenAiKey?: boolean;
-} {
-  const home = process.env.HOME ?? null;
-  if (!home) return { home: null, path: null, exists: false };
-  const full = path.join(home, dirName, fileName);
-  if (!fs.existsSync(full)) return { home, path: full, exists: false };
-  let raw: string;
-  try { raw = fs.readFileSync(full, "utf-8"); }
-  catch (err) { return { home, path: full, exists: true, parseError: `read failed: ${(err as Error).message}` }; }
-  if (!raw.trim()) return { home, path: full, exists: true, empty: true };
-  let parsed: unknown;
-  try { parsed = JSON.parse(raw); }
-  catch (err) { return { home, path: full, exists: true, parseError: (err as Error).message }; }
-  const obj = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
-  const tokens = obj.tokens as Record<string, unknown> | undefined;
-  const oauth = obj.claudeAiOauth as Record<string, unknown> | undefined;
-  return {
-    home,
-    path: full,
-    exists: true,
-    topLevelKeys: Object.keys(obj),
-    hasOauthAccessToken: typeof oauth?.accessToken === "string" && (oauth.accessToken as string).length > 0,
-    hasTopLevelAccessToken: typeof obj.accessToken === "string" && (obj.accessToken as string).length > 0,
-    hasApiKey: typeof obj.apiKey === "string" && (obj.apiKey as string).length > 0,
-    hasCodexTokens: typeof tokens?.access_token === "string" || typeof tokens?.id_token === "string",
-    hasOpenAiKey: typeof obj.OPENAI_API_KEY === "string" && (obj.OPENAI_API_KEY as string).length > 0,
-  };
-}
-
-/**
- * Mirror of `resolveClaudeAuth`'s mode resolution without the side-effect
- * of seeding host creds. Used by the status endpoint to figure out which
- * auth mode the next spawn WOULD pick, so we can predict whether host
- * fallback applies. Same precedence: project settings → system_config →
- * env default.
- */
-async function resolveEffectiveClaudeMode(projectId: string): Promise<"max" | "api"> {
-  const pool = getPool();
-  const { rows: projRows } = await pool.query(
-    "SELECT settings FROM projects WHERE id = $1 LIMIT 1",
-    [projectId],
-  );
-  const projAuth = (projRows[0]?.settings as { claude?: { auth?: "max" | "api" } } | null)?.claude?.auth;
-  if (projAuth === "max" || projAuth === "api") return projAuth;
-
-  const { rows: sysRows } = await pool.query(
-    "SELECT value FROM system_config WHERE key = 'claude_auth' LIMIT 1",
-  ).catch(() => ({ rows: [] }));
-  const sys = sysRows[0]?.value as string | undefined;
-  if (sys === "max" || sys === "api") return sys;
-
-  const cfg = loadConfig();
-  return (cfg.claudeAuth === "api" ? "api" : "max");
 }

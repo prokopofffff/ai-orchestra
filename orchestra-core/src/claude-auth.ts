@@ -6,6 +6,7 @@ import {
   seedClaudeCredsFromHost,
   claudeLoggedIn,
 } from "./per-project-creds";
+import { getProjectClaudeApiKey } from "./project-secrets";
 
 /**
  * Per-spawn auth resolution for Claude. Returns the env vars to inject
@@ -51,14 +52,14 @@ export async function resolveClaudeAuth(
   ).catch(() => ({ rows: [] }));
   const sysClaudeAuth = sysRows[0]?.value as string | undefined;
 
-  const projClaude = (settings as { claude?: { auth?: "max" | "api"; apiKey?: string } } | null)?.claude;
+  const projClaude = (settings as { claude?: { auth?: "max" | "api" } } | null)?.claude;
   const mode = (projClaude?.auth ?? sysClaudeAuth ?? config.claudeAuth) as "max" | "api";
 
   const configDir = getClaudeConfigDir(projectId);
   ensureCredsDir(configDir);
 
   if (mode === "api") {
-    const apiKey = projClaude?.apiKey;
+    const apiKey = getProjectClaudeApiKey(settings);
     if (!apiKey) {
       return {
         env: {},

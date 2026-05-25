@@ -2,17 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { log } from "./obs";
+import { getWorkspacesRoot } from "./workspace-scope";
 
-const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT
-  ?? path.join(process.env.HOME ?? "/tmp", "orchestra-workspaces");
-
+/**
+ * Legacy auto-derived path: `<root>/<slug>` (no per-user layer). Kept so
+ * existing projects whose `localPath` got backfilled to this path keep
+ * resolving. New projects route through workspace-scope.getUserWorkspaceRoot.
+ */
 export function workspacePath(projectSlug: string): string {
-  return path.join(WORKSPACES_ROOT, projectSlug);
+  return path.join(getWorkspacesRoot(), projectSlug);
 }
 
-export function getWorkspacesRoot(): string {
-  return WORKSPACES_ROOT;
-}
+export { getWorkspacesRoot };
 
 /** Open a simple-git instance against `cwd`. Convenience for callers that
  * want to issue ad-hoc git ops outside this module (pr-api uses it for diff). */
@@ -21,32 +22,45 @@ export function git(cwd: string): SimpleGit {
 }
 
 /**
- * Ensure a git repo is cloned and up-to-date. Returns the repo directory.
- * If repo already exists, fetches and pulls main. If not, clones.
+ * Ensure a git repo is at `targetPath`, cloning if absent and fetch+pulling
+ * if present. Returns `targetPath` so callers can chain.
  *
  * `cloneUrl` must already have auth credentials baked in (see
  * `GitProvider.tokenizeCloneUrl()`). repo-manager stays provider-agnostic —
  * it doesn't know about GitHub vs GitLab token schemes.
+ *
+ * `targetPath` is the absolute on-disk destination — `project.localPath`
+ * for new-flow projects (user chose where it lives), or the legacy
+ * `workspacePath(slug)/repo` for pre-clone-into-localPath projects (caller
+ * derives this until the boot-time migration completes).
  */
-export async function ensureRepo(cloneUrl: string, projectSlug: string): Promise<string> {
-  const repoDir = path.join(workspacePath(projectSlug), "repo");
-
-  if (fs.existsSync(path.join(repoDir, ".git"))) {
+export async function ensureRepo(cloneUrl: string, targetPath: string): Promise<string> {
+  if (fs.existsSync(path.join(targetPath, ".git"))) {
     try {
-      const g = simpleGit(repoDir);
+      const g = simpleGit(targetPath);
       await g.remote(["get-url", "origin"]);
       await g.fetch("origin");
       await g.checkout("main");
       await g.pull("origin", "main");
     } catch (err) {
-      log.warn({ err, repoDir }, "ensureRepo: fetch/pull skipped");
+      log.warn({ err, targetPath }, "ensureRepo: fetch/pull skipped");
     }
-    return repoDir;
+    return targetPath;
   }
 
-  fs.mkdirSync(path.dirname(repoDir), { recursive: true });
-  await simpleGit().clone(cloneUrl, repoDir);
-  return repoDir;
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  await simpleGit().clone(cloneUrl, targetPath);
+  return targetPath;
+}
+
+/**
+ * Legacy auto-derived path for projects whose `local_path` hasn't been
+ * backfilled yet. New projects compute their own path and pass it directly
+ * to `ensureRepo`. Once the boot migration sets `local_path` on every row
+ * this helper can be retired.
+ */
+export function defaultRepoDir(projectSlug: string): string {
+  return path.join(workspacePath(projectSlug), "repo");
 }
 
 /**
@@ -108,6 +122,15 @@ export async function createWorktree(
   if (fs.existsSync(worktreeDir)) {
     await g.raw(["worktree", "remove", worktreeDir, "--force"]).catch(() => {});
   }
+
+  // Fetch origin so the base ref reflects the latest main. Without this,
+  // a freshly-spawned agent can branch off a stale commit and produce a
+  // PR that loses (or rebases away) recent changes from teammates. We
+  // best-effort it: an offline / unauthenticated checkout still gets a
+  // worktree off the local default branch — same fallback as before.
+  await g.fetch("origin").catch((err) => {
+    log.warn({ err, repoDir }, "createWorktree: fetch origin failed, using local refs");
+  });
 
   // Pick base ref: prefer origin/<default>, else local <default>.
   let baseRef = `origin/${defaultBranch}`;

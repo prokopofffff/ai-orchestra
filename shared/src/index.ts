@@ -53,13 +53,19 @@ export type GitProviderKind = z.infer<typeof GitProviderKindSchema>;
 
 /**
  * Per-project git provider configuration. If `type` is absent the provider
- * is auto-detected from the repo URL hostname; if `token` is absent the
- * matching global env token is used (GITHUB_TOKEN / GITLAB_TOKEN).
- * `baseUrl` is for self-hosted instances (e.g. `https://gitlab.internal`).
+ * is auto-detected from the repo URL hostname. `baseUrl` is for self-hosted
+ * instances (e.g. `https://gitlab.internal`).
+ *
+ * Token storage: `tokenEncrypted` holds base64 AES-GCM ciphertext at rest.
+ * The plaintext `token` field is wire-format only — accepted on PATCH from
+ * the dashboard, never persisted as-is (orchestra-core re-shapes it into
+ * tokenEncrypted before insert). On read, project-secrets.getProjectGitToken
+ * decrypts on demand. No env-var fallback — see providers/resolver.ts.
  */
 export const ProjectProviderConfigSchema = z.object({
   type: GitProviderKindSchema.optional(),
   token: z.string().optional(),
+  tokenEncrypted: z.string().optional(),
   baseUrl: z.string().optional(),
 });
 export type ProjectProviderConfig = z.infer<typeof ProjectProviderConfigSchema>;
@@ -111,7 +117,12 @@ export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
  */
 export const ProjectClaudeConfigSchema = z.object({
   auth: z.enum(["max", "api"]).optional(),
+  // Wire-format only: a plaintext apiKey on PATCH gets encrypted and
+  // re-stored under apiKeyEncrypted before reaching the DB. See
+  // project-secrets.normalizeProjectSecretsForWrite. Reads go through
+  // project-secrets.getProjectClaudeApiKey (decrypt on demand).
   apiKey: z.string().optional(),
+  apiKeyEncrypted: z.string().optional(),
 });
 export type ProjectClaudeConfig = z.infer<typeof ProjectClaudeConfigSchema>;
 
@@ -125,7 +136,9 @@ export type ProjectClaudeConfig = z.infer<typeof ProjectClaudeConfigSchema>;
  */
 export const ProjectCodexConfigSchema = z.object({
   auth: z.enum(["subscription", "api"]).optional(),
+  // Wire-format only — same lifecycle as ProjectClaudeConfig.apiKey.
   apiKey: z.string().optional(),
+  apiKeyEncrypted: z.string().optional(),
 });
 export type ProjectCodexConfig = z.infer<typeof ProjectCodexConfigSchema>;
 

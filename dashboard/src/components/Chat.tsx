@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
 import type { Message, Project } from "../types";
-import { MoreVerticalIcon, SendIcon } from "./ui/Icon";
+import { SendIcon } from "./ui/Icon";
 import { Markdown } from "./Markdown";
 import { useProjectContext } from "../contexts/ProjectContext";
 
@@ -136,12 +136,6 @@ function ChatHeader({ title }: { title: string }) {
         <span className="font-mono text-[11px] text-accent-green">работает</span>
       </div>
       <AutoMergeToggle />
-      <button
-        aria-label="Ещё"
-        className="text-text-tertiary hover:text-text-primary"
-      >
-        <MoreVerticalIcon size={18} />
-      </button>
     </header>
   );
 }

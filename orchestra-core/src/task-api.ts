@@ -16,7 +16,8 @@ import {
 } from "./project-access";
 import { createIntroTask } from "./intro-task";
 import { reconcileTelegramNow } from "./telegram-manager";
-import { isGitRepo, initGitRepo } from "./repo-manager";
+import { isGitRepo, initGitRepo, git } from "./repo-manager";
+import { normalizeProviderSecretsForWrite } from "./project-secrets";
 import { loadConfig } from "./config";
 import type { AgentRole } from "./config";
 import { providerForProject } from "./providers";
@@ -202,8 +203,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (body.description !== undefined) updates.description = body.description;
     // settings merges via jsonb concat — drizzle's set() doesn't have a direct
     // operator for `||`, so reach for `sql` here. Still typed at the column.
+    // Plaintext provider.token is encrypted in-flight so the DB never sees it.
     if (body.settings !== undefined) {
-      updates.settings = sql`${projects.settings} || ${JSON.stringify(body.settings)}::jsonb`;
+      const normalized = normalizeProviderSecretsForWrite(body.settings);
+      updates.settings = sql`${projects.settings} || ${JSON.stringify(normalized)}::jsonb`;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -298,20 +301,79 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (!row) return reply.code(404).send({ error: "Проект не найден" });
 
     const localPath = row.localPath ?? null;
+    const hasRemoteUrl = !!row.repoUrl;
     let exists = false;
     let isGit = false;
+    let isEmpty = false;
     if (localPath) {
       const fs = await import("node:fs");
       exists = fs.existsSync(localPath);
-      if (exists) isGit = isGitRepo(localPath);
+      if (exists) {
+        isGit = isGitRepo(localPath);
+        if (!isGit) {
+          try {
+            isEmpty = fs.readdirSync(localPath).length === 0;
+          } catch {
+            isEmpty = false;
+          }
+        }
+      }
     }
     return {
       localPath,
-      hasRemoteUrl: !!row.repoUrl,
+      hasRemoteUrl,
       exists,
       isGitRepo: isGit,
-      needsInit: !!localPath && exists && !isGit,
+      // Suggest "Clone repo" when there is a remote URL and the destination
+      // is either missing or an empty folder — git can clone into both.
+      canClone: !!localPath && hasRemoteUrl && (!exists || isEmpty),
+      // Suggest "Pull" only when the local path is already a working repo.
+      canPull: !!localPath && isGit && hasRemoteUrl,
+      // "Init git here" — folder exists, has content, but isn't a repo.
+      // When a remote URL is also configured and the folder is empty we
+      // prefer the Clone action above; everything else falls through to
+      // letting the user start fresh with `git init` in place.
+      needsInit: !!localPath && exists && !isGit && !isEmpty,
     };
+  });
+
+  // POST /projects/:id/pull — fetch origin, checkout default branch, ff-pull.
+  // Surfaced as a "Pull from main" button in Settings so the user can refresh
+  // the local checkout without spawning an agent. Errors (non-fast-forward,
+  // detached HEAD with local commits, etc.) are returned verbatim — they
+  // require human intervention and we don't want to silently rewrite refs.
+  app.post<{ Params: { id: string } }>("/projects/:id/pull", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.id;
+    if (!(await userCanEditProject(userId, projectId))) {
+      return reply.code(403).send({ error: "Недостаточно прав" });
+    }
+    const [row] = await getDb()
+      .select({ localPath: projects.localPath })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row?.localPath) {
+      return reply.code(400).send({ error: "У проекта не задан локальный путь." });
+    }
+    if (!isGitRepo(row.localPath)) {
+      return reply.code(400).send({ error: "По указанному пути нет git-репозитория — сначала склонируйте его." });
+    }
+    const defaultBranch = loadConfig().githubDefaultBranch;
+    try {
+      const g = git(row.localPath);
+      await g.fetch("origin");
+      await g.checkout(defaultBranch);
+      // --ff-only: refuse to merge if the local branch has diverged. Safer
+      // than a merge that might leave the workspace in a half-resolved state.
+      await g.pull("origin", defaultBranch, { "--ff-only": null });
+      const headSha = (await g.revparse(["HEAD"])).trim();
+      return { pulled: true, branch: defaultBranch, head: headSha };
+    } catch (err) {
+      return reply.code(409).send({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   });
 
   app.post<{ Params: { id: string } }>("/projects/:id/init-git", async (request, reply) => {

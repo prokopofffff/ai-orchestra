@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -145,7 +147,31 @@ export function seedCodexCredsFromHost(projectId: string): boolean {
  * and from preflight to short-circuit a spawn that would 401 mid-stream.
  */
 export function claudeLoggedIn(projectId: string): boolean {
-  return findClaudeCredsFile(getClaudeConfigDir(projectId)) !== null;
+  const dir = getClaudeConfigDir(projectId);
+  if (findClaudeCredsFile(dir) !== null) return true;
+  // macOS: claude CLI stores OAuth tokens in the login Keychain instead of
+  // .credentials.json, keyed by sha256(CLAUDE_CONFIG_DIR).slice(0,8). The
+  // file path is never written on darwin, so a file-only check produces a
+  // false negative for every interactive login on a Mac.
+  return claudeKeychainEntryExists(dir);
+}
+
+/** macOS keychain service name claude uses for this config dir. */
+function claudeKeychainService(configDir: string): string {
+  const hash = createHash("sha256").update(configDir).digest("hex").slice(0, 8);
+  return `Claude Code-credentials-${hash}`;
+}
+
+function claudeKeychainEntryExists(configDir: string): boolean {
+  if (process.platform !== "darwin") return false;
+  const service = claudeKeychainService(configDir);
+  // `find-generic-password` exits 0 if the entry exists, 44 (errSecItemNotFound)
+  // otherwise. We don't read the value here — just presence is enough for the
+  // status badge.
+  const res = spawnSync("security", ["find-generic-password", "-s", service], {
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  return res.status === 0;
 }
 
 /**
@@ -216,6 +242,14 @@ export function logoutClaude(projectId: string): void {
   const dir = getClaudeConfigDir(projectId);
   for (const name of CLAUDE_CLEAN_FILES) {
     fs.rmSync(path.join(dir, name), { force: true });
+  }
+  // macOS: also drop the keychain entry the CLI uses on this platform.
+  // Otherwise the badge stays "✓ авторизован" after logout because the
+  // file-delete above doesn't touch where the token actually lives.
+  if (process.platform === "darwin") {
+    spawnSync("security", ["delete-generic-password", "-s", claudeKeychainService(dir)], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
   }
 }
 

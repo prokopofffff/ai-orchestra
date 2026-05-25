@@ -10,12 +10,27 @@ import { waitForDatabase, runMigrations, getPool } from "../db";
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
 
+// Per-user workspace scope test setup. FolderPicker now refuses paths
+// outside ORCHESTRA_WORKSPACES_ROOT/<userId>/, so the fixture tree lives
+// inside `<workspacesRoot>/<testUserId>/` and we surface that as `tmpDir`
+// so the assertions below stay readable.
+let workspacesRoot: string;
+let userId: string;
 let tmpDir: string;
 
 beforeAll(async () => {
   await waitForDatabase(DATABASE_URL);
   await runMigrations(DATABASE_URL);
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-api-"));
+  workspacesRoot = await fs.mkdtemp(path.join(os.tmpdir(), "fs-api-root-"));
+  process.env.ORCHESTRA_WORKSPACES_ROOT = workspacesRoot;
+
+  // setupTestUser returns the user id we need for the scope dir.
+  const probe = Fastify();
+  userId = await setupTestUser(probe, "fs-test@orchestra.local");
+  await probe.close();
+
+  tmpDir = path.join(workspacesRoot, userId);
+  await fs.mkdir(tmpDir, { recursive: true });
   await fs.mkdir(path.join(tmpDir, "alpha"));
   await fs.mkdir(path.join(tmpDir, "beta"));
   await fs.mkdir(path.join(tmpDir, ".hidden"));
@@ -25,7 +40,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await fs.rm(workspacesRoot, { recursive: true, force: true });
+  delete process.env.ORCHESTRA_WORKSPACES_ROOT;
   await getPool().end();
 });
 
@@ -69,21 +85,30 @@ describe("GET /api/fs/browse", () => {
     expect(names).toContain(".hidden");
   });
 
-  it("returns parent + home for client-side navigation", async () => {
+  it("returns null parent + scope as home at the user's scope root", async () => {
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/api/fs/browse?path=${encodeURIComponent(tmpDir)}` });
     await app.close();
     const body = res.json();
-    expect(body.parent).toBe(path.dirname(tmpDir));
-    expect(body.home).toBe(os.homedir());
+    // tmpDir IS the user scope root — parent is null so the UI can hide
+    // the "up" button instead of letting the user navigate above it.
+    expect(body.parent).toBeNull();
+    expect(body.home).toBe(tmpDir);
   });
 
-  it("defaults to the home directory when no path is given", async () => {
+  it("defaults to the user's scope dir when no path is given", async () => {
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: "/api/fs/browse" });
     await app.close();
     expect(res.statusCode).toBe(200);
-    expect(res.json().cwd).toBe(os.homedir());
+    expect(res.json().cwd).toBe(tmpDir);
+  });
+
+  it("403 when the requested path is outside the user's scope", async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: "GET", url: `/api/fs/browse?path=${encodeURIComponent(os.tmpdir())}` });
+    await app.close();
+    expect(res.statusCode).toBe(403);
   });
 
   it("404 for a non-existent path", async () => {
@@ -106,11 +131,10 @@ describe("GET /api/fs/browse", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it("parent is null at the filesystem root", async () => {
+  it("403 at the filesystem root (outside the user's scope)", async () => {
     const app = await buildApp();
     const res = await app.inject({ method: "GET", url: `/api/fs/browse?path=${encodeURIComponent("/")}` });
     await app.close();
-    expect(res.statusCode).toBe(200);
-    expect(res.json().parent).toBeNull();
+    expect(res.statusCode).toBe(403);
   });
 });

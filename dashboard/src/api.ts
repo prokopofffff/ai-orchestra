@@ -75,6 +75,23 @@ export const createProject = (data: { name: string; repoUrl?: string; localPath?
 export const updateProject = (id: string, data: Partial<Project> & { localPath?: string | null }): Promise<Project> =>
   patchValidated(`/projects/${id}`, data, ProjectSchema);
 
+// Clone-into-localPath flow. POST kicks off a background `git clone` and
+// returns immediately; GET polls until state ≠ "running".
+const CloneStatusSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("idle") }),
+  z.object({ state: z.literal("running"), startedAt: z.number() }),
+  z.object({ state: z.literal("success"), finishedAt: z.number() }),
+  z.object({ state: z.literal("error"), error: z.string(), finishedAt: z.number() }),
+]);
+export type CloneStatus = z.infer<typeof CloneStatusSchema>;
+export const startProjectClone = (
+  projectId: string,
+  data: { repoUrl?: string; token?: string },
+): Promise<CloneStatus> =>
+  postValidated(`/projects/${projectId}/clone`, data, CloneStatusSchema);
+export const fetchProjectCloneStatus = (projectId: string): Promise<CloneStatus> =>
+  getValidated(`/projects/${projectId}/clone/status`, CloneStatusSchema);
+
 // System Config — orchestra-wide non-credential defaults only.
 // Credentials (claude_api_key, github_token) used to live here but were
 // removed: system_config is shared across users, so any value set here
@@ -111,41 +128,15 @@ const RescanSchema = z.object({ introTaskId: z.string().uuid() });
 
 // ─── Providers (per-project Claude / Codex credentials) ───────────────────
 
-/** Where the current "logged in" status came from. `null` ⇒ not logged in. */
-export const CredSourceSchema = z.enum(["per-project", "host"]).nullable();
-/**
- * Structural probe of `~/.<provider>/<file>` on the orchestra-core host.
- * Surfaced so the user can debug "I picked inherit but the badge stays
- * unset" without ssh'ing into the box.
- */
-const HostHintSchema = z.object({
-  home: z.string().nullable(),
-  path: z.string().nullable(),
-  exists: z.boolean(),
-  empty: z.boolean().optional(),
-  parseError: z.string().optional(),
-  topLevelKeys: z.array(z.string()).optional(),
-  hasOauthAccessToken: z.boolean().optional(),
-  hasTopLevelAccessToken: z.boolean().optional(),
-  hasApiKey: z.boolean().optional(),
-  hasCodexTokens: z.boolean().optional(),
-  hasOpenAiKey: z.boolean().optional(),
-});
-export type HostHint = z.infer<typeof HostHintSchema>;
 const ProvidersStatusSchema = z.object({
   claude: z.object({
     loggedIn: z.boolean(),
-    source: CredSourceSchema.default(null),
     configDir: z.string(),
-    effectiveMode: z.enum(["max", "api"]).optional(),
-    hostHint: HostHintSchema.optional(),
   }),
   codex: z.object({
     loggedIn: z.boolean(),
-    source: CredSourceSchema.default(null),
     mode: z.enum(["apikey", "chatgpt"]).nullable(),
     codexHome: z.string(),
-    hostHint: HostHintSchema.optional(),
   }),
 });
 export type ProvidersStatus = z.infer<typeof ProvidersStatusSchema>;
@@ -250,6 +241,10 @@ const RepoStatusSchema = z.object({
   exists: z.boolean(),
   isGitRepo: z.boolean(),
   needsInit: z.boolean(),
+  // Older backends don't return these — default to false so the UI degrades
+  // to the previous "Init git here" only behavior instead of crashing.
+  canClone: z.boolean().optional().default(false),
+  canPull: z.boolean().optional().default(false),
 });
 export type RepoStatus = z.infer<typeof RepoStatusSchema>;
 export const fetchRepoStatus = (projectId: string): Promise<RepoStatus> =>
@@ -258,6 +253,15 @@ export const fetchRepoStatus = (projectId: string): Promise<RepoStatus> =>
 const InitGitSchema = z.object({ initialized: z.boolean(), path: z.string() });
 export const initProjectGit = (projectId: string) =>
   postValidated(`/projects/${projectId}/init-git`, {}, InitGitSchema);
+
+const PullProjectSchema = z.object({ pulled: z.boolean(), branch: z.string(), head: z.string() });
+export const pullProject = (projectId: string) =>
+  postValidated(`/projects/${projectId}/pull`, {}, PullProjectSchema);
+
+// Re-uses the existing clone endpoint. Token is already stored per-project
+// (set during create), so the "Clone now" button doesn't need to re-ask.
+export const cloneProjectFromSettings = (projectId: string) =>
+  postValidated(`/projects/${projectId}/clone`, {}, CloneStatusSchema);
 
 // Members
 const MemberSchema = z.object({

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "../contexts/AuthContext";
 import { useProjectContext } from "../contexts/ProjectContext";
 import { ProjectChecks } from "../components/ProjectChecks";
 import { EmptyProjects } from "../components/EmptyProjects";
@@ -66,6 +67,7 @@ export default function Settings() {
 }
 
 function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => void }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? "");
   const [repoUrl, setRepoUrl] = useState(project.repoUrl ?? "");
@@ -94,6 +96,10 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
         localPath: localPath.trim() || null,
       });
       setStatus("Сохранено");
+      // Repo-status is driven by the just-saved repoUrl + localPath, so an
+      // explicit invalidate makes the Clone/Pull banner reflect the new
+      // values immediately instead of waiting on the 10-second poll.
+      await queryClient.invalidateQueries({ queryKey: ["repo-status", project.id] });
       onSaved();
     } catch (e) {
       setStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -178,7 +184,96 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
           <RepoPullInline projectId={project.id} />
         </div>
       </section>
+
+      <DangerZone project={project} />
     </div>
+  );
+}
+
+// Owner-only destructive actions. Currently just "Delete project" — the
+// backend cascades to all task / conversation / member rows via FK
+// constraints, but the on-disk workspace folder is left in place so the
+// user can re-import or archive it manually.
+function DangerZone({ project }: { project: Project }) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [armed, setArmed] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Hide the section entirely for non-owners. The endpoint refuses
+  // non-owners with 403; this is just to keep the UI honest.
+  if (!user || !project.ownerId || project.ownerId !== user.id) return null;
+
+  async function destroy() {
+    setBusy(true); setErr(null);
+    try {
+      await api.deleteProject(project.id);
+      // Drop the row from the cached list immediately. ProjectContext's
+      // effect notices the previously-selected id is gone and snaps to
+      // the next project (or shows EmptyProjects).
+      queryClient.setQueryData<Project[]>(["projects"], (old) =>
+        (old ?? []).filter((p) => p.id !== project.id),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="border-t border-border pt-6 mt-4 flex flex-col gap-4">
+      <header className="flex flex-col gap-1">
+        <h3 className="text-sm font-semibold text-accent-red">Опасная зона</h3>
+        <p className="text-xs text-text-secondary">
+          Удаление проекта необратимо. Все задачи, чаты, история сигналов и история стоимости будут удалены безвозвратно. Локальная папка <code>{project.localPath ?? "(не задана)"}</code> остаётся на диске — её можно удалить отдельно.
+        </p>
+      </header>
+
+      {!armed ? (
+        <div>
+          <Button variant="primary-red" size="md" onClick={() => setArmed(true)} type="button">
+            Удалить проект
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 p-4 border border-[color:var(--color-accent-red,#e74c3c)]/30 bg-[color:var(--color-accent-red,#e74c3c)]/5">
+          <p className="text-xs text-text-secondary">
+            Для подтверждения введите название проекта: <code className="text-text-primary">{project.name}</code>
+          </p>
+          <input
+            className={INPUT}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={project.name}
+            autoFocus
+          />
+          {err && <span className="text-xs text-accent-red">Ошибка: {err}</span>}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary-red"
+              size="md"
+              onClick={destroy}
+              disabled={busy || typed !== project.name}
+              type="button"
+            >
+              {busy ? "Удаление…" : "Удалить навсегда"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => { setArmed(false); setTyped(""); setErr(null); }}
+              disabled={busy}
+              type="button"
+            >
+              Отмена
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

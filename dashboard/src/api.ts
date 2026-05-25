@@ -263,6 +263,12 @@ export const pullProject = (projectId: string) =>
 export const cloneProjectFromSettings = (projectId: string) =>
   postValidated(`/projects/${projectId}/clone`, {}, CloneStatusSchema);
 
+// Owner-only on the backend (task-api.ts checks ownerId). The dashboard
+// hides the button for non-owners as a UX nicety; a 403 here would mean
+// ownership changed mid-session.
+export const deleteProject = (projectId: string): Promise<void> =>
+  del(`/projects/${projectId}`);
+
 // Members
 const MemberSchema = z.object({
   userId: z.string().uuid(),

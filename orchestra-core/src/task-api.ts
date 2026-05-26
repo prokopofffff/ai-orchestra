@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { ProjectSchema, TaskSchema, TaskCommentSchema } from "@ai-orchestra/shared";
+import { ProjectSchema, TaskSchema, TaskCommentSchema, TaskStateSchema } from "@ai-orchestra/shared";
 import { getDb, getPool } from "./db";
 import { projects, tasks, taskComments, conversations, projectNotes } from "./db/schema";
 import { parseRow, parseRows } from "./db-utils";
@@ -523,7 +523,13 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       title: z.string().optional(),
       description: z.string().optional(),
       type: z.enum(["epic", "task", "subtask", "bug", "feature"]).optional(),
-      state: z.string().optional(),
+      // Strict enum: a loose z.string() let agents send `state: "done"` or
+      // `"completed"`, which wrote a non-canonical value to the DB and then
+      // 500'd on the response parse (TaskSchema is strict). The reconciler
+      // then kept respawning the agent off the stuck `designing` state,
+      // spamming Telegram. See dependency-engine DONE_STATES for the real
+      // terminal values: closed / merged / design_ready.
+      state: TaskStateSchema.optional(),
       priority: z.enum(["low", "normal", "high", "immediate"]).optional(),
       assigneeRole: z.string().nullable().optional(),
       blockedBy: z.array(z.string().uuid()).optional(),

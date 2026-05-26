@@ -107,12 +107,24 @@ server.tool(
   },
 );
 
+const TaskStateEnum = z.enum([
+  "new", "described", "designing", "design_ready",
+  "in_development", "pr_created", "revisions",
+  "in_testing", "tested",
+  "in_review", "approved", "merged", "closed",
+  "failed", "cancelled",
+]);
+
 server.tool(
   "task_update",
   "Update a task's state, priority, description, or other fields.",
   {
     taskId: z.string().uuid().describe("Task ID"),
-    state: z.string().optional().describe("New state"),
+    state: TaskStateEnum.optional().describe(
+      "New state. Terminal states are 'closed' (no PR / design-doc-only), " +
+      "'merged' (PR landed), 'design_ready' (designer hand-off). " +
+      "Do NOT use 'done' or 'completed' — those aren't valid states.",
+    ),
     priority: z.enum(["low", "normal", "high", "immediate"]).optional().describe("New priority"),
     description: z.string().optional().describe("Updated description"),
     assigneeRole: z.string().optional().describe("New assignee role"),

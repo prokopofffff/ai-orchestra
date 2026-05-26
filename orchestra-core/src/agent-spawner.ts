@@ -32,6 +32,7 @@ import {
   type ObserverContext,
 } from "./agents/runtime/observers";
 import { providerFor, buildGitProviderEnv } from "./providers";
+import { log } from "./obs";
 import { mintAgentJwt } from "./agent-jwt";
 import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
 import { DONE_STATES } from "./dependency-engine";
@@ -39,6 +40,36 @@ import { resolveDailyCostCap, resolvePerRunBudgetUsd } from "./limits";
 import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 import type { RuntimeEvent } from "./agents/runtime/types";
+
+// ─── Completion-notify dedup ───
+//
+// In-memory map of last completion-notify time per (project, task, role).
+// Process-local on purpose: a restart clears the cache, which is the right
+// behavior — after a restart the user wants to know if an agent finished.
+// Persisting this in DB would add coordination overhead for a soft UX guard.
+
+const COMPLETION_NOTIFY_WINDOW_MS = 5 * 60 * 1000;
+const lastCompletionNotify = new Map<string, number>();
+
+function shouldNotifyCompletion(projectId: string, taskId: string, role: AgentRole): boolean {
+  const key = `${projectId}:${taskId}:${role}`;
+  const now = Date.now();
+  const last = lastCompletionNotify.get(key);
+  if (last && now - last < COMPLETION_NOTIFY_WINDOW_MS) {
+    log.debug({ projectId, taskId, role, sinceLastMs: now - last }, "completion-notify suppressed (dedup window)");
+    return false;
+  }
+  lastCompletionNotify.set(key, now);
+  // Light GC: trim entries older than 2× window so the map can't grow
+  // unbounded over a long-running process with many distinct tasks.
+  if (lastCompletionNotify.size > 1024) {
+    const cutoff = now - 2 * COMPLETION_NOTIFY_WINDOW_MS;
+    for (const [k, t] of lastCompletionNotify) {
+      if (t < cutoff) lastCompletionNotify.delete(k);
+    }
+  }
+  return true;
+}
 
 // ─── Spawn Agent ───
 
@@ -143,6 +174,21 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   // ── 2. Worktree + scope hook ────────────────────────────────────────
   let repoDir: string;
   let authUrl: string | null = null;
+  // For local_path projects with a repo_url we still tokenize the URL so the
+  // worktree gets an authenticated `origin` below. Without this `git push`
+  // from the agent fails on `https://…gitlab…/…` with
+  // "fatal: could not read Username for 'https://…': No such device or address"
+  // — git asks /dev/tty for creds because the env var `GITLAB_TOKEN` alone
+  // isn't a credential source for vanilla git. Pre-rewriting the remote URL
+  // sidesteps the credential helper entirely.
+  if (localPath && repoUrl) {
+    try {
+      const provider = providerFor(repoUrl, settings as ProjectSettings | null);
+      authUrl = provider.tokenizeCloneUrl();
+    } catch (err) {
+      log.warn({ err, slug }, "spawnAgent: failed to tokenize remote for local_path worktree");
+    }
+  }
   if (localPath) {
     repoDir = localPath as string;
     // Filesystem preflight first — `isGitRepo` returns false for both
@@ -279,12 +325,21 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     unregisterSessionController(session.id);
     // ── 6. Notify + cleanup ────────────────────────────────────────────
     const taskTitle = (await getPool().query("SELECT title FROM tasks WHERE id = $1", [taskId])).rows[0]?.title;
-    await notify({
-      projectId,
-      text: `Агент ${role} завершил работу: ${taskTitle ?? taskId}`,
-      priority: "low",
-      fromRole: "system",
-    }).catch((e) => logBackgroundError("agent:notify-completion", e, projectId));
+    // Dedup completion notifications. The reconciler re-spawns tasks stuck
+    // in active states (designing/in_development/...) every 60s; without
+    // this gate, a task that won't progress (e.g. agent failed to update
+    // its state and the loop's root cause is unresolved) will Telegram-spam
+    // the user with identical "Агент X завершил работу: <title>" lines.
+    // Five-minute window swallows back-to-back retries while still letting
+    // a genuine second handoff (e.g. after a manual fix + new signal) post.
+    if (shouldNotifyCompletion(projectId, taskId, role)) {
+      await notify({
+        projectId,
+        text: `Агент ${role} завершил работу: ${taskTitle ?? taskId}`,
+        priority: "low",
+        fromRole: "system",
+      }).catch((e) => logBackgroundError("agent:notify-completion", e, projectId));
+    }
     await cleanupWorktree(repoDir, worktreeDir);
   }
 

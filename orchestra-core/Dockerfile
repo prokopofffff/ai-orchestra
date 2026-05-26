@@ -53,13 +53,21 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 #                     drive (e.g. ai-runner/runner.py for the AI/RAG MVP).
 #                     Safe to ship — no privilege escalation, just an
 #                     interpreter.
+#   * go            — `go test ./...` against project backends written in
+#                     Go (current AI/RAG backup-service). QA needs this
+#                     to re-run unit tests inside the worktree. Safe to
+#                     ship: a build/test runner with no privileged surface.
+#   * curl          — QA validation scenarios hit local HTTP endpoints
+#                     (e.g. `curl http://127.0.0.1:8443/api/v1/ai/status`).
+#                     Without it the agent has to compose-and-fetch via
+#                     node, which it doesn't reliably do.
 #
 # NOTE: docker-cli + docker-cli-compose were briefly included with a host
 # docker.sock bind to let QA agents bring up project contours. That was
 # revoked once multi-tenant became a requirement: a bound socket is root-
 # equivalent on the host, breaking tenant isolation. QA contour validation
 # now has to go through a sandboxed runner — see roadmap.
-RUN apk add --no-cache git python3 py3-pip \
+RUN apk add --no-cache git python3 py3-pip go curl \
  && npm i -g @openai/codex @anthropic-ai/claude-code
 
 WORKDIR /app

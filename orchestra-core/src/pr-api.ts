@@ -6,6 +6,8 @@ import type { AgentRole } from "./config";
 import { git } from "./repo-manager";
 import { log } from "./obs";
 import { providerForProject } from "./providers";
+import { currentUserId } from "./auth";
+import { userCanAccessProject, userCanEditProject } from "./project-access";
 
 export const prPlugin: FastifyPluginAsync = async (app) => {
   app.post("/pr/create", async (request, reply) => {
@@ -17,6 +19,15 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
       base: z.string().default("main"),
       agentRole: z.string().optional(),
     }).parse(request.body);
+
+    // Multi-tenant gate: caller must have edit rights on the project they
+    // claim to be creating a PR for. Without this an authenticated user
+    // from any tenant could trigger pushes + PR creation in any other
+    // tenant's project just by passing a different projectId.
+    const userId = currentUserId(request);
+    if (!(await userCanEditProject(userId, body.projectId))) {
+      return reply.code(404).send({ error: "Проект не найден" });
+    }
 
     const pool = getPool();
     const { rows: projRows } = await pool.query(
@@ -101,27 +112,50 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
   });
 
   // ─── Get PR diff ───
+  //
+  // Read-level access: anyone who can see the project can fetch the diff
+  // of one of its PRs. Without the gate, any authenticated user could
+  // pull diffs from any tenant by supplying their projectId.
 
   app.post("/pr/diff", async (request, reply) => {
-    const { prUrl, projectId } = request.body as { prUrl?: string; projectId?: string };
-    if (!prUrl || !projectId) return reply.code(400).send({ error: "Обязательные поля: prUrl и projectId" });
+    const body = z.object({
+      projectId: z.string().uuid(),
+      prUrl: z.string().url(),
+    }).parse(request.body);
 
-    const provider = await providerForProject(projectId);
-    const diff = await provider.getPRDiff(prUrl);
+    const userId = currentUserId(request);
+    if (!(await userCanAccessProject(userId, body.projectId))) {
+      return reply.code(404).send({ error: "Проект не найден" });
+    }
+
+    const provider = await providerForProject(body.projectId);
+    const diff = await provider.getPRDiff(body.prUrl);
     return { diff };
   });
 
   // ─── Submit PR review ───
+  //
+  // Edit-level access: submitting an approve/request-changes/comment
+  // writes to the upstream provider, so the caller must be allowed to
+  // edit the project (not merely view it).
 
   app.post("/pr/review", async (request, reply) => {
-    const body = request.body as {
-      projectId?: string;
-      prUrl?: string;
-      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
-      body: string;
-      comments?: Array<{ path: string; line: number; body: string }>;
-    };
-    if (!body.projectId || !body.prUrl) return reply.code(400).send({ error: "Обязательные поля: projectId и prUrl" });
+    const body = z.object({
+      projectId: z.string().uuid(),
+      prUrl: z.string().url(),
+      event: z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]),
+      body: z.string(),
+      comments: z.array(z.object({
+        path: z.string(),
+        line: z.number(),
+        body: z.string(),
+      })).optional(),
+    }).parse(request.body);
+
+    const userId = currentUserId(request);
+    if (!(await userCanEditProject(userId, body.projectId))) {
+      return reply.code(404).send({ error: "Проект не найден" });
+    }
 
     const provider = await providerForProject(body.projectId);
     const result = await provider.submitReview({
@@ -136,11 +170,18 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
   // ─── Get PR reviews/comments ───
 
   app.post("/pr/reviews", async (request, reply) => {
-    const { prUrl, projectId } = request.body as { prUrl?: string; projectId?: string };
-    if (!prUrl || !projectId) return reply.code(400).send({ error: "Обязательные поля: prUrl и projectId" });
+    const body = z.object({
+      projectId: z.string().uuid(),
+      prUrl: z.string().url(),
+    }).parse(request.body);
 
-    const provider = await providerForProject(projectId);
-    const payload = await provider.getReviews(prUrl);
+    const userId = currentUserId(request);
+    if (!(await userCanAccessProject(userId, body.projectId))) {
+      return reply.code(404).send({ error: "Проект не найден" });
+    }
+
+    const provider = await providerForProject(body.projectId);
+    const payload = await provider.getReviews(body.prUrl);
     return payload;
   });
 };

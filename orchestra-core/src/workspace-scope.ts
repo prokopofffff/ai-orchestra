@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 
 /**
@@ -36,6 +37,35 @@ export function getUserWorkspaceRoot(userId: string): string {
     throw new Error(`getUserWorkspaceRoot: invalid userId "${userId}"`);
   }
   return path.join(getWorkspacesRoot(), userId);
+}
+
+/**
+ * Idempotently create the user's workspace directory with mode 0o700.
+ *
+ * Multi-tenant defense-in-depth: the per-user subtree is the only piece
+ * of the tenant boundary that the agent's filesystem code can attack
+ * directly (a worktree process can `cd /workspace/<otherUserId>/…` if
+ * the parent dir is world-readable). Setting the dir mode to 0700 means
+ * UNIX permissions reject the access even if the orchestra-core process
+ * forgets a path-scope check. The fix is incomplete (the orchestra-core
+ * process itself runs as root, so root-side leaks still need
+ * `assertPathInUserScope`), but it raises the bar against any code that
+ * later forks as a non-root tenant uid.
+ *
+ * Also chmods an existing dir down to 0700 — covers tenant dirs created
+ * before this helper landed under the default 0755 umask.
+ */
+export function ensureUserWorkspaceRoot(userId: string): string {
+  const dir = getUserWorkspaceRoot(userId);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch {
+    // Best-effort: a chmod that fails (e.g. dir is on a volume that
+    // refuses mode changes) shouldn't block project create. The mkdir
+    // mode above already set 0700 for newly-created dirs.
+  }
+  return dir;
 }
 
 /**

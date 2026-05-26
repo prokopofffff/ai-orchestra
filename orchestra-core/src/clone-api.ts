@@ -9,7 +9,7 @@ import { getDb } from "./db";
 import { projects } from "./db/schema";
 import { currentUserId } from "./auth";
 import { userCanEditProject } from "./project-access";
-import { assertPathInUserScope, ScopeViolationError } from "./workspace-scope";
+import { assertPathInUserScope, ensureUserWorkspaceRoot, ScopeViolationError } from "./workspace-scope";
 import { normalizeProviderSecretsForWrite, getProjectGitToken } from "./project-secrets";
 import { providerFor } from "./providers";
 import { log } from "./obs";
@@ -82,6 +82,12 @@ export const clonePlugin: FastifyPluginAsync = async (app) => {
       if (err instanceof ScopeViolationError) return reply.code(403).send({ error: err.message });
       throw err;
     }
+    // Ensure the user's workspace root exists with mode 0o700 before the
+    // clone worker creates the per-project subdir under it. Without this
+    // a fresh user whose dir has never been browsed has the root created
+    // implicitly by mkdir(..., {recursive: true}) under the umask, which
+    // is 0o755 on a default container — readable by other tenant UIDs.
+    ensureUserWorkspaceRoot(userId);
 
     // git clone refuses to write into a non-empty directory, but allows an
     // existing empty one. The dashboard also creates the folder on its own

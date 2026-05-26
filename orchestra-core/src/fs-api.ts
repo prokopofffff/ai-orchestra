@@ -31,7 +31,13 @@ export const fsPlugin: FastifyPluginAsync = async (app) => {
       const userId = currentUserId(request);
       const userScope = getUserWorkspaceRoot(userId);
       // Lazily create the user's scope dir so first-time browse doesn't 404.
+      // chmod after mkdir: a pre-existing dir created before the 0o700 mode
+      // landed (e.g. on volumes from earlier installs) stays at its old
+      // permissions otherwise. UNIX dir mode is the second line of defense
+      // against tenant A reading tenant B's tree even if a path-scope check
+      // is bypassed app-side.
       await fs.mkdir(userScope, { recursive: true, mode: 0o700 });
+      await fs.chmod(userScope, 0o700).catch(() => { /* best-effort */ });
 
       const showHidden = request.query.showHidden === "true";
       const raw = request.query.path;

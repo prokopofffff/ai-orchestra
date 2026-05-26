@@ -91,6 +91,13 @@ export type DailyCostBreakdown = {
   byModel: Record<string, number>;
 };
 
+/**
+ * SECURITY: caller must verify `projectId` is one the requesting user is
+ * allowed to read (via `userCanAccessProject` or `visibleProjectIds`).
+ * This helper does NOT enforce tenant isolation — it trusts the projectId
+ * passed in. Currently this is fine because the only HTTP callers
+ * (usage-api.ts) gate access first.
+ */
 export async function getDailyCostBreakdown(projectId: string): Promise<DailyCostBreakdown> {
   const pool = getPool();
   const [{ rows: totalRows }, { rows: roleRows }, { rows: modelRows }] = await Promise.all([
@@ -134,6 +141,10 @@ export type DailyCostPoint = {
  * Per-day cost totals for the last N days, with role + model breakdown per
  * bucket. Backs the dashboard's history chart. Days with zero spend are
  * still emitted so the chart's x-axis is contiguous.
+ *
+ * SECURITY: caller must pre-filter `projectId` / `projectIds` to entries
+ * the requesting user can access (see `visibleProjectIds`). This helper
+ * does not validate. Direct DB-only utility.
  */
 export async function getDailyCostSeries(opts: {
   projectId?: string;

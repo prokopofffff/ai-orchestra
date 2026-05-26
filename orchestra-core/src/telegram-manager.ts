@@ -31,7 +31,31 @@ async function listProjectsWithTelegram(): Promise<ProjectTelegramRow[]> {
 }
 
 async function reconcile(): Promise<void> {
-  const wanted = await listProjectsWithTelegram();
+  const raw = await listProjectsWithTelegram();
+  // Multi-tenant safety: a Telegram bot's getUpdates queue is exclusive — two
+  // projects pointed at the same bot token would drain each other's updates,
+  // delivering tenant A's messages into tenant B's project conversation. The
+  // partial unique index + task-api pre-save check (findTelegramConflict) are
+  // supposed to prevent this, but races / manual DB edits / migrations could
+  // slip a duplicate through. Detect and refuse: keep only the first project
+  // for each token and log the rest so the operator can clean up.
+  const byToken = new Map<string, ProjectTelegramRow>();
+  const duplicates: ProjectTelegramRow[] = [];
+  for (const r of raw) {
+    if (byToken.has(r.token)) {
+      duplicates.push(r);
+      continue;
+    }
+    byToken.set(r.token, r);
+  }
+  if (duplicates.length > 0) {
+    log.error(
+      { duplicates: duplicates.map((d) => d.id), kept: [...byToken.values()].map((k) => k.id) },
+      "telegram poll: duplicate bot tokens across projects — skipping later occurrences. " +
+      "Cross-tenant message leak risk. Run `SELECT id, settings->'telegram'->>'botToken' FROM projects` to find them.",
+    );
+  }
+  const wanted = [...byToken.values()];
   const wantedIds = new Set(wanted.map((w) => w.id));
 
   // Stop loops whose project lost its token (or was deleted).

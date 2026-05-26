@@ -25,8 +25,14 @@ import { log } from "./obs";
 const WATCHDOG_KIND = "stuck-watchdog:scan";
 const WATCHDOG_WINDOW_MINUTES = 30;
 
+// `pr_created` is excluded on purpose: it's a *waiting* state ("PR is up,
+// awaiting human/CI/QA"), not a state where an agent should be actively
+// progressing. The reconciler already gates `pr_created` respawn on a
+// pending `pr_changes_requested` signal (dispatcher.ts:228), so it doesn't
+// loop on its own. Freezing it here would falsely block PRs that are
+// legitimately sitting in code review.
 const ACTIVE_STATES = [
-  "designing", "in_development", "in_testing", "in_review", "pr_created",
+  "designing", "in_development", "in_testing", "in_review",
 ];
 
 registerHandler(WATCHDOG_KIND, z.object({}), async () => {

@@ -16,11 +16,12 @@ import {
 } from "./project-access";
 import { createIntroTask } from "./intro-task";
 import { reconcileTelegramNow } from "./telegram-manager";
-import { isGitRepo, initGitRepo, git } from "./repo-manager";
+import { isGitRepo, initGitRepo, git, rewriteOriginAuth } from "./repo-manager";
 import { normalizeProviderSecretsForWrite } from "./project-secrets";
 import { loadConfig } from "./config";
 import type { AgentRole } from "./config";
-import { providerForProject } from "./providers";
+import { providerForProject, providerFor } from "./providers";
+import type { ProjectSettings } from "@ai-orchestra/shared";
 import { log } from "./obs";
 
 /**
@@ -226,7 +227,66 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (body.settings && (body.settings as { telegram?: unknown }).telegram !== undefined) {
       reconcileTelegramNow().catch(() => { /* best-effort */ });
     }
+    // Re-tokenize the local checkout's origin if the user just rotated their
+    // token or pointed the project at a different remote. Without this, a
+    // pre-existing clone keeps its bare HTTPS origin and `git push` from the
+    // agent fails with "could not read Username for 'https://…'" — fresh
+    // clones avoid this because clone-api bakes the token into the URL, but
+    // for projects that pre-date the token being entered (or where the user
+    // updated it in Settings later) we have to do it explicitly here.
+    const touchedToken =
+      body.settings !== undefined &&
+      (body.settings as { provider?: { token?: unknown } }).provider?.token !== undefined;
+    if ((touchedToken || body.repoUrl !== undefined) && row.localPath && row.repoUrl) {
+      try {
+        const provider = providerFor(row.repoUrl, row.settings as ProjectSettings | null);
+        const authUrl = provider.tokenizeCloneUrl();
+        await rewriteOriginAuth(row.localPath, authUrl);
+      } catch (err) {
+        // Provider resolution failure (no token, unknown host) shouldn't
+        // poison the settings save — log and continue. The user still gets
+        // the dashboard's "save successful" response and can retry once
+        // their token is configured.
+        log.warn({ err, projectId: row.id }, "PATCH /projects/:id: origin rewrite skipped");
+      }
+    }
     return parseRow(projectSchema, row);
+  });
+
+  // ─── Ad-hoc refresh of the local checkout's origin URL ───
+  //
+  // Same logic as the PATCH side-effect, exposed as a stand-alone trigger
+  // so the dashboard can offer a "Refresh git credentials" button without
+  // requiring the user to make a no-op settings save. Useful when the
+  // credential setup is fine but the local origin was set up before the
+  // token existed.
+  app.post<{ Params: { id: string } }>("/projects/:id/refresh-git-creds", async (request, reply) => {
+    const userId = currentUserId(request);
+    const projectId = request.params.id;
+    if (!(await userCanEditProject(userId, projectId))) {
+      return reply.code(403).send({ error: "Недостаточно прав" });
+    }
+    const [row] = await getDb()
+      .select({ localPath: projects.localPath, repoUrl: projects.repoUrl, settings: projects.settings })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!row) return reply.code(404).send({ error: "Проект не найден" });
+    if (!row.localPath) return reply.code(400).send({ error: "У проекта не задан локальный путь" });
+    if (!row.repoUrl) return reply.code(400).send({ error: "У проекта не задан remote URL" });
+    try {
+      const provider = providerFor(row.repoUrl, row.settings as ProjectSettings | null);
+      const authUrl = provider.tokenizeCloneUrl();
+      const rewritten = await rewriteOriginAuth(row.localPath, authUrl);
+      if (!rewritten) {
+        return reply.code(409).send({
+          error: `Путь \`${row.localPath}\` не является git-репозиторием — сначала склонируйте.`,
+        });
+      }
+      return { refreshed: true };
+    } catch (err) {
+      return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // ─── Project notes ───

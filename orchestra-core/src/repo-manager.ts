@@ -172,6 +172,34 @@ export async function configureRemoteAuth(worktreeDir: string, authUrl: string):
   }
 }
 
+/**
+ * Re-write origin's URL with the project's tokenized form. Idempotent.
+ * Use after the user updates their git token in Settings so a pre-existing
+ * local checkout's bare HTTPS remote (`https://host/path.git`) gains the
+ * `oauth2:<token>@` (GitLab) / `<token>@` (GitHub) prefix that lets `git push`
+ * authenticate without a credential helper. Without this, pushes from the
+ * agent fail with `could not read Username for 'https://…': No such device
+ * or address`.
+ *
+ * No-op (returns false) when the path isn't a git repo or when there's no
+ * configured token/URL to apply. Errors during set-url are logged and
+ * swallowed so a transient git permission issue can't bubble up and block
+ * the settings save.
+ */
+export async function rewriteOriginAuth(
+  repoDir: string,
+  authUrl: string,
+): Promise<boolean> {
+  if (!isGitRepo(repoDir)) return false;
+  try {
+    await simpleGit(repoDir).remote(["set-url", "origin", authUrl]);
+    return true;
+  } catch (err) {
+    log.warn({ err, repoDir }, "rewriteOriginAuth: set-url origin failed");
+    return false;
+  }
+}
+
 /** Branch name convention per role. */
 export function branchName(role: string, taskId: string): string {
   const prefixes: Record<string, string> = {

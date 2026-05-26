@@ -49,20 +49,17 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 # Runtime CLIs orchestra-core spawns:
 #   * git           — worktrees, branch ops
 #   * claude/codex  — per-role agent runtimes + OAuth flows
-#   * docker        — QA agent runs `docker compose up` against project
-#                     contours via the host's docker.sock (bind-mounted in
-#                     docker-compose.yml). Without the client binary the
-#                     bind is useless: a QA validation that needs to bring
-#                     up ai-runner/proxy fails with `/bin/sh: docker: not
-#                     found`. Security caveat: the bound socket is root-
-#                     equivalent on the host — see docker-compose.yml.
-#   * python3+pip   — direct execution of project scripts that QA needs
-#                     to drive (e.g. buildable/ai-runner/runner.py for the
-#                     AI/RAG MVP). py3-pip stays for project deps that
-#                     manifest at validation time.
-# Without these, agent runs fail with ENOENT — bin-resolver surfaces the
-# install hint, but the deployed image should already have them.
-RUN apk add --no-cache git docker-cli docker-cli-compose python3 py3-pip \
+#   * python3+pip   — direct execution of project scripts agents need to
+#                     drive (e.g. ai-runner/runner.py for the AI/RAG MVP).
+#                     Safe to ship — no privilege escalation, just an
+#                     interpreter.
+#
+# NOTE: docker-cli + docker-cli-compose were briefly included with a host
+# docker.sock bind to let QA agents bring up project contours. That was
+# revoked once multi-tenant became a requirement: a bound socket is root-
+# equivalent on the host, breaking tenant isolation. QA contour validation
+# now has to go through a sandboxed runner — see roadmap.
+RUN apk add --no-cache git python3 py3-pip \
  && npm i -g @openai/codex @anthropic-ai/claude-code
 
 WORKDIR /app

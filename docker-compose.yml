@@ -67,19 +67,12 @@ services:
       # Must persist across container rebuilds — otherwise every redeploy
       # forces every project to re-authorize Claude and Codex.
       - orchestra_creds:/root/orchestra-creds
-      # Host's docker socket. QA agents drive `docker compose up` against
-      # project contours (e.g. ai-runner + proxy for the AI/RAG MVP) so
-      # they can curl real endpoints and snapshot RAM/latency. Without
-      # this bind the container has docker-cli installed but no daemon
-      # to talk to.
-      #
-      # SECURITY CAVEAT: the socket is root-equivalent on the host —
-      # `docker run -v /:/host ...` reads any path. We accept the risk
-      # because (a) this is a single-tenant deploy, (b) the agent runs in
-      # a sandboxed worktree with scope-enforcer policing writes, and
-      # (c) the alternative (DinD privileged sidecar) carries the same
-      # ultimate trust boundary. Revisit if we ever multi-tenant.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # NOTE: do NOT bind /var/run/docker.sock here. We had it briefly to
+      # let QA agents drive `docker compose up` for project contours, but
+      # the bound socket is root-equivalent on the host — any agent could
+      # `docker run -v /:/host` and read any other tenant's data.
+      # Multi-tenant deploys must keep this off. QA contour validation
+      # goes through a separate sandboxed runner.
       # Volume-backed root for project working directories (see WORKSPACE_ROOT
       # env above). Without this volume, anything a user picks via the
       # folder picker would live in the container's writable layer and

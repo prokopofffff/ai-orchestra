@@ -41,6 +41,40 @@ import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 import type { RuntimeEvent } from "./agents/runtime/types";
 
+// ─── Preflight freeze ───
+//
+// Preflight checks (no repo, missing path, runtime auth unconfigured, …)
+// describe a *configuration* problem the user must fix. Without freezing,
+// the dispatch-reconciler picks the task up every 60s and replays the same
+// escalate, drowning Telegram in identical "У проекта X не задан репозиторий"
+// notifications. Setting tasks.frozen_reason is the existing kill-switch for
+// the reconciler (dispatcher.ts:216 gates `frozen_reason IS NULL`) and for
+// applySpawn (dispatcher.ts:105). We use UPDATE … WHERE frozen_reason IS NULL
+// RETURNING so the escalate fires exactly once — the first call that wins
+// the freeze races escalate; subsequent re-entries no-op silently.
+
+async function preflightFreeze(
+  projectId: string,
+  taskId: string,
+  reason: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const { rows } = await getPool().query(
+    `UPDATE tasks
+        SET frozen_reason = $1, updated_at = now()
+      WHERE id = $2 AND frozen_reason IS NULL
+      RETURNING id`,
+    [reason, taskId],
+  );
+  if (rows.length === 0) {
+    // Already frozen — earlier preflight in this same task already escalated.
+    // Stay silent so we don't double-notify the user for one root cause.
+    log.debug({ taskId, reason }, "preflightFreeze: task already frozen, skipping escalate");
+    return;
+  }
+  await escalate(projectId, taskId, reason, metadata);
+}
+
 // ─── Completion-notify dedup ───
 //
 // In-memory map of last completion-notify time per (project, task, role).
@@ -112,7 +146,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     // actionable fix (set a repo URL or local path in Settings), so
     // escalate cleanly instead of logging a [agent-run] fatal.
     const reason = `У проекта "${slug}" не задан репозиторий или локальный путь. Откройте Настройки проекта, чтобы указать его.`;
-    await escalate(projectId, taskId, reason, {
+    await preflightFreeze(projectId, taskId, reason, {
       event: "no_repo_configured",
       slug,
       role,
@@ -128,7 +162,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     projectId, role, settings, config,
   });
   if (!resolved.ok) {
-    await escalate(projectId, taskId, resolved.reason, {
+    await preflightFreeze(projectId, taskId, resolved.reason, {
       event: "runtime_auth_unconfigured", slug, role,
     });
     throw new PreflightError(`runtime auth unconfigured on project ${slug}: ${resolved.reason}`);
@@ -200,7 +234,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       const reason =
         `Рабочая директория \`${repoDir}\` не существует. ` +
         `Откройте Настройки проекта и выберите путь, который смонтирован в контейнер.`;
-      await escalate(projectId, taskId, reason, {
+      await preflightFreeze(projectId, taskId, reason, {
         event: "workdir_missing",
         path: repoDir,
         role,
@@ -214,7 +248,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     // PreflightError keeps this out of the [agent-run] fatal log.
     if (!isGitRepo(repoDir)) {
       const reason = `Локальный путь \`${repoDir}\` не является git-репозиторием. Откройте Настройки проекта, чтобы инициализировать его, или укажите другой путь.`;
-      await escalate(projectId, taskId, reason, {
+      await preflightFreeze(projectId, taskId, reason, {
         event: "not_a_git_repo",
         path: repoDir,
         role,

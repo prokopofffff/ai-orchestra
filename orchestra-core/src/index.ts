@@ -44,6 +44,7 @@ import { startTelegramManager, stopTelegramManager } from "./telegram-manager";
 import { startPrWatcher, stopPrWatcher } from "./pr-watcher";
 import { startCostVelocityWatcher, stopCostVelocityWatcher } from "./cost-velocity-watcher";
 import { startDispatchReconciler, stopDispatchReconciler } from "./dispatch-reconciler";
+import { startStuckWatchdog } from "./stuck-watchdog";
 import { reconcileOrphanedTasks } from "./dispatcher";
 import { startScheduler, stopScheduler, registerBucket } from "./scheduler";
 import "./agents/check-handlers"; // side-effect: registers agent:observe-check handler
@@ -196,6 +197,7 @@ async function main() {
   await startPrWatcher();
   await startCostVelocityWatcher();
   await startDispatchReconciler();
+  await startStuckWatchdog();
 
   // Start Telegram polling (long-poll loop, not a tick — kept as-is)
   await startTelegramManager();

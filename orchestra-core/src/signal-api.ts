@@ -11,6 +11,7 @@ import {
   logAudit,
   type SignalPayload,
 } from "./flow-guard";
+import { allActions, allSenderRoles, allRecipientRoles } from "@ai-orchestra/shared";
 import { checkUnblocked, DONE_STATES } from "./dependency-engine";
 import { dispatchSignal } from "./dispatcher";
 import { loadConfig } from "./config";
@@ -23,10 +24,19 @@ import { userCanAccessProject, userCanEditProject, visibleProjectIds } from "./p
 import { resolveMaxRevisions, resolveMaxSignalsPerTask, resolveMaxFails, resolveMaxQaDepth } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
+// from/to/action are constrained at the schema boundary so a typo (`comlete_task`,
+// `tech_lead` with underscore, …) gets a 400 listing the valid options instead
+// of being silently stored, audit-logged, and dropped by the runtime guard.
+// The downstream `validateSignal` still enforces the role × action matrix —
+// this layer is the cheap fail-fast filter.
+const signalFromSchema = z.enum(allSenderRoles as [string, ...string[]]);
+const signalToSchema = z.enum(allRecipientRoles as [string, ...string[]]);
+const signalActionSchema = z.enum(allActions as [string, ...string[]]);
+
 const signalBodySchema = z.object({
-  from: z.string(),
-  to: z.string(),
-  action: z.string(),
+  from: signalFromSchema,
+  to: signalToSchema,
+  action: signalActionSchema,
   projectId: z.string().uuid(),
   taskId: z.string().uuid().optional(),
   message: z.string().optional(),

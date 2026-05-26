@@ -121,7 +121,15 @@ registerHandler(PR_CHECK_ONE_KIND, CheckOnePayload, async (p, ctx) => {
   }
 
   if (["pr_created", "approved", "in_review"].includes(currentState)) {
-    await pool.query("UPDATE tasks SET state = 'in_testing', updated_at = now() WHERE id = $1", [p.taskId]);
+    // Also re-assign to qa: the reconciler keys role-selection on assignee_role
+    // (with an in_testing-only override), and qa.allowedStateChanges is the
+    // only role permitted to move the task out of in_testing via the API. If
+    // we leave assignee_role at frontend/backend, a QA crash leaves the task
+    // unmovable by its original owner — a permanent loop until manual edit.
+    await pool.query(
+      "UPDATE tasks SET state = 'in_testing', assignee_role = 'qa', updated_at = now() WHERE id = $1",
+      [p.taskId],
+    );
     appendLog(p.projectId, null, "system", "system", `PR merged: ${p.title} → dispatching QA`);
     await notify({ projectId: p.projectId, text: `PR merged: ${p.title} — QA testing started`, priority: "normal", fromRole: "system" });
 

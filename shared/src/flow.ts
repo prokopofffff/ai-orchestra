@@ -317,3 +317,13 @@ export function getAllStates(): TaskState[] {
 export function knownState(state: string): state is TaskState {
   return state in implicitTransitions;
 }
+
+// Flat lists for schema validation at the API boundary. Derived from the
+// same `flow` array + `routePermissions` so adding a new action/role
+// automatically widens the accepted schemas — no parallel list to keep in sync.
+export const allActions: readonly string[] = Array.from(new Set(flow.map((e) => e.action)));
+export const allSenderRoles: readonly SenderRole[] =
+  Object.keys(routePermissions) as SenderRole[];
+export const allRecipientRoles: readonly RecipientRole[] = Array.from(
+  new Set(Object.values(routePermissions).flat()),
+);

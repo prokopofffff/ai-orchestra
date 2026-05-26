@@ -108,11 +108,21 @@ export function ensureTempDir(projectSlug: string): string {
 
 /**
  * Create a git worktree for a branch. Prunes stale registrations first.
+ *
+ * `baseBranch` (optional): override the branch the new worktree branches
+ * off of. Without this every worktree forks from `origin/<defaultBranch>`,
+ * which is wrong for QA: QA spawned on a `pr_created` task with the dev's
+ * branch already pushed needs to see the dev's code, not the pre-RAG
+ * trunk. Callers pass `task.branchName` here when present. The function
+ * verifies the ref actually exists (origin/ or local) before using it —
+ * a typo or stale ref silently falls back to defaultBranch instead of
+ * blowing up the spawn.
  */
 export async function createWorktree(
   repoDir: string,
   branch: string,
   defaultBranch: string,
+  baseBranch?: string | null,
 ): Promise<string> {
   const worktreeDir = path.join(path.dirname(repoDir), "worktrees", branch.replace(/\//g, "-"));
   const g = simpleGit(repoDir);
@@ -132,12 +142,23 @@ export async function createWorktree(
     log.warn({ err, repoDir }, "createWorktree: fetch origin failed, using local refs");
   });
 
-  // Pick base ref: prefer origin/<default>, else local <default>.
-  let baseRef = `origin/${defaultBranch}`;
-  try {
-    await g.raw(["rev-parse", "--verify", baseRef]);
-  } catch {
-    baseRef = defaultBranch;
+  // Pick base ref: caller's baseBranch (if it actually exists) → its
+  // origin/ counterpart → origin/<default> → local <default>. The
+  // verify-before-use pattern means a stale or mistyped branch silently
+  // degrades to default instead of failing the spawn.
+  const candidates: string[] = [];
+  if (baseBranch && baseBranch !== branch) {
+    candidates.push(`origin/${baseBranch}`, baseBranch);
+  }
+  candidates.push(`origin/${defaultBranch}`, defaultBranch);
+
+  let baseRef = defaultBranch;
+  for (const cand of candidates) {
+    try {
+      await g.raw(["rev-parse", "--verify", cand]);
+      baseRef = cand;
+      break;
+    } catch { /* try next */ }
   }
 
   // Create or force-update branch.

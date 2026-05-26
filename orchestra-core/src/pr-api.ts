@@ -90,13 +90,17 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
         base: body.base,
       });
 
-      // Update task with PR URL if we can find the associated task.
+      // Update task with PR URL + the source branch the PR was raised
+      // from. branch_name is what `createWorktree` reads to base later
+      // worktrees off the dev's actual work (see agent-spawner.ts) —
+      // without it, QA spawned for testing this PR would still read
+      // origin/main and report "files missing" on a perfectly valid PR.
       if (body.agentRole) {
         await pool.query(
-          `UPDATE tasks SET pr_url = $1, updated_at = now()
-           WHERE project_id = $2 AND assignee_role = $3
+          `UPDATE tasks SET pr_url = $1, branch_name = $2, updated_at = now()
+           WHERE project_id = $3 AND assignee_role = $4
              AND state IN ('in_development', 'pr_created') AND pr_url IS NULL`,
-          [pr.url, body.projectId, body.agentRole],
+          [pr.url, body.head, body.projectId, body.agentRole],
         ).catch(() => { /* best effort */ });
       }
 

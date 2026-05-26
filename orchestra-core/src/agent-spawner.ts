@@ -265,7 +265,22 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     repoDir = await ensureRepo(authUrl, defaultRepoDir(slug));
   }
   const branch = branchName(role, taskId);
-  const worktreeDir = await createWorktree(repoDir, branch, config.githubDefaultBranch);
+  // If a previous role (typically dev) has already pushed work for this
+  // task, base our worktree off THAT branch — not off main. Without this,
+  // QA spawned on `pr_created` reads the pre-PR trunk and reports "files
+  // missing" / "endpoints missing" on a perfectly valid PR. The exact
+  // failure mode we hit on the AI/RAG task: backend pushed exp/local-ai-rag,
+  // QA's worktree was based off main (c9152e5), QA escalated "no docs/no
+  // routes/no compose ai-runner". Tech-lead then had to babysit a manual
+  // "rerun on this branch" loop.
+  const { rows: branchRows } = await pool.query<{ branch_name: string | null }>(
+    "SELECT branch_name FROM tasks WHERE id = $1",
+    [taskId],
+  );
+  const taskBaseBranch = branchRows[0]?.branch_name ?? null;
+  const worktreeDir = await createWorktree(
+    repoDir, branch, config.githubDefaultBranch, taskBaseBranch,
+  );
   if (authUrl) await configureRemoteAuth(worktreeDir, authUrl);
   installScopeHook(worktreeDir, role);
 

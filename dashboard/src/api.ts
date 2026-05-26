@@ -258,6 +258,14 @@ const PullProjectSchema = z.object({ pulled: z.boolean(), branch: z.string(), he
 export const pullProject = (projectId: string) =>
   postValidated(`/projects/${projectId}/pull`, {}, PullProjectSchema);
 
+// Refresh the local checkout's `origin` URL with the current token. Used
+// when the project was cloned before the token was entered, or when the
+// user rotated the token and wants their existing checkout to pick it up
+// without doing a no-op settings save.
+const RefreshCredsSchema = z.object({ refreshed: z.boolean() });
+export const refreshGitCreds = (projectId: string) =>
+  postValidated(`/projects/${projectId}/refresh-git-creds`, {}, RefreshCredsSchema);
+
 // Re-uses the existing clone endpoint. Token is already stored per-project
 // (set during create), so the "Clone now" button doesn't need to re-ask.
 export const cloneProjectFromSettings = (projectId: string) =>

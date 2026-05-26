@@ -383,9 +383,10 @@ function RepoStatusBanner({ projectId }: { projectId: string }) {
   );
 }
 
-// Compact "Pull from main" button rendered inline under the localPath field
-// when the repo is in a working state. Keeps the everyday refresh action
-// one click away without turning every Settings visit into a yellow banner.
+// Compact "Pull from main" + "Refresh git creds" buttons rendered inline
+// under the localPath field when the repo is in a working state. Keeps the
+// everyday refresh actions one click away without turning every Settings
+// visit into a yellow banner.
 function RepoPullInline({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const { data } = useQuery({
@@ -394,6 +395,7 @@ function RepoPullInline({ projectId }: { projectId: string }) {
     refetchInterval: 10_000,
   });
   const [busy, setBusy] = useState(false);
+  const [credsBusy, setCredsBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   if (!data?.canPull) return null;
@@ -411,10 +413,29 @@ function RepoPullInline({ projectId }: { projectId: string }) {
     }
   }
 
+  // Rewrites the local checkout's origin URL with the project's tokenized
+  // form. Needed when the user added/rotated the token after cloning, since
+  // clone-api only bakes the token in on a fresh clone. Without this, `git
+  // push` from agents fails with "could not read Username for 'https://…'".
+  async function refreshCreds() {
+    setCredsBusy(true); setMsg(null);
+    try {
+      await api.refreshGitCreds(projectId);
+      setMsg("✓ Git-креды обновлены");
+    } catch (e) {
+      setMsg(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCredsBusy(false);
+    }
+  }
+
   return (
     <div className="flex items-center gap-3 text-[11px] text-text-tertiary">
-      <Button variant="secondary" size="sm" onClick={pull} disabled={busy} type="button">
+      <Button variant="secondary" size="sm" onClick={pull} disabled={busy || credsBusy} type="button">
         {busy ? "Pull…" : "Pull from main"}
+      </Button>
+      <Button variant="secondary" size="sm" onClick={refreshCreds} disabled={busy || credsBusy} type="button">
+        {credsBusy ? "Обновляю…" : "Обновить git-креды"}
       </Button>
       {msg && <span>{msg}</span>}
     </div>

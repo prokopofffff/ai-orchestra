@@ -3,6 +3,7 @@ import { type Config, type AgentRole, getEffortForRole } from "./config";
 import {
   createSession,
   updateSession,
+  updateHeartbeat,
   registerSessionController,
   unregisterSessionController,
   type Session,
@@ -298,11 +299,27 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     role,
     worktree: worktreeDir,
   };
+  // Throttle heartbeat writes to once every 30s per session. The runtime
+  // emits many events per second on a busy turn; persisting each one as a
+  // last_heartbeat update is wasteful and the staleness check only needs
+  // sub-10-minute granularity. Without any heartbeat at all the heartbeat
+  // monitor (heartbeat.ts:98) flags any run longer than 10min as `hung`
+  // and schedules a spurious retry — exactly the false-positive that
+  // triggered "Agent tech-lead crashed (attempt 2/3) Retrying in 60s..."
+  // even though the session terminated cleanly.
+  let lastHeartbeatWrite = 0;
+  const HEARTBEAT_WRITE_INTERVAL_MS = 30_000;
   const onEvent = async (evt: RuntimeEvent): Promise<void> => {
     logRuntimeEvent(ctx, evt);
     await enqueueObserveCheck(ctx, evt).catch((e) =>
       logBackgroundError("spawner:observe-check", e, projectId));
     await recordRuntimeCost(ctx, evt, { maxBudgetUsd });
+    const now = Date.now();
+    if (now - lastHeartbeatWrite >= HEARTBEAT_WRITE_INTERVAL_MS) {
+      lastHeartbeatWrite = now;
+      updateHeartbeat(session.id).catch((e) =>
+        logBackgroundError("spawner:heartbeat", e, projectId));
+    }
   };
 
   let capExceeded: SpawnResult["capExceeded"];

@@ -43,18 +43,19 @@ import { log } from "./obs";
 
 const ROUTE_PREFIX = "/preview/:projectId";
 
-// Pre-handler attaches the project to request so the upstream resolver
-// + onResponse hooks don't need to re-query.
-declare module "fastify" {
-  interface FastifyRequest {
-    previewCtx?: {
-      projectId: string;
-      pathPrefix: string;
-      appPort: number;
-      sleeping: boolean;
-    };
-  }
+interface PreviewCtx {
+  projectId: string;
+  pathPrefix: string;
+  appPort: number;
 }
+
+// Stash the per-project resolved upstream where the http-proxy's
+// getUpstream callback can read it back. Keyed by request.id so we
+// don't collide across in-flight requests. Fastify augmentation works
+// at the TS level but the runtime property access turned out to be
+// unreliable across the http-proxy → reply-from boundary, so a side
+// channel is more robust.
+const ctxByRequestId = new Map<string, PreviewCtx>();
 
 const LAST_REQUEST_THROTTLE_MS = 30_000;
 const lastTouchedAt = new Map<string, number>();
@@ -112,14 +113,18 @@ async function preHandler(request: FastifyRequest, reply: FastifyReply): Promise
     return;
   }
 
-  // state === 'running' — let the proxy through. Stash context for
-  // upstream resolver + response hooks.
-  request.previewCtx = {
+  // state === 'running' — let the proxy through. Stash context where
+  // getUpstream + onResponse can read it back without depending on
+  // request-property augmentation.
+  const ctx: PreviewCtx = {
     projectId,
     pathPrefix: `/preview/${projectId}`,
     appPort: row.appPort,
-    sleeping: false,
   };
+  ctxByRequestId.set(request.id, ctx);
+  // Best-effort cleanup so the map doesn't grow forever even if the
+  // route's onResponse hook misses (e.g. client disconnect).
+  setTimeout(() => ctxByRequestId.delete(request.id), 5 * 60_000);
 
   // Throttle last-request bumps so a chatty SPA doesn't UPDATE a row
   // 200x/sec. 30s cadence is enough for idle-sweep correctness.
@@ -282,13 +287,13 @@ export const previewProxyPlugin: FastifyPluginAsync = async (app) => {
     },
     replyOptions: {
       getUpstream: (request) => {
-        const ctx = (request as FastifyRequest).previewCtx;
+        const ctx = ctxByRequestId.get(request.id);
         if (!ctx) return "http://preview-dind-placeholder:8080";
         const proto = ctx.appPort === 443 || ctx.appPort === 8443 ? "https" : "http";
         return `${proto}://preview-dind-${ctx.projectId}:${ctx.appPort}`;
       },
       rewriteHeaders: (headers, request) => {
-        const ctx = (request as FastifyRequest | undefined)?.previewCtx;
+        const ctx = request ? ctxByRequestId.get(request.id) : undefined;
         if (!ctx) return headers;
         const out = { ...headers };
         out["set-cookie"] = rewriteSetCookie(out["set-cookie"], ctx.pathPrefix);
@@ -299,17 +304,16 @@ export const previewProxyPlugin: FastifyPluginAsync = async (app) => {
         return out;
       },
       rewriteRequestHeaders: (request, headers) => {
-        const ctx = (request as FastifyRequest).previewCtx;
+        const ctx = ctxByRequestId.get(request.id);
         if (ctx) {
           headers["x-forwarded-prefix"] = ctx.pathPrefix;
-          // Many apps inspect Host to build absolute URLs; pass the original
-          // host so they don't end up pointing at preview-dind-<id>.
           headers["x-forwarded-host"] = request.headers["host"] ?? "";
         }
         return headers;
       },
       onResponse: (request, reply, response) => {
-        const ctx = (request as FastifyRequest).previewCtx;
+        const ctx = ctxByRequestId.get(request.id);
+        ctxByRequestId.delete(request.id);
         const ct = String(reply.getHeader("content-type") ?? "").toLowerCase();
         if (ctx && ct.startsWith("text/html")) {
           // Strip content-length — we're mutating the body length.

@@ -33,6 +33,7 @@ import { providersPlugin } from "./providers-api";
 import { referencesPlugin } from "./references-api";
 import { contextCardsPlugin } from "./context-cards-api";
 import { previewPlugin } from "./preview-api";
+import { previewProxyPlugin } from "./preview-proxy";
 import { clonePlugin } from "./clone-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { setAgentJwtSigner } from "./agent-jwt";
@@ -134,6 +135,9 @@ async function main() {
   await app.register(referencesPlugin, { prefix: "/api" });
   await app.register(contextCardsPlugin, { prefix: "/api" });
   await app.register(previewPlugin, { prefix: "/api" });
+  // Preview reverse-proxy mounts at /preview/:projectId/* (NOT under /api).
+  // See docs/PREVIEW_CONTOUR_DESIGN.md and orchestra-core/src/preview-proxy.ts.
+  await app.register(previewProxyPlugin);
   await app.register(clonePlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───

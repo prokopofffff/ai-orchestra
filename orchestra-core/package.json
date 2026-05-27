@@ -22,6 +22,7 @@
     "@ai-orchestra/shared": "workspace:*",
     "@clack/prompts": "^0.10.0",
     "@fastify/cookie": "^11.0.2",
+    "@fastify/http-proxy": "^11.4.4",
     "@fastify/jwt": "^9.0.4",
     "@fastify/static": "^9.1.1",
     "cron-parser": "^5.5.0",

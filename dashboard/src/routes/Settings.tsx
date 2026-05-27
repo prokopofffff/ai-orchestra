@@ -7,6 +7,7 @@ import { EmptyProjects } from "../components/EmptyProjects";
 import { Button } from "../components/ui/Button";
 import { FolderPicker } from "../components/FolderPicker";
 import { TokenHelp } from "../components/TokenHelp";
+import { PreviewSection } from "../components/PreviewSection";
 import * as api from "../api";
 import type { Project } from "../types";
 
@@ -184,6 +185,8 @@ function ProjectTab({ project, onSaved }: { project: Project; onSaved: () => voi
           <RepoPullInline projectId={project.id} />
         </div>
       </section>
+
+      <PreviewSection projectId={project.id} />
 
       <DangerZone project={project} />
     </div>

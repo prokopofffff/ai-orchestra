@@ -271,6 +271,85 @@ export const refreshGitCreds = (projectId: string) =>
 export const cloneProjectFromSettings = (projectId: string) =>
   postValidated(`/projects/${projectId}/clone`, {}, CloneStatusSchema);
 
+// ─── Preview environment ──────────────────────────────────────────────────
+
+const PreviewStatusSchema = z.object({
+  enabled: z.boolean(),
+  dockerfilePath: z.string().nullable(),
+  composeFilePath: z.string().nullable(),
+  branch: z.string(),
+  appPort: z.number(),
+  envVarKeys: z.array(z.string()),
+  idleTimeoutMinutes: z.number(),
+  autoRedeployOnPush: z.boolean(),
+  state: z.enum(["stopped", "building", "running", "sleeping", "error"]),
+  currentCommit: z.string().nullable(),
+  lastDeployedAt: z.string().nullable(),
+  lastRequestAt: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+});
+export type PreviewStatus = z.infer<typeof PreviewStatusSchema>;
+
+export const fetchPreview = (projectId: string): Promise<PreviewStatus> =>
+  getValidated(`/projects/${projectId}/preview`, PreviewStatusSchema);
+
+export interface PreviewConfigInput {
+  enabled?: boolean;
+  dockerfilePath?: string | null;
+  branch?: string;
+  appPort?: number;
+  envVars?: Record<string, string>;
+  idleTimeoutMinutes?: number;
+  autoRedeployOnPush?: boolean;
+}
+
+export const savePreview = async (projectId: string, input: PreviewConfigInput): Promise<void> => {
+  const res = await fetch(`${BASE}/projects/${projectId}/preview`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 401) throw new AuthError();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+};
+
+export const deployPreview = async (projectId: string, branch?: string): Promise<void> => {
+  const res = await fetch(`${BASE}/projects/${projectId}/preview/deploy`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(branch ? { branch } : {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+};
+
+export const stopPreview = async (projectId: string): Promise<void> => {
+  const res = await fetch(`${BASE}/projects/${projectId}/preview/stop`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`stopPreview: ${res.status}`);
+};
+
+export const teardownPreview = async (projectId: string): Promise<void> => {
+  const res = await fetch(`${BASE}/projects/${projectId}/preview/teardown`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`teardownPreview: ${res.status}`);
+};
+
+const PreviewLogsSchema = z.object({ lines: z.array(z.string()) });
+export const fetchPreviewLogs = (projectId: string, tail = 200): Promise<{ lines: string[] }> =>
+  getValidated(`/projects/${projectId}/preview/logs?tail=${tail}`, PreviewLogsSchema);
+
 // Owner-only on the backend (task-api.ts checks ownerId). The dashboard
 // hides the button for non-owners as a UX nicety; a 403 here would mean
 // ownership changed mid-session.

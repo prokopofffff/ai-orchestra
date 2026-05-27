@@ -1,13 +1,16 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import Docker from "dockerode";
-import { getDb } from "./db";
-import { previewEnvs } from "./db/schema";
+import fs from "node:fs";
+import { getDb, getPool } from "./db";
+import { previewEnvs, projects } from "./db/schema";
 import { currentUserId } from "./auth";
 import { userCanAccessProject, userCanEditProject } from "./project-access";
 import { encryptJson, decryptJson } from "./secrets";
-import { deploy, stop, wake, teardown, touchLastRequest } from "./preview-manager";
+import {
+  deploy, stop, wake, teardown, touchLastRequest, fetchPreviewLogsCombined,
+} from "./preview-manager";
+import { detectPreviewSource } from "./preview-detect";
 import { log } from "./obs";
 
 /**
@@ -224,40 +227,41 @@ export const previewPlugin: FastifyPluginAsync = async (app) => {
       }
       const tail = Math.min(Math.max(parseInt(request.query.tail ?? "200", 10) || 200, 1), 5000);
       try {
-        const dind = new Docker({ host: `preview-dind-${projectId}`, port: 2375, protocol: "http" });
-        const buf = await dind.getContainer("preview-app").logs({
-          stdout: true,
-          stderr: true,
-          tail,
-          timestamps: true,
-          follow: false,
-        });
-        // dockerode returns a multiplexed Buffer on non-TTY containers;
-        // strip the 8-byte frame headers so the client gets readable text.
-        return { lines: demuxDockerLogs(buf as unknown as Buffer) };
+        const lines = await fetchPreviewLogsCombined(projectId, tail);
+        return { lines };
       } catch (err) {
-        const status = (err as { statusCode?: number }).statusCode;
-        if (status === 404) return { lines: [] };
         return reply.code(500).send({ error: (err as Error).message ?? "logs failed" });
+      }
+    },
+  );
+
+  /**
+   * Scan the project's local worktree and return what we'd auto-detect
+   * (compose or Dockerfile + port). Dashboard calls this on enable so the
+   * form pre-fills sensible defaults instead of forcing the user to
+   * remember where their Dockerfile lives.
+   */
+  app.get<{ Params: { id: string } }>(
+    "/projects/:id/preview/auto-detect",
+    async (request, reply) => {
+      const userId = currentUserId(request);
+      const projectId = request.params.id;
+      if (!(await userCanAccessProject(userId, projectId))) {
+        return reply.code(404).send({ error: "Проект не найден" });
+      }
+      const proj = await getDb().select({ localPath: projects.localPath }).from(projects).where(eq(projects.id, projectId));
+      const localPath = proj[0]?.localPath;
+      if (!localPath || !fs.existsSync(localPath)) {
+        return reply.code(400).send({ error: "Worktree проекта не существует на сервере" });
+      }
+      try {
+        const src = detectPreviewSource(localPath);
+        return src;
+      } catch (err) {
+        return reply.code(404).send({ error: (err as Error).message ?? "no source detected" });
       }
     },
   );
 };
 
-/**
- * Strip the 8-byte frame headers Docker prepends to each chunk of
- * multiplexed stdout/stderr (stream_type, _, _, _, size×4). Returns
- * lines (LF-split) with stream-type-blind concat — adequate for the
- * dashboard "tail" widget. Empty trailing line is dropped.
- */
-function demuxDockerLogs(buf: Buffer): string[] {
-  const out: string[] = [];
-  let i = 0;
-  while (i + 8 <= buf.length) {
-    const size = buf.readUInt32BE(i + 4);
-    const chunk = buf.subarray(i + 8, i + 8 + size).toString("utf-8");
-    out.push(chunk);
-    i += 8 + size;
-  }
-  return out.join("").split("\n").filter((l) => l.length > 0);
-}
+void getPool;

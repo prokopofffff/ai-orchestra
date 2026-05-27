@@ -6,9 +6,11 @@ import { create as tarCreate } from "tar";
 import Docker from "dockerode";
 import { eq, sql, and, lt } from "drizzle-orm";
 import { simpleGit } from "simple-git";
+import https from "node:https";
 import { getDb, getPool } from "./db";
 import { previewEnvs, projects } from "./db/schema";
 import { decryptJson } from "./secrets";
+import { detectPreviewSource, type DetectedSource } from "./preview-detect";
 import { log } from "./obs";
 
 /**
@@ -86,6 +88,7 @@ interface PreviewEnvRow {
   projectId: string;
   enabled: boolean;
   dockerfilePath: string | null;
+  composeFilePath: string | null;
   branch: string;
   appPort: number;
   envVarsEncrypted: string | null;
@@ -229,20 +232,99 @@ export async function destroyDind(projectId: string): Promise<void> {
   }
 }
 
-// ─── App container lifecycle (uses per-project DinD) ───────────────────────
+// ─── App lifecycle (uses per-project DinD) ─────────────────────────────────
+//
+// v1.9: unified deploy via `docker compose up -d --build` inside DinD.
+// For projects with no compose file we synthesize a one-service compose
+// from the detected Dockerfile, so there's a single deploy path.
 
-const APP_CONTAINER = "preview-app";
-const APP_IMAGE_TAG = "preview-app:latest";
+const DIND_PROJECT_DIR = "/preview-src";
+const COMPOSE_PROJECT_NAME = "preview";
+
+interface DeployPlan {
+  source: DetectedSource;
+  composeFileInsideDind: string; // absolute path inside DinD
+  contextPathInsideDind: string;
+}
 
 /**
- * Pull the configured branch, tar the worktree, build the image inside
- * the DinD, and (re)start the app container. Blocks until healthy.
+ * Decide what to build/run for a project. User-provided fields win over
+ * auto-detection; auto-detection runs only when both dockerfilePath and
+ * composeFilePath are absent. The detected/used values are persisted back
+ * to the row so subsequent stop/wake/teardown calls don't need to re-scan.
  */
+async function planDeploy(row: PreviewEnvRow, worktree: string): Promise<DeployPlan> {
+  let source: DetectedSource;
+  if (row.composeFilePath) {
+    const dir = path.dirname(row.composeFilePath) === "." ? "" : path.dirname(row.composeFilePath);
+    source = {
+      kind: "compose",
+      contextPath: dir,
+      filePath: path.basename(row.composeFilePath),
+      appPort: row.appPort || 8080,
+      appProtocol: protocolForPort(row.appPort || 8080),
+      service: "app",
+    };
+  } else if (row.dockerfilePath) {
+    const dir = path.dirname(row.dockerfilePath) === "." ? "" : path.dirname(row.dockerfilePath);
+    source = {
+      kind: "dockerfile",
+      contextPath: dir,
+      filePath: path.basename(row.dockerfilePath),
+      appPort: row.appPort || 8080,
+      appProtocol: protocolForPort(row.appPort || 8080),
+    };
+  } else {
+    source = detectPreviewSource(worktree);
+    // Persist detected values so stop/wake don't have to re-scan, and the
+    // UI shows the user what we picked.
+    await getDb().update(previewEnvs).set({
+      composeFilePath: source.kind === "compose" ? path.join(source.contextPath, source.filePath) : null,
+      dockerfilePath: source.kind === "dockerfile" ? path.join(source.contextPath, source.filePath) : null,
+      appPort: source.appPort,
+      updatedAt: new Date(),
+    }).where(eq(previewEnvs.projectId, row.projectId));
+    log.info({ projectId: row.projectId, source }, "preview: auto-detected source");
+  }
+
+  // For dockerfile-only projects we synthesize a tiny compose at deploy
+  // time and use the same flow — gives us one deploy path.
+  const composeFileInsideDind =
+    source.kind === "compose"
+      ? `${DIND_PROJECT_DIR}/${source.contextPath ? source.contextPath + "/" : ""}${source.filePath}`
+      : `${DIND_PROJECT_DIR}/.orchestra-preview-compose.yaml`;
+  const contextPathInsideDind = `${DIND_PROJECT_DIR}${source.contextPath ? "/" + source.contextPath : ""}`;
+  return { source, composeFileInsideDind, contextPathInsideDind };
+}
+
+/**
+ * Synthesize a minimal compose for the single-Dockerfile case. One
+ * service named `app`, builds the user's Dockerfile, publishes the
+ * detected port.
+ */
+function synthesizeCompose(source: Extract<DetectedSource, { kind: "dockerfile" }>, envBag: Record<string, string>): string {
+  const envLines = Object.keys(envBag).length
+    ? "    environment:\n" + Object.keys(envBag).map((k) => `      ${k}: \${${k}}`).join("\n") + "\n"
+    : "";
+  return [
+    "services:",
+    "  app:",
+    "    build:",
+    `      context: .`,
+    `      dockerfile: ${source.filePath}`,
+    `    ports:`,
+    `      - "${source.appPort}:${source.appPort}"`,
+    envLines,
+    "    restart: unless-stopped",
+    "",
+  ].join("\n");
+}
+
+/** Pull branch, ship source into DinD, run `docker compose up -d --build`. */
 export async function deploy(projectId: string, overrideBranch?: string): Promise<void> {
   const row = await loadPreview(projectId);
   if (!row) throw new Error(`preview: no config for project ${projectId}`);
   if (!row.enabled) throw new Error("preview: not enabled for this project");
-  if (!row.dockerfilePath) throw new Error("preview: dockerfile_path is required");
 
   const branch = overrideBranch ?? row.branch;
   const worktree = await getProjectWorktree(projectId);
@@ -252,55 +334,53 @@ export async function deploy(projectId: string, overrideBranch?: string): Promis
 
   try {
     const sha = await checkoutBranch(worktree, branch);
+    const plan = await planDeploy(await loadPreview(projectId) ?? row, worktree);
+    const envBag = decryptEnvVars(row.envVarsEncrypted);
+    const dind = dindClientFor(projectId);
 
+    // 1. Wipe any previous /preview-src and re-create.
+    await execInDind(dind, `rm -rf ${DIND_PROJECT_DIR} && mkdir -p ${DIND_PROJECT_DIR}`);
+
+    // 2. tar worktree → putArchive into DinD root container at DIND_PROJECT_DIR.
+    //    Use a sidecar "ferry" container running a simple shell so we can
+    //    call putArchive on it — DinD's own filesystem is the docker
+    //    daemon's data root, not where compose will read from.
+    //
+    //    Actually, the DinD container IS the host for the inner daemon —
+    //    and docker compose reads its compose file from the DinD container's
+    //    filesystem. So we putArchive directly to the DinD container.
     const tarStream = tarCreate(
       { cwd: worktree, gzip: false, portable: true, follow: false },
       await listWorktreeEntries(worktree),
     ) as unknown as Readable;
 
-    const dind = dindClientFor(projectId);
-    const buildStream = await dind.buildImage(tarStream, {
-      t: APP_IMAGE_TAG,
-      dockerfile: row.dockerfilePath,
-      // BuildKit produces incompatible streaming JSON for `followProgress`,
-      // so stay on the legacy builder for v1.
-      buildargs: {},
-    });
+    const docker = hostDocker();
+    await docker.getContainer(dindContainerName(projectId)).putArchive(tarStream, { path: DIND_PROJECT_DIR });
 
-    await new Promise<void>((resolve, reject) => {
-      dind.modem.followProgress(
-        buildStream as NodeJS.ReadableStream,
-        (err, output) => {
-          if (err) return reject(err);
-          const lastErr = output?.find((o) => (o as { error?: string }).error);
-          if (lastErr) return reject(new Error((lastErr as { error: string }).error));
-          resolve();
-        },
-        () => { /* per-line; ignore for now */ },
+    // 3. If single Dockerfile, write a synthesized compose file alongside.
+    if (plan.source.kind === "dockerfile") {
+      const composeYaml = synthesizeCompose(plan.source, envBag);
+      await execInDind(
+        dind,
+        `cat > ${plan.composeFileInsideDind} <<'YAML_EOF'\n${composeYaml}\nYAML_EOF`,
       );
-    });
+    }
 
-    // Replace any prior app container
-    const existingApp = await tryInspect(dind.getContainer(APP_CONTAINER).inspect());
-    if (existingApp) await dind.getContainer(APP_CONTAINER).remove({ force: true });
+    // 4. Build env-var prefix for the compose-up so `${VAR}` interpolation
+    //    works without leaving plaintext on the DinD filesystem.
+    const envPrefix = Object.entries(envBag)
+      .map(([k, v]) => `${shellQuote(k)}=${shellQuote(v)}`)
+      .join(" ");
 
-    const envBag = decryptEnvVars(row.envVarsEncrypted);
-    const envList = Object.entries(envBag).map(([k, v]) => `${k}=${v}`);
-    envList.push(`PORT=${row.appPort}`);
+    // 5. compose up -d --build. Long timeout — image builds can take minutes.
+    await execInDind(
+      dind,
+      `cd ${plan.contextPathInsideDind} && ${envPrefix ? envPrefix + " " : ""}docker compose -p ${COMPOSE_PROJECT_NAME} -f ${plan.composeFileInsideDind} up -d --build`,
+      { timeoutMs: 10 * 60_000 },
+    );
 
-    const portKey = `${row.appPort}/tcp`;
-    const container = await dind.createContainer({
-      name: APP_CONTAINER,
-      Image: APP_IMAGE_TAG,
-      Env: envList,
-      ExposedPorts: { [portKey]: {} },
-      HostConfig: {
-        RestartPolicy: { Name: "unless-stopped" },
-      },
-    });
-    await container.start();
-
-    await waitForAppHealthy(projectId, row.appPort, DEPLOY_HEALTH_TIMEOUT_MS);
+    // 6. Wait for app health.
+    await waitForAppHealthy(projectId, plan.source.appPort, plan.source.appProtocol, DEPLOY_HEALTH_TIMEOUT_MS);
 
     await updatePreviewState(projectId, {
       state: "running",
@@ -308,7 +388,7 @@ export async function deploy(projectId: string, overrideBranch?: string): Promis
       lastDeployedAt: new Date(),
       errorMessage: null,
     });
-    log.info({ projectId, sha, branch }, "preview: deployed");
+    log.info({ projectId, sha, branch, source: plan.source }, "preview: deployed");
   } catch (err) {
     const message = (err as Error).message ?? String(err);
     await updatePreviewState(projectId, { state: "error", errorMessage: message });
@@ -317,55 +397,164 @@ export async function deploy(projectId: string, overrideBranch?: string): Promis
   }
 }
 
-/** Stop the app container; DinD stays warm. */
+/** docker compose stop — keeps containers around for fast wake. */
 export async function stop(projectId: string): Promise<void> {
-  const dind = dindClientFor(projectId);
-  const c = dind.getContainer(APP_CONTAINER);
-  const existing = await tryInspect(c.inspect());
-  if (existing && existing.State.Running) await c.stop({ t: 10 });
+  const row = await loadPreview(projectId);
+  if (!row) return;
+  try {
+    const dind = dindClientFor(projectId);
+    const plan = await planDeploy(row, await getProjectWorktree(projectId));
+    await execInDind(
+      dind,
+      `cd ${plan.contextPathInsideDind} && docker compose -p ${COMPOSE_PROJECT_NAME} -f ${plan.composeFileInsideDind} stop`,
+      { timeoutMs: 60_000, ignoreExitNonzero: true },
+    );
+  } catch (err) {
+    log.warn({ err, projectId }, "preview: stop failed");
+  }
   await updatePreviewState(projectId, { state: "sleeping" });
 }
 
-/** Start the app container if sleeping. Blocks until healthy. */
+/** docker compose start — re-enables existing containers. */
 export async function wake(projectId: string): Promise<void> {
   const row = await loadPreview(projectId);
   if (!row) throw new Error(`preview: no config for project ${projectId}`);
   await ensureDind(projectId);
+
+  const worktree = await getProjectWorktree(projectId);
+  const plan = await planDeploy(row, worktree);
   const dind = dindClientFor(projectId);
-  const c = dind.getContainer(APP_CONTAINER);
-  const existing = await tryInspect(c.inspect());
-  if (!existing) {
-    // Nothing built yet — fall through to a deploy.
+
+  // If the compose project's containers don't exist, run a full deploy.
+  const listOut = await execInDind(
+    dind,
+    `docker compose -p ${COMPOSE_PROJECT_NAME} -f ${plan.composeFileInsideDind} ps -q`,
+    { ignoreExitNonzero: true },
+  );
+  if (!listOut.trim()) {
     await deploy(projectId);
     return;
   }
-  if (!existing.State.Running) await c.start();
-  await waitForAppHealthy(projectId, row.appPort, WAKE_HEALTH_TIMEOUT_MS);
+
+  await execInDind(
+    dind,
+    `cd ${plan.contextPathInsideDind} && docker compose -p ${COMPOSE_PROJECT_NAME} -f ${plan.composeFileInsideDind} start`,
+    { timeoutMs: 60_000 },
+  );
+  await waitForAppHealthy(projectId, plan.source.appPort, plan.source.appProtocol, WAKE_HEALTH_TIMEOUT_MS);
   await updatePreviewState(projectId, { state: "running", errorMessage: null });
 }
 
-/** Stop + remove app, DinD, and network. Clears runtime fields. */
+/** docker compose down -v + remove DinD + network. */
 export async function teardown(projectId: string): Promise<void> {
   try {
-    const dind = dindClientFor(projectId);
-    const c = dind.getContainer(APP_CONTAINER);
-    if (await tryInspect(c.inspect())) await c.remove({ force: true });
+    const row = await loadPreview(projectId);
+    if (row) {
+      const dind = dindClientFor(projectId);
+      const worktree = await getProjectWorktree(projectId).catch(() => null);
+      if (worktree) {
+        const plan = await planDeploy(row, worktree).catch(() => null);
+        if (plan) {
+          await execInDind(
+            dind,
+            `cd ${plan.contextPathInsideDind} && docker compose -p ${COMPOSE_PROJECT_NAME} -f ${plan.composeFileInsideDind} down -v`,
+            { timeoutMs: 60_000, ignoreExitNonzero: true },
+          );
+        }
+      }
+    }
   } catch (err) {
-    log.warn({ err, projectId }, "preview: teardown app-container removal failed (ignoring)");
+    log.warn({ err, projectId }, "preview: teardown compose-down failed (ignoring)");
   }
   await destroyDind(projectId);
   await updatePreviewState(projectId, { state: "stopped", currentCommit: null, errorMessage: null });
 }
 
+// ─── DinD exec helper ──────────────────────────────────────────────────────
+
+interface ExecOpts {
+  timeoutMs?: number;
+  ignoreExitNonzero?: boolean;
+}
+
+/**
+ * Run a shell command inside this project's DinD container via dockerode's
+ * exec API. Captures stdout+stderr for surfacing in error messages and the
+ * /logs endpoint. NOT using `dind.run` because we want to attach to an
+ * existing privileged container.
+ */
+async function execInDind(dind: Docker, cmd: string, opts: ExecOpts = {}): Promise<string> {
+  // The DinD container hosts the docker daemon; we need to exec INSIDE it.
+  // dind dockerode client is pointed at its TCP socket — which is the
+  // inner daemon, not the DinD container itself. So we go through the
+  // host docker to get a container handle, then exec.
+  const docker = hostDocker();
+  const projectId = extractProjectIdFromDindClient(dind);
+  const container = docker.getContainer(dindContainerName(projectId));
+
+  const exec = await container.exec({
+    Cmd: ["sh", "-c", cmd],
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+  const stream = await exec.start({ Detach: false });
+
+  const chunks: Buffer[] = [];
+  const collected = new Promise<void>((resolve, reject) => {
+    stream.on("data", (c: Buffer) => chunks.push(c));
+    stream.on("end", resolve);
+    stream.on("error", reject);
+  });
+  const timer = opts.timeoutMs
+    ? setTimeout(() => stream.destroy(new Error(`execInDind timeout after ${opts.timeoutMs}ms`)), opts.timeoutMs)
+    : null;
+  try {
+    await collected;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const info = await exec.inspect();
+  const out = Buffer.concat(chunks).toString("utf-8");
+  if (info.ExitCode !== 0 && !opts.ignoreExitNonzero) {
+    throw new Error(`execInDind exit ${info.ExitCode}: ${out.slice(-500)}`);
+  }
+  return out;
+}
+
+/**
+ * Recover the project id from a per-project DinD client. The host field
+ * encodes it (`preview-dind-<projectId>`). Cheap and avoids passing
+ * projectId through every helper signature.
+ */
+function extractProjectIdFromDindClient(dind: Docker): string {
+  const host = (dind as unknown as { modem: { host?: string } }).modem.host ?? "";
+  return host.replace(/^preview-dind-/, "");
+}
+
+function protocolForPort(port: number): "http" | "https" {
+  return port === 443 || port === 8443 ? "https" : "http";
+}
+
+function shellQuote(s: string): string {
+  // POSIX single-quote everything; escape any embedded single quotes.
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 // ─── Health probe ──────────────────────────────────────────────────────────
 
-async function waitForAppHealthy(projectId: string, port: number, timeoutMs: number): Promise<void> {
-  const url = `http://${dindContainerName(projectId)}:${port}/`;
+async function waitForAppHealthy(
+  projectId: string,
+  port: number,
+  protocol: "http" | "https",
+  timeoutMs: number,
+): Promise<void> {
+  const url = `${protocol}://${dindContainerName(projectId)}:${port}/`;
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown = null;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      const res = await fetchInsecureIfHttps(url, 2000);
       // Any 2xx/3xx/4xx is "responding". 5xx + connection errors keep waiting.
       if (res.status < 500) return;
       lastErr = new Error(`HTTP ${res.status}`);
@@ -375,6 +564,27 @@ async function waitForAppHealthy(projectId: string, port: number, timeoutMs: num
     await sleep(1500);
   }
   throw new Error(`preview: app at ${url} did not become healthy: ${(lastErr as Error)?.message ?? "timeout"}`);
+}
+
+/**
+ * fetch() with self-signed-cert tolerance when the URL is https. Node's
+ * default fetch enforces TLS verification; preview projects routinely
+ * front themselves with caddy `tls internal` or self-signed certs.
+ */
+async function fetchInsecureIfHttps(url: string, timeoutMs: number): Promise<{ status: number }> {
+  if (!url.startsWith("https:")) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    return { status: res.status };
+  }
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, { method: "HEAD", rejectUnauthorized: false, timeout: timeoutMs }, (res) => {
+      res.resume();
+      resolve({ status: res.statusCode ?? 0 });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.end();
+  });
 }
 
 // ─── Worktree → tar entries ────────────────────────────────────────────────
@@ -450,4 +660,28 @@ export async function touchLastRequest(projectId: string): Promise<void> {
     .update(previewEnvs)
     .set({ lastRequestAt: new Date() })
     .where(eq(previewEnvs.projectId, projectId));
+}
+
+/**
+ * Tail combined logs across all compose services for this project's
+ * preview. Returns up to `tail` lines per service, interleaved by the
+ * `docker compose logs` timestamps.
+ */
+export async function fetchPreviewLogsCombined(projectId: string, tail: number): Promise<string[]> {
+  const row = await loadPreview(projectId);
+  if (!row) return [];
+  const worktree = await getProjectWorktree(projectId).catch(() => null);
+  if (!worktree) return [];
+  const plan = await planDeploy(row, worktree);
+  const dind = dindClientFor(projectId);
+  try {
+    const out = await execInDind(
+      dind,
+      `docker compose -p ${COMPOSE_PROJECT_NAME} -f ${plan.composeFileInsideDind} logs --no-color --timestamps --tail ${tail}`,
+      { timeoutMs: 15_000, ignoreExitNonzero: true },
+    );
+    return out.split("\n").filter((l) => l.length > 0);
+  } catch (err) {
+    return [`(не удалось прочитать compose logs: ${(err as Error).message})`];
+  }
 }

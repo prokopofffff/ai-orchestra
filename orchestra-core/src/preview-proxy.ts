@@ -272,11 +272,20 @@ export const previewProxyPlugin: FastifyPluginAsync = async (app) => {
     preHandler,
     httpMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
     websocket: false, // v1.7 skips ws; v2 can enable once we trust the wiring
+    // Preview apps commonly front themselves with caddy `tls internal` or
+    // other self-signed setups; we accept those upstream certs blindly
+    // because the per-project docker network is the actual trust boundary.
+    undici: {
+      connections: 100,
+      pipelining: 1,
+      connect: { rejectUnauthorized: false },
+    },
     replyOptions: {
       getUpstream: (request) => {
         const ctx = (request as FastifyRequest).previewCtx;
         if (!ctx) return "http://preview-dind-placeholder:8080";
-        return `http://preview-dind-${ctx.projectId}:${ctx.appPort}`;
+        const proto = ctx.appPort === 443 || ctx.appPort === 8443 ? "https" : "http";
+        return `${proto}://preview-dind-${ctx.projectId}:${ctx.appPort}`;
       },
       rewriteHeaders: (headers, request) => {
         const ctx = (request as FastifyRequest | undefined)?.previewCtx;

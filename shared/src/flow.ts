@@ -61,7 +61,9 @@ export const routePermissions: Record<SenderRole, RecipientRole[]> = {
 
 // ─── The flow ──────────────────────────────────────────────────────────────
 
-const dev: SenderRole[] = ["frontend", "backend"];
+// "dev" here = roles allowed to open PRs. devops counts — they legitimately
+// push CI config / Dockerfile / deploy-script changes that need review.
+const dev: SenderRole[] = ["frontend", "backend", "devops"];
 const allAgents: SenderRole[] = ["tech-lead", "designer", "frontend", "backend", "qa", "devops"];
 
 export const flow: Edge[] = [
@@ -200,10 +202,16 @@ export const flow: Edge[] = [
   },
   {
     action: "answer",
-    allowedFrom: ["tech-lead"],
+    // Originally allowed only from tech-lead, which broke the Q&A loop
+    // for every other role — TL could ask devops a question via the
+    // `question` edge (any agent → TL is allowed; TL → devops needs a
+    // separate spawn), and when devops tried to `answer` back it got
+    // rejected. Symmetry: anyone can answer when answering is what the
+    // conversation needs.
+    allowedFrom: allAgents,
     target: { kind: "addressed-role" },
     effect: { kind: "spawn" },
-    description: "TL answers — resume the asker",
+    description: "Answer the previous asker (resumes their session)",
   },
 
   // ── User-facing ───────────────────────────────────────────────────────

@@ -62,6 +62,7 @@ const lastTouchedAt = new Map<string, number>();
 
 async function preHandler(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const projectId = (request.params as { projectId?: string }).projectId;
+  log.info({ reqId: request.id, projectId, url: request.url }, "preview-proxy preHandler entered");
   if (!projectId) {
     void reply.code(404).send({ error: "Не указан проект" });
     return;
@@ -122,6 +123,7 @@ async function preHandler(request: FastifyRequest, reply: FastifyReply): Promise
     appPort: row.appPort,
   };
   ctxByRequestId.set(request.id, ctx);
+  log.info({ reqId: request.id, ctx }, "preview-proxy preHandler stored ctx");
   // Best-effort cleanup so the map doesn't grow forever even if the
   // route's onResponse hook misses (e.g. client disconnect).
   setTimeout(() => ctxByRequestId.delete(request.id), 5 * 60_000);
@@ -288,6 +290,7 @@ export const previewProxyPlugin: FastifyPluginAsync = async (app) => {
     replyOptions: {
       getUpstream: (request) => {
         const ctx = ctxByRequestId.get(request.id);
+        log.info({ reqId: request.id, hasCtx: !!ctx, mapSize: ctxByRequestId.size }, "preview-proxy getUpstream invoked");
         if (!ctx) return "http://preview-dind-placeholder:8080";
         const proto = ctx.appPort === 443 || ctx.appPort === 8443 ? "https" : "http";
         return `${proto}://preview-dind-${ctx.projectId}:${ctx.appPort}`;

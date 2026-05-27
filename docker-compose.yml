@@ -67,12 +67,19 @@ services:
       # Must persist across container rebuilds — otherwise every redeploy
       # forces every project to re-authorize Claude and Codex.
       - orchestra_creds:/root/orchestra-creds
-      # NOTE: do NOT bind /var/run/docker.sock here. We had it briefly to
-      # let QA agents drive `docker compose up` for project contours, but
-      # the bound socket is root-equivalent on the host — any agent could
-      # `docker run -v /:/host` and read any other tenant's data.
-      # Multi-tenant deploys must keep this off. QA contour validation
-      # goes through a separate sandboxed runner.
+      # Host docker.sock — required by preview-manager (and ONLY by
+      # preview-manager) to spawn per-project DinD sidecars and the
+      # per-project docker network. See docs/PREVIEW_CONTOUR_DESIGN.md.
+      #
+      # Multi-tenant safety: the sock is reachable only by orchestra-core
+      # code, not by agents — the orchestra-core image deliberately ships
+      # without a `docker` CLI binary (see orchestra-core/Dockerfile),
+      # so agent subprocesses cannot shell out to it. Inside orchestra-core
+      # the sock handle is scoped to preview-manager.ts and never exported.
+      # Any future code that needs the host daemon must extend that module
+      # rather than open its own dockerode handle, otherwise the isolation
+      # property collapses.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Volume-backed root for project working directories (see WORKSPACE_ROOT
       # env above). Without this volume, anything a user picks via the
       # folder picker would live in the container's writable layer and

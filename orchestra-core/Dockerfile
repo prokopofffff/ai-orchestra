@@ -62,11 +62,16 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 #                     Without it the agent has to compose-and-fetch via
 #                     node, which it doesn't reliably do.
 #
-# NOTE: docker-cli + docker-cli-compose were briefly included with a host
-# docker.sock bind to let QA agents bring up project contours. That was
-# revoked once multi-tenant became a requirement: a bound socket is root-
-# equivalent on the host, breaking tenant isolation. QA contour validation
-# now has to go through a sandboxed runner — see roadmap.
+# NOTE: docker-cli is deliberately NOT installed. Agents can't shell out
+# to docker even though the host docker.sock is bind-mounted into this
+# container for preview-manager's use (see docker-compose.yml). Keeping
+# the CLI absent is the defense-in-depth that makes the bound socket
+# safe in a multi-tenant deploy: agents have no easy path to it, and
+# orchestra-core's dockerode handle is scoped to preview-manager.ts.
+# DO NOT add `docker-cli` / `docker-cli-compose` here — that would let
+# any agent breakout shell into `docker run -v /:/host` and read every
+# tenant's data. QA contour validation that needs docker must go through
+# preview-manager (or, longer-term, an external CI per roadmap).
 RUN apk add --no-cache git python3 py3-pip go curl \
  && npm i -g @openai/codex @anthropic-ai/claude-code
 

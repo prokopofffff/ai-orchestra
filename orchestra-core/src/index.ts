@@ -41,6 +41,7 @@ import { reconcileQueue, getQueueStatus, bindAgentRunner, CLAUDE_BUCKET } from "
 import { startUsageTracking, stopUsageTracking, getUsage } from "./usage-tracker";
 import { getLogs } from "./logger";
 import { startTelegramManager, stopTelegramManager } from "./telegram-manager";
+import { startPreviewManager, stopPreviewManager } from "./preview-manager";
 import { startPrWatcher, stopPrWatcher } from "./pr-watcher";
 import { startCostVelocityWatcher, stopCostVelocityWatcher } from "./cost-velocity-watcher";
 import { startDispatchReconciler, stopDispatchReconciler } from "./dispatch-reconciler";
@@ -202,6 +203,12 @@ async function main() {
   // Start Telegram polling (long-poll loop, not a tick — kept as-is)
   await startTelegramManager();
 
+  // Per-project preview contour reconciler. Requires host docker.sock to
+  // be bound (see docker-compose.yml). No-ops gracefully if absent.
+  await startPreviewManager().catch((err) =>
+    log.warn({ err }, "preview-manager: start failed (host docker.sock missing?) — preview disabled"),
+  );
+
   // Reconcile tasks that are in active states but have no agent running
   reconcileOrphanedTasks(config).catch((err) => log.error({ err }, "startup reconcile failed"));
 
@@ -222,6 +229,7 @@ async function main() {
     stopHeartbeat();
     stopUsageTracking();
     stopTelegramManager();
+    stopPreviewManager();
     stopPrWatcher();
     stopCostVelocityWatcher();
     stopDispatchReconciler();

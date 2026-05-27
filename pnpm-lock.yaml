@@ -173,6 +173,9 @@ importers:
       '@fastify/jwt':
         specifier: ^9.0.4
         version: 9.1.0
+      '@fastify/reply-from':
+        specifier: ^12.6.2
+        version: 12.6.2
       '@fastify/static':
         specifier: ^9.1.1
         version: 9.1.1

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
-import fastifyHttpProxy from "@fastify/http-proxy";
+import fastifyReplyFrom from "@fastify/reply-from";
 import { Transform, type TransformCallback } from "node:stream";
 import { eq } from "drizzle-orm";
 import { getDb } from "./db";
@@ -12,140 +12,106 @@ import { log } from "./obs";
  * Reverse-proxy for per-project preview contours. See
  * docs/PREVIEW_CONTOUR_DESIGN.md.
  *
- * Route shape (single):  /preview/<projectId>/<...>
+ * Route shape:  /preview/<projectId>/<...>
  *
- * The same URL shape is used regardless of whether orchestra-core is
- * reached via the main host (example.com) or a dedicated preview
- * subdomain (preview.example.com) — the dashboard advertises whichever
- * hostname `PREVIEW_HOST` configures, browser cookies scope per-host
- * automatically, so a separate hostname is sufficient to keep preview
- * cookies from colliding with dashboard cookies. No wildcard DNS or
- * cert needed in either configuration.
+ * Uses @fastify/reply-from directly (NOT @fastify/http-proxy) because
+ * the latter pins its undici dispatcher's `origin` to whatever
+ * `upstream` was at registration time — so dynamic per-request hosts
+ * (one DinD per project) silently route to the registration-time
+ * placeholder and 500 on DNS. reply-from on its own respects the
+ * full URL we pass to reply.from().
  *
- * Five rewrites are applied to make path-prefix proxying as
- * transparent as possible to apps that don't know they're behind one:
+ * Five rewrites paper over path-prefix proxying for apps that don't
+ * know they're behind one:
  *
- *   1. URL: `/preview/<id>/<x>` → upstream `/<x>`
+ *   1. URL: /preview/<id>/<x> → upstream /<x>
  *   2. <base href="/preview/<id>/"> injected into HTML <head>
- *   3. Set-Cookie: rewrite `Path=/` to `Path=/preview/<id>` (isolates
+ *   3. Set-Cookie: rewrite Path=/ to Path=/preview/<id> (isolates
  *      cookies across previews on the same host)
  *   4. Location: prefix root-relative redirects with /preview/<id>
  *   5. X-Forwarded-Prefix: /preview/<id> for app frameworks that
  *      honor it (Next.js basePath, Spring's server.forward-headers,
  *      Django's FORCE_SCRIPT_NAME via middleware)
- *
- * Apps that hard-code absolute URLs in their compiled JS bundle
- * (e.g. `fetch("/api/x")` after minification) must additionally be
- * built with their framework's basePath/base config pointing at
- * `/preview/<projectId>`. The reverse proxy can't rewrite bytes
- * inside compiled JS.
  */
 
-const ROUTE_PREFIX = "/preview/:projectId";
+const ROUTE_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] as const;
+const LAST_REQUEST_THROTTLE_MS = 30_000;
+const lastTouchedAt = new Map<string, number>();
 
+// Pre-resolve common ctx fields so the route handler can pass them
+// down to the reply.from() options without re-querying.
 interface PreviewCtx {
   projectId: string;
   pathPrefix: string;
   appPort: number;
+  appProtocol: "http" | "https";
+  innerPath: string; // path inside the preview (after stripping /preview/<id>)
 }
 
-// Stash the per-project resolved upstream where the http-proxy's
-// getUpstream callback can read it back. Keyed by request.id so we
-// don't collide across in-flight requests. Fastify augmentation works
-// at the TS level but the runtime property access turned out to be
-// unreliable across the http-proxy → reply-from boundary, so a side
-// channel is more robust.
-const ctxByRequestId = new Map<string, PreviewCtx>();
+function pickProtocol(port: number): "http" | "https" {
+  return port === 443 || port === 8443 ? "https" : "http";
+}
 
-const LAST_REQUEST_THROTTLE_MS = 30_000;
-const lastTouchedAt = new Map<string, number>();
-
-async function preHandler(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const projectId = (request.params as { projectId?: string }).projectId;
-  log.info({ reqId: request.id, projectId, url: request.url }, "preview-proxy preHandler entered");
-  if (!projectId) {
-    void reply.code(404).send({ error: "Не указан проект" });
-    return;
-  }
-
-  // Authn: dashboard JWT cookie. Fall back to 401 → dashboard redirect.
+async function loadCtx(request: FastifyRequest, projectId: string): Promise<
+  | { ok: true; ctx: PreviewCtx }
+  | { ok: false; status: number; body: string | object; contentType?: string }
+> {
   let userId: string | null = null;
   try {
     await request.jwtVerify();
     userId = (request.user as { id?: string } | undefined)?.id ?? null;
   } catch {
-    // unauthenticated
+    /* unauthenticated */
   }
   if (!userId) {
-    void reply.code(401).header("WWW-Authenticate", "Bearer").send({
-      error: "Требуется аутентификация. Войдите в дашборд и обновите страницу.",
-    });
-    return;
+    return {
+      ok: false,
+      status: 401,
+      body: { error: "Требуется аутентификация. Войдите в дашборд." },
+    };
   }
 
   if (!(await userCanAccessProject(userId, projectId))) {
-    void reply.code(404).send({ error: "Проект не найден" });
-    return;
+    return { ok: false, status: 404, body: { error: "Проект не найден" } };
   }
 
   const rows = await getDb().select().from(previewEnvs).where(eq(previewEnvs.projectId, projectId));
   const row = rows[0];
   if (!row || !row.enabled) {
-    void reply.code(404).send({ error: "Preview-контур не настроен для этого проекта" });
-    return;
+    return { ok: false, status: 404, body: { error: "Preview-контур не настроен для этого проекта" } };
   }
   if (row.state === "error") {
-    void reply.code(502).type("text/html; charset=utf-8").send(errorPage(row.errorMessage ?? "unknown error"));
-    return;
+    return { ok: false, status: 502, contentType: "text/html; charset=utf-8", body: errorPage(row.errorMessage ?? "unknown error") };
   }
   if (row.state === "stopped") {
-    void reply.code(404).type("text/html; charset=utf-8").send(stoppedPage());
-    return;
+    return { ok: false, status: 404, contentType: "text/html; charset=utf-8", body: stoppedPage() };
   }
   if (row.state === "sleeping") {
-    // Best-effort wake — don't block the request thread on it; return
-    // an interstitial that auto-refreshes.
     wake(projectId).catch((err) => log.warn({ err, projectId }, "preview-proxy: wake failed"));
-    void reply.code(503).type("text/html; charset=utf-8").send(wakingPage(projectId));
-    return;
+    return { ok: false, status: 503, contentType: "text/html; charset=utf-8", body: wakingPage(projectId) };
   }
   if (row.state === "building") {
-    void reply.code(503).type("text/html; charset=utf-8").send(buildingPage(projectId));
-    return;
+    return { ok: false, status: 503, contentType: "text/html; charset=utf-8", body: buildingPage(projectId) };
   }
 
-  // state === 'running' — let the proxy through. Stash context where
-  // getUpstream + onResponse can read it back without depending on
-  // request-property augmentation.
-  const ctx: PreviewCtx = {
-    projectId,
-    pathPrefix: `/preview/${projectId}`,
-    appPort: row.appPort,
+  // state === 'running'
+  const prefix = `/preview/${projectId}`;
+  const innerPath = request.url.slice(prefix.length) || "/";
+  return {
+    ok: true,
+    ctx: {
+      projectId,
+      pathPrefix: prefix,
+      appPort: row.appPort,
+      appProtocol: pickProtocol(row.appPort),
+      innerPath,
+    },
   };
-  ctxByRequestId.set(request.id, ctx);
-  log.info({ reqId: request.id, ctx }, "preview-proxy preHandler stored ctx");
-  // Best-effort cleanup so the map doesn't grow forever even if the
-  // route's onResponse hook misses (e.g. client disconnect).
-  setTimeout(() => ctxByRequestId.delete(request.id), 5 * 60_000);
-
-  // Throttle last-request bumps so a chatty SPA doesn't UPDATE a row
-  // 200x/sec. 30s cadence is enough for idle-sweep correctness.
-  const now = Date.now();
-  const last = lastTouchedAt.get(projectId) ?? 0;
-  if (now - last > LAST_REQUEST_THROTTLE_MS) {
-    lastTouchedAt.set(projectId, now);
-    touchLastRequest(projectId).catch((err) =>
-      log.warn({ err, projectId }, "preview-proxy: touchLastRequest failed"),
-    );
-  }
 }
 
 // ─── HTML body transform: inject <base href="..."> into <head> ─────────────
 
 export function baseInjector(prefix: string): Transform {
-  // We only need to touch the first occurrence of <head> (or <head ...>).
-  // Stream chunk-aware: keep a small tail across chunks to catch tag
-  // boundaries that straddle. Once injected, switch to identity-passthrough.
   const TAG = "<head";
   const baseTag = `<base href="${prefix}/">`;
   let pending = "";
@@ -156,18 +122,13 @@ export function baseInjector(prefix: string): Transform {
       pending += chunk.toString("utf-8");
       const idx = pending.toLowerCase().indexOf(TAG);
       if (idx === -1) {
-        // Flush all but the last (TAG.length-1) chars to allow split tags
         const keep = Math.min(TAG.length - 1, pending.length);
         const emit = pending.slice(0, pending.length - keep);
         pending = pending.slice(pending.length - keep);
         return cb(null, Buffer.from(emit, "utf-8"));
       }
-      // Found <head — find its closing '>'
       const close = pending.indexOf(">", idx);
-      if (close === -1) {
-        // Wait for more data
-        return cb();
-      }
+      if (close === -1) return cb();
       const before = pending.slice(0, close + 1);
       const after = pending.slice(close + 1);
       done = true;
@@ -181,87 +142,49 @@ export function baseInjector(prefix: string): Transform {
   });
 }
 
-// ─── Header rewriters: Set-Cookie Path, Location prefix ───────────────────
+// ─── Header rewriters ─────────────────────────────────────────────────────
 
 export function rewriteSetCookie(setCookie: string[] | undefined, prefix: string): string[] | undefined {
   if (!setCookie) return setCookie;
-  // Replace explicit Path=/ (and only that — non-root paths should stay
-  // verbatim since the app probably knows what it's doing) with the
-  // preview-scoped path. Browsers default missing Path to the request
-  // URL's directory; if the app omits Path entirely, the cookie ends up
-  // scoped to /preview/<id>/<...> anyway, which is fine.
   return setCookie.map((c) => c.replace(/(;\s*Path=)\/(?=\s*;|\s*$)/i, `$1${prefix}`));
 }
 
 export function rewriteLocation(location: string | undefined, prefix: string): string | undefined {
   if (!location) return location;
-  // Only rewrite root-relative absolute paths. Full URLs and
-  // relative-to-current paths pass through unchanged.
-  if (location.startsWith("/") && !location.startsWith("//")) {
-    return prefix + location;
-  }
+  if (location.startsWith("/") && !location.startsWith("//")) return prefix + location;
   return location;
 }
 
 // ─── Page templates ───────────────────────────────────────────────────────
 
 function wakingPage(projectId: string): string {
-  return interstitial({
-    title: "Preview is starting…",
-    body: "Контейнер preview просыпается. Это занимает 5-15 секунд. Страница обновится автоматически.",
-    refresh: 3,
-    projectId,
-  });
+  return interstitial({ title: "Preview is starting…", body: "Контейнер preview просыпается. Это занимает 5-15 секунд. Страница обновится автоматически.", refresh: 3, projectId });
 }
 
 function buildingPage(projectId: string): string {
-  return interstitial({
-    title: "Preview is building…",
-    body: "Идёт сборка docker-образа. Это может занять до минуты. Страница обновится автоматически.",
-    refresh: 5,
-    projectId,
-  });
+  return interstitial({ title: "Preview is building…", body: "Идёт сборка docker-образа. Это может занять до минуты. Страница обновится автоматически.", refresh: 5, projectId });
 }
 
 function stoppedPage(): string {
-  return interstitial({
-    title: "Preview is stopped",
-    body: "Preview-контур не запущен. Запустите его в дашборде: Settings → Preview Environment → Deploy.",
-    refresh: 0,
-  });
+  return interstitial({ title: "Preview is stopped", body: "Preview-контур не запущен. Запустите его в дашборде: Settings → Preview Environment → Deploy.", refresh: 0 });
 }
 
 function errorPage(message: string): string {
-  return interstitial({
-    title: "Preview failed",
-    body: `Preview-контур упал с ошибкой:\n\n${escapeHtml(message)}\n\nПроверьте логи в дашборде и попробуйте Redeploy.`,
-    refresh: 0,
-  });
+  return interstitial({ title: "Preview failed", body: `Preview-контур упал с ошибкой:\n\n${message}\n\nПроверьте логи в дашборде и попробуйте Redeploy.`, refresh: 0 });
 }
 
 interface InterstitialOpts {
   title: string;
   body: string;
-  refresh: number; // 0 = no auto-refresh
+  refresh: number;
   projectId?: string;
 }
 
 function interstitial(opts: InterstitialOpts): string {
   const refresh = opts.refresh > 0 ? `<meta http-equiv="refresh" content="${opts.refresh}">` : "";
-  return `<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<title>${escapeHtml(opts.title)}</title>
-${refresh}
-<style>
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 560px; margin: 80px auto; color: #333; padding: 0 16px; }
-  h1 { font-size: 22px; margin-bottom: 12px; }
-  pre { background: #f4f4f4; padding: 12px; border-radius: 6px; overflow: auto; white-space: pre-wrap; }
-</style>
-</head><body>
-<h1>${escapeHtml(opts.title)}</h1>
-<pre>${escapeHtml(opts.body)}</pre>
-</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(opts.title)}</title>${refresh}
+<style>body{font-family:-apple-system,system-ui,sans-serif;max-width:560px;margin:80px auto;color:#333;padding:0 16px}h1{font-size:22px;margin-bottom:12px}pre{background:#f4f4f4;padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap}</style>
+</head><body><h1>${escapeHtml(opts.title)}</h1><pre>${escapeHtml(opts.body)}</pre></body></html>`;
 }
 
 function escapeHtml(s: string): string {
@@ -271,62 +194,72 @@ function escapeHtml(s: string): string {
 // ─── Plugin ───────────────────────────────────────────────────────────────
 
 export const previewProxyPlugin: FastifyPluginAsync = async (app) => {
-  await app.register(fastifyHttpProxy, {
-    // Dummy default — actual upstream picked per-request via getUpstream.
-    upstream: "http://preview-dind-placeholder:8080",
-    prefix: ROUTE_PREFIX,
-    rewritePrefix: "",
-    preHandler,
-    httpMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
-    websocket: false, // v1.7 skips ws; v2 can enable once we trust the wiring
-    // Preview apps commonly front themselves with caddy `tls internal` or
-    // other self-signed setups; we accept those upstream certs blindly
-    // because the per-project docker network is the actual trust boundary.
+  // Register reply-from with NO base — that's the key. Per-request we
+  // pass reply.from() the full upstream URL, including host:port, and
+  // reply-from's undici dispatcher uses opts.url.origin as the actual
+  // destination (it falls back to baseUrl only when baseUrl is set).
+  await app.register(fastifyReplyFrom, {
     undici: {
       connections: 100,
       pipelining: 1,
+      // Preview apps commonly front themselves with caddy `tls internal`
+      // or other self-signed setups; the per-project docker network is
+      // the real trust boundary, so we don't verify upstream TLS.
       connect: { rejectUnauthorized: false },
     },
-    replyOptions: {
-      getUpstream: (request) => {
-        const ctx = ctxByRequestId.get(request.id);
-        log.info({ reqId: request.id, hasCtx: !!ctx, mapSize: ctxByRequestId.size }, "preview-proxy getUpstream invoked");
-        if (!ctx) return "http://preview-dind-placeholder:8080";
-        const proto = ctx.appPort === 443 || ctx.appPort === 8443 ? "https" : "http";
-        return `${proto}://preview-dind-${ctx.projectId}:${ctx.appPort}`;
-      },
-      rewriteHeaders: (headers, request) => {
-        const ctx = request ? ctxByRequestId.get(request.id) : undefined;
-        if (!ctx) return headers;
-        const out = { ...headers };
-        out["set-cookie"] = rewriteSetCookie(out["set-cookie"], ctx.pathPrefix);
-        if (typeof out.location === "string") {
-          const rewritten = rewriteLocation(out.location, ctx.pathPrefix);
-          if (rewritten !== undefined) out.location = rewritten;
-        }
-        return out;
-      },
-      rewriteRequestHeaders: (request, headers) => {
-        const ctx = ctxByRequestId.get(request.id);
-        if (ctx) {
+  });
+
+  const url = "/preview/:projectId/*";
+  app.route({
+    method: ROUTE_METHODS as unknown as string[],
+    url,
+    handler: async (request: FastifyRequest, reply: FastifyReply) => {
+      const projectId = (request.params as { projectId?: string }).projectId ?? "";
+      const result = await loadCtx(request, projectId);
+      if (!result.ok) {
+        if (result.contentType) reply.type(result.contentType);
+        return reply.code(result.status).send(result.body);
+      }
+      const { ctx } = result;
+
+      // Throttled last-request bump so a chatty SPA doesn't UPDATE
+      // hot in the DB.
+      const now = Date.now();
+      const last = lastTouchedAt.get(ctx.projectId) ?? 0;
+      if (now - last > LAST_REQUEST_THROTTLE_MS) {
+        lastTouchedAt.set(ctx.projectId, now);
+        touchLastRequest(ctx.projectId).catch((err) =>
+          log.warn({ err, projectId: ctx.projectId }, "preview-proxy: touchLastRequest failed"),
+        );
+      }
+
+      const upstream = `${ctx.appProtocol}://preview-dind-${ctx.projectId}:${ctx.appPort}${ctx.innerPath}`;
+
+      return reply.from(upstream, {
+        rewriteRequestHeaders: (req, headers) => {
           headers["x-forwarded-prefix"] = ctx.pathPrefix;
-          headers["x-forwarded-host"] = request.headers["host"] ?? "";
-        }
-        return headers;
-      },
-      onResponse: (request, reply, response) => {
-        const ctx = ctxByRequestId.get(request.id);
-        ctxByRequestId.delete(request.id);
-        const ct = String(reply.getHeader("content-type") ?? "").toLowerCase();
-        if (ctx && ct.startsWith("text/html")) {
-          // Strip content-length — we're mutating the body length.
-          reply.removeHeader("content-length");
-          const transformer = baseInjector(ctx.pathPrefix);
-          void reply.send(response.stream.pipe(transformer));
-        } else {
-          void reply.send(response.stream);
-        }
-      },
+          headers["x-forwarded-host"] = req.headers["host"] ?? "";
+          return headers;
+        },
+        rewriteHeaders: (headers) => {
+          const out = { ...headers };
+          out["set-cookie"] = rewriteSetCookie(out["set-cookie"], ctx.pathPrefix);
+          if (typeof out.location === "string") {
+            const rewritten = rewriteLocation(out.location, ctx.pathPrefix);
+            if (rewritten !== undefined) out.location = rewritten;
+          }
+          return out;
+        },
+        onResponse: (_request, replyObj, response) => {
+          const ct = String(replyObj.getHeader("content-type") ?? "").toLowerCase();
+          if (ct.startsWith("text/html")) {
+            replyObj.removeHeader("content-length");
+            void replyObj.send(response.stream.pipe(baseInjector(ctx.pathPrefix)));
+          } else {
+            void replyObj.send(response.stream);
+          }
+        },
+      });
     },
   });
 };

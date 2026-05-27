@@ -24,6 +24,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/http-proxy": "^11.4.4",
     "@fastify/jwt": "^9.0.4",
+    "@fastify/reply-from": "^12.6.2",
     "@fastify/static": "^9.1.1",
     "cron-parser": "^5.5.0",
     "dockerode": "^5.0.0",

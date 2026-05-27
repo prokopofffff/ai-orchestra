@@ -28,6 +28,7 @@ COPY dashboard/package.json dashboard/package.json
 COPY mcp-tools/signal-tool/package.json mcp-tools/signal-tool/package.json
 COPY mcp-tools/task-tool/package.json mcp-tools/task-tool/package.json
 COPY mcp-tools/reference-tool/package.json mcp-tools/reference-tool/package.json
+COPY mcp-tools/preview-tool/package.json mcp-tools/preview-tool/package.json
 
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
@@ -85,6 +86,7 @@ COPY orchestra-core/package.json orchestra-core/package.json
 COPY mcp-tools/signal-tool/package.json mcp-tools/signal-tool/package.json
 COPY mcp-tools/task-tool/package.json mcp-tools/task-tool/package.json
 COPY mcp-tools/reference-tool/package.json mcp-tools/reference-tool/package.json
+COPY mcp-tools/preview-tool/package.json mcp-tools/preview-tool/package.json
 RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store \
     pnpm install --frozen-lockfile --prod --filter='!dashboard'
 
@@ -98,6 +100,7 @@ COPY shared/src shared/src
 COPY --from=builder /workspace/mcp-tools/signal-tool/dist mcp-tools/signal-tool/dist
 COPY --from=builder /workspace/mcp-tools/task-tool/dist mcp-tools/task-tool/dist
 COPY --from=builder /workspace/mcp-tools/reference-tool/dist mcp-tools/reference-tool/dist
+COPY --from=builder /workspace/mcp-tools/preview-tool/dist mcp-tools/preview-tool/dist
 
 # Built dashboard, served as static by orchestra-core (DASHBOARD_PATH env).
 COPY --from=builder /workspace/dashboard/dist dashboard

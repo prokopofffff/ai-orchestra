@@ -44,7 +44,11 @@ const MCP_TOOLS_ROOT = (() => {
 // "no references" and add no run-cost). Easier than per-role gating which
 // would surprise users who later link a project for the qa/devops agent.
 const roleTools: Record<AgentRole, string[]> = {
-  "tech-lead": ["signal-tool", "task-tool", "reference-tool"],
+  // preview-tool gives tech-lead programmatic access to the per-project
+  // preview contour (status / deploy / logs). Restricted to tech-lead so
+  // dev agents can't redeploy each other's preview mid-PR — the TL
+  // decides when to spin up a verification contour.
+  "tech-lead": ["signal-tool", "task-tool", "reference-tool", "preview-tool"],
   designer: ["signal-tool", "task-tool", "reference-tool"],
   frontend: ["signal-tool", "task-tool", "reference-tool"],
   backend: ["signal-tool", "task-tool", "reference-tool"],

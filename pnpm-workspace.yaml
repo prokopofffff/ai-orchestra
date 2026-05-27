@@ -3,5 +3,6 @@ packages:
   - mcp-tools/signal-tool
   - mcp-tools/task-tool
   - mcp-tools/reference-tool
+  - mcp-tools/preview-tool
   - dashboard
   - shared

@@ -208,7 +208,13 @@ async function notifyTechLead(projectId: string, message: string): Promise<void>
 export async function reconcileOrphanedTasks(config: Config): Promise<void> {
   const pool = getPool();
 
-  const activeStates = ["designing", "in_development", "in_testing", "in_review", "pr_created"];
+  // States where an agent should be actively working. If a task is in one
+  // of these and has no running session, reconciler re-enqueues. `revisions`
+  // is included because TL's `pr_changes_requested` lands the task here and
+  // the dev role is expected to keep working — without it, a dev session
+  // that died (eg. cost cap, container restart) leaves the task hung with
+  // no automatic recovery, requiring a manual nudge.
+  const activeStates = ["designing", "in_development", "in_testing", "in_review", "pr_created", "revisions"];
   const { rows: orphaned } = await pool.query(
     `SELECT t.id, t.project_id, t.assignee_role, t.state
      FROM tasks t

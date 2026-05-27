@@ -87,6 +87,23 @@ export function decryptSecret(encoded: string): string {
 }
 
 /**
+ * Encrypt a JSON-serializable value as a single ciphertext blob. Used for
+ * heterogeneous secret bags (e.g. preview env-var maps `{NAME:value}`)
+ * where per-key encryption would leak key names and complicate updates.
+ *
+ * Round-trips through JSON.stringify, so values must be plain data
+ * (no functions, no Date instances unless callers handle re-hydration).
+ */
+export function encryptJson(value: unknown): string {
+  return encryptSecret(JSON.stringify(value));
+}
+
+/** Inverse of encryptJson. Throws on tampering or wrong key. */
+export function decryptJson<T = unknown>(encoded: string): T {
+  return JSON.parse(decryptSecret(encoded)) as T;
+}
+
+/**
  * Test-only: reset the cached key so a unit test can swap the env var
  * mid-suite. Not exported in production builds — call via internal name.
  */

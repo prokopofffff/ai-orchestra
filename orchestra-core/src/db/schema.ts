@@ -208,6 +208,50 @@ export const systemConfig = pgTable("system_config", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Per-project preview contour. One row per project (UNIQUE project_id).
+ * See docs/PREVIEW_CONTOUR_DESIGN.md.
+ *
+ * Secret-bearing columns (*_encrypted) are AES-256-GCM blobs via secrets.ts.
+ * `env_vars_encrypted` is the whole {NAME:value} JSON encrypted as one blob.
+ *
+ * `state` is maintained by preview-manager (orchestra-core/src/preview-manager.ts).
+ * Allowed values: stopped | building | running | sleeping | error.
+ */
+export const previewEnvs = pgTable("preview_envs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: uuid("project_id").notNull().unique().references(() => projects.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+
+  dockerfilePath: text("dockerfile_path"),
+  composeFilePath: text("compose_file_path"),
+  branch: text("branch").notNull().default("main"),
+  appPort: integer("app_port").notNull().default(8080),
+
+  envVarsEncrypted: text("env_vars_encrypted"),
+
+  idleTimeoutMinutes: integer("idle_timeout_minutes").notNull().default(120),
+  autoRedeployOnPush: boolean("auto_redeploy_on_push").notNull().default(true),
+
+  state: text("state").notNull().default("stopped"),
+  currentCommit: text("current_commit"),
+  lastRequestAt: timestamp("last_request_at", { withTimezone: true }),
+  lastDeployedAt: timestamp("last_deployed_at", { withTimezone: true }),
+  errorMessage: text("error_message"),
+
+  dindCaEncrypted: text("dind_ca_encrypted"),
+  dindCertEncrypted: text("dind_cert_encrypted"),
+  dindKeyEncrypted: text("dind_key_encrypted"),
+
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_preview_envs_active_state").on(t.state),
+  check("preview_envs_state_check", sql`state IN ('stopped','building','running','sleeping','error')`),
+  check("preview_envs_port_check", sql`app_port > 0 AND app_port < 65536`),
+  check("preview_envs_idle_check", sql`idle_timeout_minutes > 0`),
+]);
+
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),

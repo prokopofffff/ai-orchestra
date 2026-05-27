@@ -32,6 +32,7 @@ import { fsPlugin } from "./fs-api";
 import { providersPlugin } from "./providers-api";
 import { referencesPlugin } from "./references-api";
 import { contextCardsPlugin } from "./context-cards-api";
+import { previewPlugin } from "./preview-api";
 import { clonePlugin } from "./clone-api";
 import { requireAuth, currentUserId, isPublicApiPath, SESSION_COOKIE } from "./auth";
 import { setAgentJwtSigner } from "./agent-jwt";
@@ -132,6 +133,7 @@ async function main() {
   await app.register(providersPlugin, { prefix: "/api" });
   await app.register(referencesPlugin, { prefix: "/api" });
   await app.register(contextCardsPlugin, { prefix: "/api" });
+  await app.register(previewPlugin, { prefix: "/api" });
   await app.register(clonePlugin, { prefix: "/api" });
 
   // ─── Static dashboard ───

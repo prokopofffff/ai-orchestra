@@ -320,8 +320,16 @@ New section in `dashboard/src/routes/Settings.tsx`, gated on
 - Idle app-container sleep at configured timeout.
 - Audit log entries.
 
-### v2 — Robustness (~2 days)
+### v2 — Robustness (~2-3 days)
 
+- **TLS between orchestra-core and DinD.** Deferred from v1 — the
+  per-project docker network already isolates DinD's :2375 endpoint
+  (only orchestra-core is attached). TLS becomes the belt-and-braces
+  defense if future code accidentally attaches another container to
+  the same network. Generate CA + server + client certs at first DinD
+  start, persist encrypted in `preview_envs.dind_*_encrypted`, mount
+  server certs into DinD via named volume, switch dockerode client to
+  TLS 2376.
 - DinD-level sleep on long inactivity, wake with progress UI.
 - Auto-redeploy on push (hook into pr-watcher).
 - Per-project log retention (rotate beyond N MB).

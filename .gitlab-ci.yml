@@ -22,8 +22,9 @@ deploy:
   before_script:
     - apk add --no-cache openssh-client curl
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    # printf preserves the key exactly (no extra newline from echo).
-    - printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+    # DEPLOY_SSH_KEY is a "file" variable — $DEPLOY_SSH_KEY is the path to
+    # the runner-managed temp file containing the key, not its contents.
+    - cp "$DEPLOY_SSH_KEY" ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
     - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
   script:

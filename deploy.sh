@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Deploy AI Orchestra on this server. Invoked by .github/workflows/deploy.yml
-# over SSH whenever main moves forward. Idempotent: re-running with no new
-# commits is a no-op.
+# Deploy AI Orchestra on this server. Invoked by .gitlab-ci.yml over SSH
+# whenever main moves forward. Idempotent: re-running with no new commits
+# restarts containers but pulls no code.
 #
 set -euo pipefail
 

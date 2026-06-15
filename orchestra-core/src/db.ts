@@ -15,7 +15,22 @@ let pool: pg.Pool;
 let db: NodePgDatabase;
 
 export function initPool(databaseUrl: string): pg.Pool {
-  pool = new Pool({ connectionString: databaseUrl });
+  // This pool is shared by the API handlers AND graphile-worker. With the
+  // pg default (max 10, no timeouts) a few slow/unindexed queries can pin
+  // every connection and stall the whole orchestrator with no upper bound.
+  //   - max: room for concurrent requests + worker job-fetch queries.
+  //   - statement_timeout: server-side kill for a runaway query so it can't
+  //     hold a connection forever (the unindexed cost-aggregation scans on
+  //     the spawn hot-path were the motivating case).
+  //   - connectionTimeoutMillis: fail fast when the pool is exhausted rather
+  //     than letting requests hang indefinitely.
+  pool = new Pool({
+    connectionString: databaseUrl,
+    max: Number(process.env.DB_POOL_MAX) || 20,
+    statement_timeout: Number(process.env.DB_STATEMENT_TIMEOUT_MS) || 60_000,
+    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS) || 10_000,
+    idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS) || 30_000,
+  });
   db = drizzle(pool);
   return pool;
 }
@@ -28,6 +43,32 @@ export function getPool(): pg.Pool {
 export function getDb(): NodePgDatabase {
   if (!db) throw new Error("Database not initialized. Call initPool() first.");
   return db;
+}
+
+/**
+ * Run `fn` inside a transaction holding a session-scoped Postgres advisory lock
+ * keyed on `key` (hashed to a bigint). The lock is cluster-wide and serializes
+ * all callers using the same key; it auto-releases on COMMIT/ROLLBACK. Commits
+ * on success, rolls back (best-effort) and rethrows on any error — so the body
+ * just runs queries on the provided client and throws to abort.
+ */
+export async function withAdvisoryLock<T>(
+  key: string,
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => { /* tx may already be closed */ });
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function runMigrations(databaseUrl: string): Promise<void> {

@@ -19,8 +19,8 @@ import { notify, escalate, notifyPrReady } from "./notification-hub";
 import { background, logBackgroundError } from "./error-handler";
 import { tryAutoMerge } from "./auto-merger";
 import { validateSignalSender } from "./agent-auth";
-import { currentUserId } from "./auth";
-import { userCanAccessProject, userCanEditProject, visibleProjectIds } from "./project-access";
+import { currentUserId, authorizeProject } from "./auth";
+import { userCanAccessProject, visibleProjectIds } from "./project-access";
 import { resolveMaxRevisions, resolveMaxSignalsPerTask, resolveMaxFails, resolveMaxQaDepth } from "./limits";
 import { AuditEntrySchema } from "@ai-orchestra/shared";
 
@@ -53,16 +53,19 @@ export const signalPlugin: FastifyPluginAsync = async (app) => {
     const signal: SignalPayload = body;
 
     // 0a. Project membership: only members can post signals into a project's
-    // workflow. Agent runs use a service-style header (`x-agent-role`) and
-    // are exempt — they're internal callers, already trusted by signature.
-    const agentRole = request.headers["x-agent-role"] as string | undefined;
-    if (!agentRole) {
-      const userId = currentUserId(request);
-      if (!(await userCanEditProject(userId, signal.projectId))) {
-        await logAudit(signal, "rejected", "no project access");
-        return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
-      }
+    // workflow. Agent runs present a signed agent token (kind:"agent") that
+    // binds their role + the single project they may act on — derived from
+    // the JWT, never a client header, so a logged-in human can't spoof an
+    // agent to inject signals into a project they don't belong to.
+    const authz = await authorizeProject(request, signal.projectId, "edit");
+    if (!authz.ok) {
+      await logAudit(
+        signal, "rejected",
+        authz.reason === "scope-mismatch" ? "agent token project scope mismatch" : "no project access",
+      );
+      return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
     }
+    const agentRole = authz.agentRole;
 
     // 0b. Validate sender identity (prevent role impersonation)
     if (agentRole) {

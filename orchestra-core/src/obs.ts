@@ -54,6 +54,20 @@ export const log: Logger = pino({
   level: process.env.LOG_LEVEL ?? (isProd ? "info" : "debug"),
   // Inject ambient context into every log line.
   mixin: () => ({ ctx: getContext() }),
+  // Best-effort scrub of credentials that occasionally ride along in logged
+  // objects (request headers, settings blobs, error payloads). Covers both
+  // top-level and one-level-nested occurrences of the common secret keys.
+  redact: {
+    paths: [
+      "token", "apiKey", "password", "password_hash", "secret", "jwtSecret",
+      "authorization", "cookie", "agentJwt", "tokenEncrypted", "apiKeyEncrypted",
+      "*.token", "*.apiKey", "*.password", "*.password_hash", "*.secret",
+      "*.authorization", "*.cookie", "*.agentJwt", "*.tokenEncrypted", "*.apiKeyEncrypted",
+      "req.headers.authorization", "req.headers.cookie",
+      "headers.authorization", "headers.cookie",
+    ],
+    censor: "[redacted]",
+  },
   ...(isProd ? {} : {
     transport: {
       target: "pino-pretty",

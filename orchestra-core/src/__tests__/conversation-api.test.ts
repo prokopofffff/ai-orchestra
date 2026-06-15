@@ -86,10 +86,13 @@ describe("Conversation API", () => {
 
     const { status, body } = await api(`/api/conversations/${projectId}/messages`);
     expect(status).toBe(200);
-    expect(body.length).toBe(3);
-    expect(body[0].text).toBe("First");
-    expect(body[1].text).toBe("Second");
-    expect(body[2].text).toBe("Third");
+    // Posting the "First" user message fires a background tech-lead dispatch
+    // which, with no provider configured in tests, appends a system notice —
+    // so filter to the three messages this test created and assert THEIR order.
+    const created = (body as { text: string }[]).filter((m) =>
+      ["First", "Second", "Third"].includes(m.text),
+    );
+    expect(created.map((m) => m.text)).toEqual(["First", "Second", "Third"]);
   });
 
   it("GET messages supports limit", async () => {

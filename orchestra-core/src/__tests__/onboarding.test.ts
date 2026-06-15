@@ -1,8 +1,17 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { onboardingPlugin } from "../onboarding-api";
 import { setupTestUser, getOrCreateTestUser } from "./helpers/test-auth";
+
+// The claude_auth step counts a "max"-mode project as done only when a Claude
+// login is actually available (host or per-project) — not on mode alone. Mock
+// the host check to true so the step is deterministic instead of depending on
+// whether the machine running the tests happens to be logged into Claude.
+vi.mock("../per-project-creds", async (importActual) => {
+  const actual = await importActual<typeof import("../per-project-creds")>();
+  return { ...actual, hostClaudeAuthAvailable: () => true };
+});
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";

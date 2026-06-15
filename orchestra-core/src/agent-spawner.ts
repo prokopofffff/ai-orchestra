@@ -6,7 +6,9 @@ import {
   updateHeartbeat,
   registerSessionController,
   unregisterSessionController,
+  SpawnConflictError,
   type Session,
+  type SpawnConflictReason,
 } from "./session-manager";
 import { appendLog } from "./logger";
 import { notify } from "./notification-hub";
@@ -35,9 +37,12 @@ import {
 import { providerFor, buildGitProviderEnv } from "./providers";
 import { log } from "./obs";
 import { mintAgentJwt } from "./agent-jwt";
-import { assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded } from "./cost-tracker";
+import {
+  assertWithinDailyCap, assertWithinOrchestraDailyCap, CostCapExceeded,
+  reserveDailyCost, releaseReservation,
+} from "./cost-tracker";
 import { DONE_STATES } from "./dependency-engine";
-import { resolveDailyCostCap, resolvePerRunBudgetUsd } from "./limits";
+import { resolveDailyCostCap, resolvePerRunBudgetUsd, resolveMaxConcurrentSessions } from "./limits";
 import { escalate } from "./notification-hub";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 import type { RuntimeEvent } from "./agents/runtime/types";
@@ -86,6 +91,39 @@ async function preflightFreeze(
 const COMPLETION_NOTIFY_WINDOW_MS = 5 * 60 * 1000;
 const lastCompletionNotify = new Map<string, number>();
 
+// Throttle daily-cost-cap escalations per project. The dispatch reconciler
+// retries deferred tasks every tick, and each blocked spawn would otherwise
+// fire a fresh Telegram/signal escalation — a notification storm while the
+// cap stays tripped. One escalation per project per 30 min is plenty.
+const COST_CAP_ESCALATE_WINDOW_MS = 30 * 60 * 1000;
+const lastCostCapEscalate = new Map<string, number>();
+
+/** Escalate a tripped daily cost cap at most once per project per window. */
+async function escalateCostCapOnce(
+  projectId: string,
+  taskId: string,
+  role: AgentRole,
+  err: CostCapExceeded,
+): Promise<void> {
+  const now = Date.now();
+  const last = lastCostCapEscalate.get(projectId) ?? 0;
+  if (now - last < COST_CAP_ESCALATE_WINDOW_MS) return;
+  lastCostCapEscalate.set(projectId, now);
+  // Light GC so the map can't grow unbounded over a long-running process
+  // (mirrors shouldNotifyCompletion).
+  if (lastCostCapEscalate.size > 1024) {
+    const cutoff = now - 2 * COST_CAP_ESCALATE_WINDOW_MS;
+    for (const [k, t] of lastCostCapEscalate) {
+      if (t < cutoff) lastCostCapEscalate.delete(k);
+    }
+  }
+  await escalate(
+    projectId, taskId,
+    `Daily cost cap reached: $${err.spent.toFixed(2)} / $${err.cap.toFixed(2)} — agent ${role} not started`,
+    { event: "daily_cost_cap", role, spent: err.spent, cap: err.cap },
+  );
+}
+
 function shouldNotifyCompletion(projectId: string, taskId: string, role: AgentRole): boolean {
   const key = `${projectId}:${taskId}:${role}`;
   const now = Date.now();
@@ -117,7 +155,10 @@ export interface SpawnAgentParams {
 }
 
 export interface SpawnResult {
-  session: Session;
+  /** Undefined when the spawn was skipped by the atomic guard (see `skipped`). */
+  session?: Session;
+  /** Set when a spawn guard rejected this run (role busy / at cap / cost cap). */
+  skipped?: { reason: SpawnConflictReason | "cost-cap"; detail: string };
   /** Set when the SDK aborted on a cap; downstream may freeze the task. */
   capExceeded?: { kind: "budget" | "timeout" | "aborted"; detail: string };
 }
@@ -191,17 +232,15 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   // ── 1b. Orchestra-wide + per-project daily cost cap gate ────────────
   // Hit before any worktree/IO so a tripped cap is cheap. cap=0 → unlimited.
   // Orchestra-wide first so a global cap can shut everything down even when
-  // individual projects are configured generously.
+  // individual projects are configured generously. Capture the orchestra cap
+  // here so the reservation below (4b) doesn't re-query system_config.
+  let orchestraCap: number;
   try {
-    await assertWithinOrchestraDailyCap();
+    ({ cap: orchestraCap } = await assertWithinOrchestraDailyCap());
     await assertWithinDailyCap(projectId, resolveDailyCostCap(settings));
   } catch (err) {
     if (err instanceof CostCapExceeded) {
-      await escalate(
-        projectId, taskId,
-        `Daily cost cap reached: $${err.spent.toFixed(2)} / $${err.cap.toFixed(2)} — agent ${role} not started`,
-        { event: "daily_cost_cap", role, spent: err.spent, cap: err.cap },
-      );
+      await escalateCostCapOnce(projectId, taskId, role, err);
     }
     throw err;
   }
@@ -292,8 +331,24 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const bootstrap = formatBootstrapPrompt(await buildBootstrapContext(projectId, role, taskId));
 
   // ── 4. Session row + MCP servers (passed inline to SDK) ─────────────
-  const session = await createSession({ projectId, role, taskId, model, worktreePath: worktreeDir });
-  const agentJwt = await mintAgentJwt(projectId);
+  // createSession is the atomic spawn gate: under a per-project advisory lock
+  // it rejects a duplicate role or an over-cap spawn. If we lost that race,
+  // bail cleanly (no error/retry) and drop the worktree we just built.
+  let session: Session;
+  try {
+    session = await createSession({
+      projectId, role, taskId, model, worktreePath: worktreeDir,
+      maxConcurrent: resolveMaxConcurrentSessions(settings),
+    });
+  } catch (err) {
+    if (err instanceof SpawnConflictError) {
+      log.info({ projectId, role, reason: err.reason }, "spawn skipped by atomic guard");
+      await cleanupWorktree(repoDir, worktreeDir).catch(() => { /* best-effort */ });
+      return { skipped: { reason: err.reason, detail: err.message } };
+    }
+    throw err;
+  }
+  const agentJwt = await mintAgentJwt(projectId, role);
   const { mcpServers } = generateMcpConfig(role, config, projectId, agentJwt);
   appendLog(projectId, session.id, role, "system", `agent run: model=${model} worktree=${worktreeDir}`);
 
@@ -307,6 +362,32 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   registerSessionController(session.id, abortController);
 
   const maxBudgetUsd = resolvePerRunBudgetUsd(role, settings);
+
+  // ── 4b. Reserve this run's worst-case budget (atomic cap gate) ──────
+  // The early cap check (1b) reads only billed spend, which lands after a run
+  // ends — so concurrent spawns can all pass it and collectively overshoot.
+  // Holding maxBudgetUsd in cost_reservations makes the cap race-safe; the
+  // reservation is released in the finally below once the run finishes.
+  try {
+    await reserveDailyCost({
+      projectId,
+      sessionId: session.id,
+      estimatedUsd: maxBudgetUsd,
+      projectCap: resolveDailyCostCap(settings),
+      orchestraCap,
+    });
+  } catch (err) {
+    if (err instanceof CostCapExceeded) {
+      unregisterSessionController(session.id);
+      await updateSession(session.id, { status: "terminated", finishedAt: new Date() });
+      await cleanupWorktree(repoDir, worktreeDir).catch(() => { /* best-effort */ });
+      await escalateCostCapOnce(projectId, taskId, role, err);
+      log.info({ projectId, role, spent: err.spent, cap: err.cap }, "spawn skipped: daily cost cap (reservation)");
+      return { skipped: { reason: "cost-cap", detail: err.message } };
+    }
+    throw err;
+  }
+
   const ctx: ObserverContext = {
     projectId,
     sessionId: session.id,
@@ -326,6 +407,14 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   const HEARTBEAT_WRITE_INTERVAL_MS = 30_000;
   const onEvent = async (evt: RuntimeEvent): Promise<void> => {
     logRuntimeEvent(ctx, evt);
+    // Persist the provider's session id so a crash-retry can resume the same
+    // conversation. heartbeat.ts reads session.claudeSessionId to populate
+    // resumeSessionId on retry — without this write it was always null and
+    // every retry started a cold session.
+    if (evt.type === "init" && evt.sessionId) {
+      await updateSession(session.id, { claudeSessionId: evt.sessionId }).catch((e) =>
+        logBackgroundError("spawner:persist-session-id", e, projectId));
+    }
     await enqueueObserveCheck(ctx, evt).catch((e) =>
       logBackgroundError("spawner:observe-check", e, projectId));
     await recordRuntimeCost(ctx, evt, { maxBudgetUsd });
@@ -389,6 +478,11 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     throw err;
   } finally {
     unregisterSessionController(session.id);
+    // Run finished (any outcome) — drop the budget reservation so it stops
+    // counting against the cap. Actual spend was recorded separately by the
+    // cost observer during the run.
+    await releaseReservation(session.id).catch((e) =>
+      logBackgroundError("spawner:release-reservation", e, projectId));
     // ── 6. Notify + cleanup ────────────────────────────────────────────
     const taskTitle = (await getPool().query("SELECT title FROM tasks WHERE id = $1", [taskId])).rows[0]?.title;
     // Dedup completion notifications. The reconciler re-spawns tasks stuck

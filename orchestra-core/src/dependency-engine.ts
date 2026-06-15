@@ -20,8 +20,8 @@ import { logAudit } from "./flow-guard";
  */
 export const DONE_STATES = ["merged", "closed", "design_ready"] as const;
 
-/** SQL-safe list for use inside `state NOT IN (…)` clauses. */
-const DONE_STATES_SQL = DONE_STATES.map((s) => `'${s}'`).join(", ");
+/** Mutable copy for binding as a SQL array parameter (`state <> ALL($n)`). */
+const DONE_STATES_ARR: string[] = [...DONE_STATES];
 
 /**
  * Check if a task state change unblocks other tasks.
@@ -34,8 +34,8 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
   const { rows: dependents } = await pool.query(
     `SELECT id, title, blocked_by FROM tasks
      WHERE project_id = $1 AND $2 = ANY(blocked_by)
-     AND state NOT IN (${DONE_STATES_SQL})`,
-    [projectId, taskId],
+     AND state <> ALL($3)`,
+    [projectId, taskId, DONE_STATES_ARR],
   );
 
   const unblockedTaskIds: string[] = [];
@@ -47,8 +47,8 @@ export async function checkUnblocked(taskId: string, projectId: string): Promise
     if (blockedBy.length > 0) {
       const { rows: remaining } = await pool.query(
         `SELECT id FROM tasks
-         WHERE id = ANY($1) AND state NOT IN (${DONE_STATES_SQL})`,
-        [blockedBy],
+         WHERE id = ANY($1) AND state <> ALL($2)`,
+        [blockedBy, DONE_STATES_ARR],
       );
 
       if (remaining.length === 0) {
@@ -92,8 +92,8 @@ export async function getBlockers(taskId: string): Promise<Array<{ id: string; t
 
   const { rows } = await pool.query(
     `SELECT id, title, state FROM tasks
-     WHERE id = ANY($1) AND state NOT IN (${DONE_STATES_SQL})`,
-    [blockedBy],
+     WHERE id = ANY($1) AND state <> ALL($2)`,
+    [blockedBy, DONE_STATES_ARR],
   );
 
   return rows.map((r) => ({

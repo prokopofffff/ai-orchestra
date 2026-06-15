@@ -40,6 +40,15 @@ export type Config = z.infer<typeof configSchema>;
 export type AgentRole = "tech-lead" | "designer" | "frontend" | "backend" | "qa" | "devops";
 
 export function loadConfig(): Config {
+  // Fail closed in production: a hardcoded fallback secret means anyone can
+  // forge a session/agent JWT and take over every project. Only fall back to
+  // the well-known dev secret outside production so local `pnpm dev` / tests
+  // still boot without ceremony.
+  const isProd = process.env.NODE_ENV === "production";
+  if (isProd && !process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET must be set in production — refusing to start with a default secret");
+  }
+
   return configSchema.parse({
     port: process.env.PORT,
     nodeEnv: process.env.NODE_ENV,

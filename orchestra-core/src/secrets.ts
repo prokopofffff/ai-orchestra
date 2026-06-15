@@ -44,7 +44,6 @@ function loadKey(): Buffer {
   }
   const ephemeral = randomBytes(KEY_LEN);
   log.warn(
-    { ephemeralKeyB64: ephemeral.toString("base64").slice(0, 8) + "…" },
     "ORCHESTRA_SECRETS_KEY not set — generated ephemeral key. " +
       "Encrypted values WILL NOT survive a restart. " +
       "Set ORCHESTRA_SECRETS_KEY in your .env for persistence.",

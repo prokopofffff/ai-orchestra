@@ -10,7 +10,7 @@ import { projects } from "./db/schema";
 import { currentUserId } from "./auth";
 import { userCanEditProject } from "./project-access";
 import { assertPathInUserScope, ensureUserWorkspaceRoot, ScopeViolationError } from "./workspace-scope";
-import { normalizeProviderSecretsForWrite, getProjectGitToken } from "./project-secrets";
+import { normalizeProviderSecretsForWrite, getProjectGitToken, mergeProjectSettings } from "./project-secrets";
 import { providerFor } from "./providers";
 import { log } from "./obs";
 
@@ -121,13 +121,18 @@ export const clonePlugin: FastifyPluginAsync = async (app) => {
     const settingsPatch: Record<string, unknown> = {};
     if (body.token) settingsPatch.provider = { token: body.token };
     const normalizedPatch = normalizeProviderSecretsForWrite(settingsPatch);
+    // Deep-merge instead of shallow jsonb `||`: the concat replaced the whole
+    // `provider` bucket, so persisting a clone token dropped any existing
+    // provider.type / baseUrl. Read-modify-write preserves sibling keys.
+    let mergedSettings: Record<string, unknown> | undefined;
+    if (Object.keys(normalizedPatch).length > 0) {
+      mergedSettings = await mergeProjectSettings(projectId, normalizedPatch as Record<string, unknown>);
+    }
     await db
       .update(projects)
       .set({
         repoUrl,
-        ...(Object.keys(normalizedPatch).length > 0
-          ? { settings: sql`${projects.settings} || ${JSON.stringify(normalizedPatch)}::jsonb` }
-          : {}),
+        ...(mergedSettings ? { settings: mergedSettings } : {}),
         updatedAt: sql`now()`,
       })
       .where(eq(projects.id, projectId));

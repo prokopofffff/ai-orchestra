@@ -1,5 +1,5 @@
 import type { AgentRole } from "./config";
-import { getPool } from "./db";
+import { getPool, withAdvisoryLock } from "./db";
 import { log } from "./obs";
 import type { ModelUsage, RuntimeResult } from "./agents/runtime/types";
 
@@ -279,6 +279,72 @@ export async function getOrchestraDailyCostCap(): Promise<number> {
   const raw = rows[0]?.value;
   const n = raw != null ? Number(raw) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Atomic reserve-then-spend gate. `assertWithin*` reads only billed spend
+ * (usage_costs), which lands AFTER a run finishes — so N concurrent spawns all
+ * see the same low number and collectively blow past the cap. This holds the
+ * run's worst-case budget in `cost_reservations` so the next spawn's check sees
+ * it immediately.
+ *
+ * Under a single global advisory lock (so both the per-project and the
+ * orchestra-wide checks are atomic across every concurrent spawn), it computes
+ * spend = SUM(usage_costs) + SUM(cost_reservations) over the trailing 24h and
+ * throws CostCapExceeded if either cap is already met; otherwise it inserts the
+ * reservation and commits. caps of 0 = unlimited (skip that check).
+ *
+ * Call releaseReservation(sessionId) when the run ends — the real spend is then
+ * recorded separately via recordCost.
+ */
+export async function reserveDailyCost(opts: {
+  projectId: string;
+  sessionId: string;
+  estimatedUsd: number;
+  projectCap: number;
+  orchestraCap: number;
+}): Promise<void> {
+  // One global lock serializes all reservations so the orchestra-wide sum is
+  // consistent across projects (a per-project lock couldn't see cross-project
+  // spawns). Spawns are infrequent + long-lived, so global contention here is
+  // negligible.
+  await withAdvisoryLock("cost-reservation", async (client) => {
+    // Project and orchestra spend (billed + reserved, trailing 24h) in one
+    // round-trip — keeps the global critical section short.
+    const { rows } = await client.query(
+      `SELECT
+         COALESCE(SUM(cost_usd) FILTER (WHERE project_id = $1), 0)
+           + COALESCE((SELECT SUM(estimated_usd) FROM cost_reservations
+                        WHERE project_id = $1 AND created_at >= now() - interval '1 day'), 0)
+           AS project_spent,
+         COALESCE(SUM(cost_usd), 0)
+           + COALESCE((SELECT SUM(estimated_usd) FROM cost_reservations
+                        WHERE created_at >= now() - interval '1 day'), 0)
+           AS org_spent
+       FROM usage_costs
+       WHERE created_at >= now() - interval '1 day'`,
+      [opts.projectId],
+    );
+    const projectSpent = Number(rows[0]?.project_spent ?? 0);
+    const orgSpent = Number(rows[0]?.org_spent ?? 0);
+    if (opts.projectCap > 0 && projectSpent >= opts.projectCap) {
+      throw new CostCapExceeded(opts.projectCap, projectSpent);
+    }
+    if (opts.orchestraCap > 0 && orgSpent >= opts.orchestraCap) {
+      throw new CostCapExceeded(opts.orchestraCap, orgSpent);
+    }
+
+    await client.query(
+      `INSERT INTO cost_reservations (project_id, session_id, estimated_usd)
+       VALUES ($1, $2, $3)`,
+      [opts.projectId, opts.sessionId, opts.estimatedUsd],
+    );
+  });
+}
+
+/** Drop a run's cost reservation once it ends (actual spend recorded separately). */
+export async function releaseReservation(sessionId: string): Promise<void> {
+  await getPool().query("DELETE FROM cost_reservations WHERE session_id = $1", [sessionId]);
 }
 
 /**

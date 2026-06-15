@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { ProjectSchema, TaskSchema, TaskCommentSchema, TaskStateSchema } from "@ai-orchestra/shared";
@@ -9,7 +9,7 @@ import { checkUnblocked, DONE_STATES } from "./dependency-engine";
 import { resolveRuntimeForRole } from "./agents/runtime/resolver";
 import { notify } from "./notification-hub";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
-import { currentUserId } from "./auth";
+import { currentUserId, authorizeProject } from "./auth";
 import {
   userCanAccessProject, userCanEditProject, userCanReferenceProject,
   visibilityFilter, visibleProjectIds, projectIdOf,
@@ -17,7 +17,7 @@ import {
 import { createIntroTask } from "./intro-task";
 import { reconcileTelegramNow } from "./telegram-manager";
 import { isGitRepo, initGitRepo, git, rewriteOriginAuth } from "./repo-manager";
-import { normalizeProviderSecretsForWrite } from "./project-secrets";
+import { normalizeProviderSecretsForWrite, redactProjectSecrets, mergeProjectSettings } from "./project-secrets";
 import { loadConfig } from "./config";
 import type { AgentRole } from "./config";
 import { providerForProject, providerFor } from "./providers";
@@ -47,6 +47,19 @@ const projectSchema = ProjectSchema;
 const taskSchema = TaskSchema;
 const commentSchema = TaskCommentSchema;
 
+/**
+ * Guard: instance admin = the earliest-registered user (the account that set
+ * the instance up and inherits ownerless projects on first signup). There's no
+ * dedicated admin role yet, so system-wide config is gated to this account.
+ * Sends a 403 and returns false when the caller isn't the admin.
+ */
+async function requireInstanceAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
+  const { rows } = await getPool().query("SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1");
+  if (rows.length > 0 && rows[0].id === currentUserId(request)) return true;
+  reply.code(403).send({ error: "Доступно только администратору инстанса" });
+  return false;
+}
+
 export const taskPlugin: FastifyPluginAsync = async (app) => {
   // ─── Projects ───
 
@@ -58,7 +71,10 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       .from(projects)
       .where(visibilityFilter(userId))
       .orderBy(desc(projects.createdAt));
-    return parseRows(projectSchema, rows);
+    return parseRows(projectSchema, rows).map((p) => ({
+      ...p,
+      settings: redactProjectSecrets(p.settings as Record<string, unknown>),
+    }));
   });
 
   app.post("/projects", async (request, reply) => {
@@ -141,7 +157,8 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     const db = getDb();
     const [row] = await db.select().from(projects).where(eq(projects.id, request.params.id)).limit(1);
     if (!row) return reply.code(404).send({ error: "Проект не найден" });
-    return parseRow(projectSchema, row);
+    const parsed = parseRow(projectSchema, row);
+    return { ...parsed, settings: redactProjectSecrets(parsed.settings as Record<string, unknown>) };
   });
 
   app.patch<{ Params: { id: string } }>("/projects/:id", async (request, reply) => {
@@ -202,12 +219,16 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (body.repoUrl !== undefined) updates.repoUrl = body.repoUrl;
     if (body.localPath !== undefined) updates.localPath = body.localPath;
     if (body.description !== undefined) updates.description = body.description;
-    // settings merges via jsonb concat — drizzle's set() doesn't have a direct
-    // operator for `||`, so reach for `sql` here. Still typed at the column.
+    // Deep-merge into the stored settings (read-modify-write). A shallow jsonb
+    // `||` replaced whole nested objects, so a partial bucket PATCH — e.g. the
+    // dashboard sending `{ provider: { type } }` when only the provider type
+    // changed — silently dropped sibling keys like provider.tokenEncrypted,
+    // wiping the stored git token. deepMergeSettings preserves untouched keys;
+    // a null from normalize is a tombstone that clears a removed secret.
     // Plaintext provider.token is encrypted in-flight so the DB never sees it.
     if (body.settings !== undefined) {
       const normalized = normalizeProviderSecretsForWrite(body.settings);
-      updates.settings = sql`${projects.settings} || ${JSON.stringify(normalized)}::jsonb`;
+      updates.settings = await mergeProjectSettings(request.params.id, normalized as Record<string, unknown>);
     }
 
     if (Object.keys(updates).length === 0) {
@@ -504,13 +525,6 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/tasks", async (request, reply) => {
-    const userId = currentUserId(request);
-    const agentRole = request.headers["x-agent-role"] as string | undefined;
-    if (agentRole) {
-      const check = canCreateTask(agentRole as AgentRole);
-      if (!check.allowed) return reply.code(403).send({ error: check.reason });
-    }
-
     const body = z.object({
       projectId: z.string().uuid(),
       parentId: z.string().uuid().optional(),
@@ -523,8 +537,16 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       blockedBy: z.array(z.string().uuid()).default([]),
     }).parse(request.body);
 
-    if (!(await userCanEditProject(userId, body.projectId))) {
+    // Same project-scope gate as the other agent-callable routes: an agent
+    // token may only act on the project it was minted for; a human needs edit
+    // rights. Capability checks layer on top of the resolved agent role.
+    const authz = await authorizeProject(request, body.projectId, "edit");
+    if (!authz.ok) {
       return reply.code(403).send({ error: "Недостаточно прав доступа к проекту" });
+    }
+    if (authz.agentRole) {
+      const check = canCreateTask(authz.agentRole as AgentRole);
+      if (!check.allowed) return reply.code(403).send({ error: check.reason });
     }
 
     const [row] = await getDb()
@@ -556,15 +578,17 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   });
 
   app.patch<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
-    const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
-    if (!pid || !(await userCanAccessProject(userId, pid))) {
+    // 404 (not 403) when the caller can't even see the project — don't reveal
+    // its existence. Then authorizeProject enforces edit rights + agent scope.
+    if (!pid || !(await userCanAccessProject(currentUserId(request), pid))) {
       return reply.code(404).send({ error: "Задача не найдена" });
     }
-    if (!(await userCanEditProject(userId, pid))) {
+    const authz = await authorizeProject(request, pid, "edit");
+    if (!authz.ok) {
       return reply.code(403).send({ error: "Недостаточно прав" });
     }
-    const agentRole = request.headers["x-agent-role"] as string | undefined;
+    const agentRole = authz.agentRole;
     if (agentRole) {
       const [t] = await getDb()
         .select({ assigneeRole: tasks.assigneeRole })
@@ -632,15 +656,15 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   });
 
   app.delete<{ Params: { id: string } }>("/tasks/:id", async (request, reply) => {
-    const userId = currentUserId(request);
     const pid = await projectIdOf("tasks", request.params.id);
-    if (!pid || !(await userCanAccessProject(userId, pid))) {
+    if (!pid || !(await userCanAccessProject(currentUserId(request), pid))) {
       return reply.code(404).send({ error: "Задача не найдена" });
     }
-    if (!(await userCanEditProject(userId, pid))) {
+    const authz = await authorizeProject(request, pid, "edit");
+    if (!authz.ok) {
       return reply.code(403).send({ error: "Недостаточно прав" });
     }
-    const agentRole = request.headers["x-agent-role"] as string | undefined;
+    const agentRole = authz.agentRole;
     if (agentRole) {
       const check = canDeleteTask(agentRole as AgentRole);
       if (!check.allowed) return reply.code(403).send({ error: check.reason });
@@ -788,7 +812,8 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   type ConfigKey = typeof ALLOWED_KEYS[number];
   type SystemConfigMap = Partial<Record<ConfigKey, string>>;
 
-  app.get("/system-config", async () => {
+  app.get("/system-config", async (request, reply) => {
+    if (!(await requireInstanceAdmin(request, reply))) return;
     const { rows } = await getPool().query("SELECT key, value FROM system_config");
     const result: SystemConfigMap = {};
     for (const row of rows as { key: string; value: string }[]) {
@@ -800,6 +825,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
   });
 
   app.patch("/system-config", async (request, reply) => {
+    if (!(await requireInstanceAdmin(request, reply))) return;
     const body = z.object({
       claude_auth: z.enum(["max", "api"]).optional(),
       github_default_org: z.string().optional(),

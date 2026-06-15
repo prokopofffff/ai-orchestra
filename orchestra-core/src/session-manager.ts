@@ -1,4 +1,4 @@
-import { getPool } from "./db";
+import { getPool, withAdvisoryLock } from "./db";
 import { type AgentRole } from "./config";
 import { parseRow, parseRows } from "./db-utils";
 import { AgentSessionSchema, type AgentSession } from "@ai-orchestra/shared";
@@ -12,17 +12,83 @@ export interface CreateSessionParams {
   taskId?: string;
   model: string;
   worktreePath?: string;
+  /**
+   * Project-wide concurrency cap (across all roles). 0/undefined = unlimited.
+   * Checked atomically with the insert so concurrent spawns can't slip past it.
+   */
+  maxConcurrent?: number;
 }
 
+export type SpawnConflictReason = "role-busy" | "concurrency-cap";
+
+/**
+ * Thrown by createSession when the atomic spawn guard rejects a new session:
+ * another agent already holds this role, or the project is at its concurrency
+ * cap. Callers treat this as a benign "lost the race / backpressure", not a
+ * fatal error — no retry, no crash.
+ */
+export class SpawnConflictError extends Error {
+  constructor(
+    public reason: SpawnConflictReason,
+    message: string,
+    public detail: { existingSessionId?: string; active?: number; cap?: number } = {},
+  ) {
+    super(message);
+    this.name = "SpawnConflictError";
+  }
+}
+
+/**
+ * Create a 'running' session row — the single serialization point for "should
+ * I spawn this agent". A transaction-scoped advisory lock keyed on the project
+ * makes the role-busy and concurrency-cap checks atomic with the INSERT, so two
+ * concurrent dispatches (or the reconciler racing live dispatch) can't both
+ * decide to spawn. The lock is cluster-wide (covers multiple worker processes)
+ * and auto-releases on COMMIT/ROLLBACK.
+ *
+ * Throws SpawnConflictError when a same-role session is already running, or the
+ * project is at its concurrency cap.
+ */
 export async function createSession(params: CreateSessionParams): Promise<Session> {
-  const pool = getPool();
-  const { rows } = await pool.query(
-    `INSERT INTO sessions (project_id, role, task_id, model, worktree_path, status, last_heartbeat)
-     VALUES ($1, $2, $3, $4, $5, 'running', now())
-     RETURNING *`,
-    [params.projectId, params.role, params.taskId ?? null, params.model, params.worktreePath ?? null],
-  );
-  return parseRow(sessionSchema, rows[0]);
+  return withAdvisoryLock(`spawn:${params.projectId}`, async (client) => {
+    const { rows: busy } = await client.query(
+      `SELECT id FROM sessions
+       WHERE project_id = $1 AND role = $2 AND status = 'running'
+       ORDER BY started_at DESC LIMIT 1`,
+      [params.projectId, params.role],
+    );
+    if (busy.length) {
+      throw new SpawnConflictError(
+        "role-busy",
+        `A ${params.role} agent is already running for project ${params.projectId}`,
+        { existingSessionId: busy[0].id as string },
+      );
+    }
+
+    if (params.maxConcurrent && params.maxConcurrent > 0) {
+      const { rows: cnt } = await client.query(
+        `SELECT count(*)::int AS c FROM sessions
+         WHERE project_id = $1 AND status IN ('running', 'sleeping')`,
+        [params.projectId],
+      );
+      const active = cnt[0].c as number;
+      if (active >= params.maxConcurrent) {
+        throw new SpawnConflictError(
+          "concurrency-cap",
+          `Project concurrency cap reached (${active}/${params.maxConcurrent})`,
+          { active, cap: params.maxConcurrent },
+        );
+      }
+    }
+
+    const { rows } = await client.query(
+      `INSERT INTO sessions (project_id, role, task_id, model, worktree_path, status, last_heartbeat)
+       VALUES ($1, $2, $3, $4, $5, 'running', now())
+       RETURNING *`,
+      [params.projectId, params.role, params.taskId ?? null, params.model, params.worktreePath ?? null],
+    );
+    return parseRow(sessionSchema, rows[0]);
+  });
 }
 
 export async function updateSession(

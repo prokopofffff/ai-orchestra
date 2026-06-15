@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from
 import Fastify, { type FastifyError, type FastifyRequest, type FastifyReply } from "fastify";
 import { waitForDatabase, runMigrations, getPool } from "../db";
 import { prPlugin } from "../pr-api";
+import { setupTestUser } from "./helpers/test-auth";
 
 const DATABASE_URL = process.env.DATABASE_URL
   ?? "postgres://orchestra:158gvaT63ASEsAwZSt8l1piKGheHWvPe@127.0.0.1:5434/orchestra";
@@ -9,6 +10,7 @@ const DATABASE_URL = process.env.DATABASE_URL
 let app: ReturnType<typeof Fastify>;
 let baseUrl: string;
 let projectId: string;
+let ownerId: string;
 
 async function api(path: string, options?: RequestInit) {
   const res = await fetch(`${baseUrl}${path}`, {
@@ -28,6 +30,10 @@ beforeAll(async () => {
     if (err.name === "ZodError") return reply.code(400).send({ error: "Validation error" });
     return reply.code(500).send({ error: err.message });
   });
+  // pr/create is multi-tenant gated (currentUserId + userCanEditProject), so
+  // requests need an authenticated user. setupTestUser decorates every request
+  // as this account; projects below are owned by it so the edit gate passes.
+  ownerId = await setupTestUser(app, "pra-owner@orchestra.local");
   await app.register(prPlugin, { prefix: "/api" });
 
   const address = await app.listen({ port: 0, host: "127.0.0.1" });
@@ -41,10 +47,10 @@ beforeEach(async () => {
   // requires it (no env fallback anymore). Tests that exercise the
   // "missing token" path seed a project without the settings.
   const { rows } = await pool.query(
-    `INSERT INTO projects (name, slug, repo_url, settings)
-     VALUES ('PR API', 'pra-test', $1, '{"provider":{"token":"t"}}'::jsonb)
+    `INSERT INTO projects (name, slug, repo_url, settings, owner_id)
+     VALUES ('PR API', 'pra-test', $1, '{"provider":{"token":"t"}}'::jsonb, $2)
      RETURNING id`,
-    ["https://github.com/test/pr-api-repo"],
+    ["https://github.com/test/pr-api-repo", ownerId],
   );
   projectId = rows[0].id;
 });
@@ -77,12 +83,13 @@ describe("pr-api — POST /api/pr/create validation", () => {
       }),
     });
     expect(status).toBe(404);
-    expect(body.error).toMatch(/Project not found/);
+    expect(body.error).toMatch(/Проект не найден/);
   });
 
   it("400 when the project has no repo_url", async () => {
     const { rows } = await getPool().query(
-      "INSERT INTO projects (name, slug) VALUES ('No Repo', 'pra-norepo') RETURNING id",
+      "INSERT INTO projects (name, slug, owner_id) VALUES ('No Repo', 'pra-norepo', $1) RETURNING id",
+      [ownerId],
     );
     process.env.GITHUB_TOKEN = "t";
     const { status, body } = await api("/api/pr/create", {
@@ -90,14 +97,14 @@ describe("pr-api — POST /api/pr/create validation", () => {
       body: JSON.stringify({ projectId: rows[0].id, title: "t", body: "b", head: "h" }),
     });
     expect(status).toBe(400);
-    expect(body.error).toMatch(/no repository URL/);
+    expect(body.error).toMatch(/URL репозитория/);
   });
 
   it("400 when the project has no provider token configured", async () => {
     // Project without settings.provider.token. No env fallback exists.
     const { rows } = await getPool().query(
-      "INSERT INTO projects (name, slug, repo_url) VALUES ('No Token', 'pra-notok', $1) RETURNING id",
-      ["https://github.com/test/no-token"],
+      "INSERT INTO projects (name, slug, repo_url, owner_id) VALUES ('No Token', 'pra-notok', $1, $2) RETURNING id",
+      ["https://github.com/test/no-token", ownerId],
     );
     const { status, body } = await api("/api/pr/create", {
       method: "POST",
@@ -109,8 +116,8 @@ describe("pr-api — POST /api/pr/create validation", () => {
 
   it("400 when the repo URL's provider can't be detected", async () => {
     const { rows } = await getPool().query(
-      "INSERT INTO projects (name, slug, repo_url) VALUES ('Weird', 'pra-weird', $1) RETURNING id",
-      ["https://example.com/not-a-git-host/x"],
+      "INSERT INTO projects (name, slug, repo_url, owner_id) VALUES ('Weird', 'pra-weird', $1, $2) RETURNING id",
+      ["https://example.com/not-a-git-host/x", ownerId],
     );
     // No tokens + unknown hostname → resolver throws a detectable error.
     delete process.env.GITHUB_TOKEN;

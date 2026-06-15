@@ -12,7 +12,7 @@ import { getDb } from "./db";
 import { sessions as sessionsTable } from "./db/schema";
 import { parseRows } from "./db-utils";
 import { AgentSessionSchema } from "@ai-orchestra/shared";
-import { currentUserId } from "./auth";
+import { currentUserId, authorizeProject } from "./auth";
 import { userCanAccessProject, userCanEditProject, visibleProjectIds } from "./project-access";
 
 export const sessionPlugin: FastifyPluginAsync = async (app) => {
@@ -66,7 +66,7 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
     const config = loadConfig();
 
     try {
-      const { session } = await spawnAgent({
+      const { session, skipped } = await spawnAgent({
         projectId: body.projectId,
         taskId: body.taskId,
         role: body.role,
@@ -74,6 +74,10 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
         resumeSessionId: body.resumeSessionId,
       });
 
+      // Atomic spawn guard rejected it (role already running / at cap).
+      if (!session) {
+        return reply.code(409).send({ error: skipped?.detail ?? "Агент уже запущен" });
+      }
       return reply.code(201).send(session);
     } catch (e) {
       if (e instanceof Error && e.message.includes("blocked")) {
@@ -106,15 +110,13 @@ export const sessionPlugin: FastifyPluginAsync = async (app) => {
   // ─── Heartbeat (called by agents or monitoring) ───
 
   app.post<{ Params: { id: string } }>("/sessions/:id/heartbeat", async (request, reply) => {
-    // Heartbeats are agent-internal; an agent header bypasses user check.
-    const agentRole = request.headers["x-agent-role"] as string | undefined;
-    if (!agentRole) {
-      const userId = currentUserId(request);
-      const session = await getSession(request.params.id);
-      if (!session || !(await userCanAccessProject(userId, session.projectId))) {
-        return reply.code(404).send({ error: "Сессия не найдена" });
-      }
-    }
+    // Heartbeats are agent-internal; a signed agent token (kind:"agent")
+    // bypasses the user membership check, but only for the project it was
+    // minted for — never on the basis of a client-supplied header.
+    const session = await getSession(request.params.id);
+    if (!session) return reply.code(404).send({ error: "Сессия не найдена" });
+    const authz = await authorizeProject(request, session.projectId, "access");
+    if (!authz.ok) return reply.code(404).send({ error: "Сессия не найдена" });
     await updateHeartbeat(request.params.id);
     return { ok: true };
   });

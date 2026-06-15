@@ -68,7 +68,7 @@ async function main() {
   });
   // After registration the `app.jwt.sign` decorator is available — capture it
   // so the agent-spawner / tech-lead dispatcher can mint MCP-side tokens.
-  setAgentJwtSigner((payload) => app.jwt.sign(payload));
+  setAgentJwtSigner((payload, opts) => app.jwt.sign(payload, opts));
 
   // Gate every /api/* route behind auth except the public ones (auth itself,
   // health, external webhooks). Static dashboard files stay public.
@@ -154,7 +154,11 @@ async function main() {
   app.setErrorHandler(async (err: Error, _request, reply) => {
     log.error({ err }, "unhandled error");
     if (err.name === "ZodError") {
-      return reply.code(400).send({ error: "Ошибка валидации", details: err });
+      // Echo only the field paths + messages, not the full ZodError object
+      // (which serializes internal schema structure to the client).
+      const issues = (err as unknown as { issues?: { path: (string | number)[]; message: string }[] }).issues;
+      const details = issues?.map((i) => ({ path: i.path.join("."), message: i.message }));
+      return reply.code(400).send({ error: "Ошибка валидации", details });
     }
     return reply.code(500).send({ error: "Внутренняя ошибка сервера" });
   });

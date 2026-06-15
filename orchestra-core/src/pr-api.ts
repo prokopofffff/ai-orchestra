@@ -6,7 +6,7 @@ import type { AgentRole } from "./config";
 import { git } from "./repo-manager";
 import { log } from "./obs";
 import { providerForProject } from "./providers";
-import { currentUserId } from "./auth";
+import { currentUserId, authorizeProject } from "./auth";
 import { userCanAccessProject, userCanEditProject } from "./project-access";
 
 export const prPlugin: FastifyPluginAsync = async (app) => {
@@ -24,10 +24,8 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
     // claim to be creating a PR for. Without this an authenticated user
     // from any tenant could trigger pushes + PR creation in any other
     // tenant's project just by passing a different projectId.
-    const userId = currentUserId(request);
-    if (!(await userCanEditProject(userId, body.projectId))) {
-      return reply.code(404).send({ error: "Проект не найден" });
-    }
+    const authz = await authorizeProject(request, body.projectId, "edit");
+    if (!authz.ok) return reply.code(404).send({ error: "Проект не найден" });
 
     const pool = getPool();
     const { rows: projRows } = await pool.query(
@@ -56,7 +54,10 @@ export const prPlugin: FastifyPluginAsync = async (app) => {
       const cwd = sessionRows[0].worktree_path;
 
       // Scope validation: check all changed files against role permissions.
-      const agentRole = (body.agentRole ?? request.headers["x-agent-role"]) as string | undefined;
+      // The role comes from the signed agent token, not the request body —
+      // otherwise an agent could pass agentRole:"tech-lead" to skip its own
+      // scope check. Human callers (no agent token) are trusted editors.
+      const agentRole = authz.agentRole;
       if (agentRole && agentRole !== "tech-lead") {
         try {
           const diff = await git(cwd).diff(["--name-only", "origin/main...HEAD"]);

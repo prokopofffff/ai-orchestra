@@ -15,9 +15,22 @@ import { getPool } from "./db";
  * owner means we don't need a parallel "agent has access" code path —
  * the existing user-permission checks all just pass.
  */
-type SignerFn = (payload: { id: string; email: string; username: string }) => string;
+type AgentClaims = {
+  id: string;
+  email: string;
+  username: string;
+  kind: "agent";
+  role: string;
+  projectId: string;
+};
+type SignerFn = (payload: AgentClaims, opts?: { expiresIn: string }) => string;
 
 let signer: SignerFn | null = null;
+
+// Agent runs are bounded (a single dispatch turn, minutes not hours). A 12h
+// TTL gives generous slack while ensuring a leaked agent token can't be
+// replayed indefinitely — the original tokens never expired at all.
+const AGENT_JWT_TTL = "12h";
 
 /**
  * Wire up the signer. Called once from index.ts after `fastifyJwt` registers
@@ -34,7 +47,7 @@ export function setAgentJwtSigner(fn: SignerFn): void {
  * preflight error rather than silently issuing a token nobody can attribute
  * actions to.
  */
-export async function mintAgentJwt(projectId: string): Promise<string> {
+export async function mintAgentJwt(projectId: string, role: string): Promise<string> {
   if (!signer) throw new Error("agent-jwt signer not initialized — call setAgentJwtSigner() at startup");
 
   const { rows } = await getPool().query<{ id: string; email: string; username: string }>(
@@ -48,5 +61,15 @@ export async function mintAgentJwt(projectId: string): Promise<string> {
   if (!rows.length) {
     throw new Error(`Cannot mint agent JWT: project ${projectId} has no owner`);
   }
-  return signer({ id: rows[0].id, email: rows[0].email, username: rows[0].username });
+  return signer(
+    {
+      id: rows[0].id,
+      email: rows[0].email,
+      username: rows[0].username,
+      kind: "agent",
+      role,
+      projectId,
+    },
+    { expiresIn: AGENT_JWT_TTL },
+  );
 }

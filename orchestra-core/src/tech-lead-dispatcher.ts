@@ -4,6 +4,7 @@ import {
   createSession,
   updateSession,
   getActiveSessionForRole,
+  SpawnConflictError,
 } from "./session-manager";
 import { buildBootstrapContext, formatBootstrapPrompt } from "./session-context";
 import { log } from "./obs";
@@ -131,14 +132,24 @@ export async function dispatchTechLead(
       "themselves — pick up the discussion or move it forward.",
     ].join("\n");
 
-    const session = await createSession({
-      projectId,
-      role: "tech-lead",
-      model,
-      worktreePath: workDir,
-    });
+    let session;
+    try {
+      session = await createSession({
+        projectId,
+        role: "tech-lead",
+        model,
+        worktreePath: workDir,
+      });
+    } catch (err) {
+      // Lost the spawn race — another TL session was created concurrently.
+      // Mirror the early getActiveSessionForRole guard above.
+      if (err instanceof SpawnConflictError) {
+        return { action: "already_running", sessionId: err.detail.existingSessionId };
+      }
+      throw err;
+    }
 
-    const agentJwt = await mintAgentJwt(projectId);
+    const agentJwt = await mintAgentJwt(projectId, "tech-lead");
     const { mcpServers } = generateMcpConfig("tech-lead", config, projectId, agentJwt);
 
     // Merge git-provider env vars (GITLAB_TOKEN / GITHUB_TOKEN / generic

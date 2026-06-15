@@ -150,18 +150,27 @@ export const referencesPlugin: FastifyPluginAsync = async (app) => {
 
     const query = request.query.q?.trim();
     if (!query) return reply.code(400).send({ error: "Параметр q обязателен" });
+    // The pattern is model/user-controlled and runs against every line of
+    // every file — bound the ReDoS surface: cap pattern length, skip
+    // pathologically long lines, and stop the whole walk at a deadline.
+    if (query.length > 200) return reply.code(400).send({ error: "Паттерн слишком длинный (макс. 200 символов)" });
     let needle: RegExp;
     try { needle = new RegExp(query, "i"); }
     catch (err) {
       return reply.code(400).send({ error: `Невалидный паттерн: ${(err as Error).message}` });
     }
+    const GREP_DEADLINE_MS = 5_000;
+    const MAX_LINE_LEN = 5_000;
+    const deadline = Date.now() + GREP_DEADLINE_MS;
 
     const root = request.query.path ? safeResolve(refRow.row.localPath, request.query.path) : refRow.row.localPath;
     if (!root) return reply.code(400).send({ error: "Путь выходит за пределы проекта" });
 
     const matches: { path: string; line: number; snippet: string }[] = [];
     const stack: string[] = [root];
+    let deadlineHit = false;
     while (stack.length && matches.length < MAX_GREP_MATCHES) {
+      if (Date.now() > deadline) { deadlineHit = true; break; }
       const dir = stack.pop()!;
       let entries: fs.Dirent[];
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
@@ -185,6 +194,8 @@ export const referencesPlugin: FastifyPluginAsync = async (app) => {
         const lines = content.split("\n");
         for (let i = 0; i < lines.length; i++) {
           if (matches.length >= MAX_GREP_MATCHES) break;
+          if (Date.now() > deadline) { deadlineHit = true; break; }
+          if (lines[i].length > MAX_LINE_LEN) continue;
           if (needle.test(lines[i])) {
             matches.push({
               path: rel,
@@ -195,7 +206,7 @@ export const referencesPlugin: FastifyPluginAsync = async (app) => {
         }
       }
     }
-    return { matches, truncated: matches.length >= MAX_GREP_MATCHES };
+    return { matches, truncated: matches.length >= MAX_GREP_MATCHES || deadlineHit };
   });
 };
 

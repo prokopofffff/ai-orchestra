@@ -85,7 +85,10 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
       );
     }
 
-    const token = await reply.jwtSign({ id: user.id, email: user.email, username: user.username });
+    const token = await reply.jwtSign(
+      { id: user.id, email: user.email, username: user.username },
+      { expiresIn: SESSION_MAX_AGE },
+    );
     setSessionCookie(request, reply, token);
     return reply.code(201).send(user);
   });
@@ -100,13 +103,22 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
        WHERE lower(email) = lower($1)`,
       [body.email],
     );
-    if (!rows.length) return reply.code(401).send({ error: "Неверный email или пароль" });
+    if (!rows.length) {
+      // Constant-time-ish: run a scrypt pass even when the account doesn't
+      // exist, so response latency doesn't reveal whether an email is
+      // registered (user-enumeration oracle).
+      await hashPassword(body.password);
+      return reply.code(401).send({ error: "Неверный email или пароль" });
+    }
 
     const valid = await verifyPassword(body.password, rows[0].password_hash);
     if (!valid) return reply.code(401).send({ error: "Неверный email или пароль" });
 
     const user = toUser(rows[0]);
-    const token = await reply.jwtSign({ id: user.id, email: user.email, username: user.username });
+    const token = await reply.jwtSign(
+      { id: user.id, email: user.email, username: user.username },
+      { expiresIn: SESSION_MAX_AGE },
+    );
     setSessionCookie(request, reply, token);
     return reply.send(user);
   });

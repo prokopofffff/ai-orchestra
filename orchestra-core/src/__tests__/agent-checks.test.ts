@@ -49,6 +49,14 @@ afterAll(async () => {
   await getPool().end();
 });
 
+// agent_logs are written via appendLog, which is fire-and-forget — the INSERT
+// can still be in flight when runOnce returns. Settle briefly before asserting
+// so the read isn't racing the write (the source of this file's flakiness).
+async function runOneJobAndSettle(): Promise<void> {
+  await runOneJob();
+  await new Promise((r) => setTimeout(r, 150));
+}
+
 async function enqueueCheck(filePath: string): Promise<void> {
   await enqueue({
     kind: CHECK_KIND,
@@ -69,7 +77,7 @@ describe("observe-check handler", () => {
       { name: "noop", pattern: "src/backend/**/*.ts", command: "true", onFail: "warn" },
     ];
     await enqueueCheck("src/backend/x.ts");
-    await runOneJob();
+    await runOneJobAndSettle();
 
     const { rows } = await getPool().query(
       "SELECT level, message FROM agent_logs WHERE project_id = $1 ORDER BY created_at",
@@ -86,7 +94,7 @@ describe("observe-check handler", () => {
       { name: "fail-warn", pattern: "src/backend/**/*.ts", command: "false", onFail: "warn" },
     ];
     await enqueueCheck("src/backend/x.ts");
-    await runOneJob();
+    await runOneJobAndSettle();
 
     const { rows: logs } = await getPool().query(
       "SELECT level, message FROM agent_logs WHERE project_id = $1",
@@ -106,7 +114,7 @@ describe("observe-check handler", () => {
       { name: "fail-alert", pattern: "src/backend/**/*.ts", command: "false", onFail: "alert" },
     ];
     await enqueueCheck("src/backend/x.ts");
-    await runOneJob();
+    await runOneJobAndSettle();
 
     const { rows } = await getPool().query(
       "SELECT from_role, to_role, action, payload FROM signals WHERE project_id = $1",
@@ -125,7 +133,7 @@ describe("observe-check handler", () => {
       { name: "frontend-only", pattern: "src/frontend/**/*.ts", command: "true", onFail: "warn" },
     ];
     await enqueueCheck("src/backend/x.ts");
-    await runOneJob();
+    await runOneJobAndSettle();
 
     const { rows } = await getPool().query(
       "SELECT message FROM agent_logs WHERE project_id = $1",
@@ -140,9 +148,7 @@ describe("observe-check handler", () => {
       { name: "second", pattern: "src/backend/**/*.ts", command: "true", onFail: "warn" },
     ];
     await enqueueCheck("src/backend/x.ts");
-    await runOneJob();
-    // appendLog is fire-and-forget; let inserts settle before reading.
-    await new Promise((r) => setTimeout(r, 100));
+    await runOneJobAndSettle();
 
     const { rows } = await getPool().query(
       "SELECT message FROM agent_logs WHERE project_id = $1 ORDER BY created_at",
@@ -169,7 +175,7 @@ describe("observe-check handler", () => {
     );
 
     await enqueueCheck("src/backend/x.ts");
-    await runOneJob();
+    await runOneJobAndSettle();
 
     const { rows: logs } = await getPool().query(
       "SELECT message FROM agent_logs WHERE project_id = $1",
@@ -193,7 +199,7 @@ describe("observe-check handler", () => {
       { name: "abs", pattern: "src/backend/**/*.ts", command: "true", onFail: "warn" },
     ];
     await enqueueCheck(path.join(worktree, "src/backend/x.ts"));
-    await runOneJob();
+    await runOneJobAndSettle();
 
     const { rows } = await getPool().query(
       "SELECT message FROM agent_logs WHERE project_id = $1",

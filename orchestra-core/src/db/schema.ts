@@ -145,6 +145,8 @@ export const signals = pgTable("signals", {
   index("idx_signals_project_id").on(t.projectId),
   index("idx_signals_to_role").on(t.toRole),
   index("idx_signals_read").on(t.read),
+  // Composite serving the unread-by-role inbox query directly.
+  index("idx_signals_project_role_read").on(t.projectId, t.toRole, t.read),
 ]);
 
 // ─── Conversations + messages ─────────────────────────────────────────────
@@ -329,8 +331,27 @@ export const usageCosts = pgTable("usage_costs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index("idx_usage_costs_project_day").on(t.projectId, t.createdAt),
+  // Serves the org-wide (project-agnostic) daily-cost range scan.
+  index("idx_usage_costs_created_at").on(t.createdAt),
   index("idx_usage_costs_session").on(t.sessionId),
   index("idx_usage_costs_task").on(t.taskId),
+]);
+
+// ─── Cost reservations (worst-case budget held for in-flight runs) ────────
+// Inserted at spawn time alongside the daily-cap check so concurrent spawns
+// can't collectively overshoot the cap before their actual spend lands in
+// usage_costs. Deleted when the run ends. Cap math sums this + usage_costs.
+
+export const costReservations = pgTable("cost_reservations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  sessionId: uuid("session_id").references(() => sessions.id, { onDelete: "cascade" }),
+  estimatedUsd: doublePrecision("estimated_usd").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_cost_reservations_project").on(t.projectId),
+  index("idx_cost_reservations_created_at").on(t.createdAt),
+  index("idx_cost_reservations_session").on(t.sessionId),
 ]);
 
 // ─── Rate buckets (token-bucket gating for the scheduler) ─────────────────

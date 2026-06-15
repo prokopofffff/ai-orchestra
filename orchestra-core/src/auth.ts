@@ -1,6 +1,7 @@
 import { scrypt, randomBytes, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { userCanEditProject, userCanAccessProject } from "./project-access";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 
@@ -25,10 +26,26 @@ export async function verifyPassword(password: string, stored: string): Promise<
 export const SESSION_COOKIE = "orchestra_session";
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
+/**
+ * JWT claim shape. Human session tokens carry only identity. Agent tokens
+ * (minted server-side in agent-jwt.ts before a spawn) additionally carry
+ * `kind: "agent"` plus the spawned `role` and the single `projectId` the
+ * agent is allowed to act on. Role/project therefore come from the *signed*
+ * token, never from a client-supplied header.
+ */
+type JwtClaims = {
+  id: string;
+  email: string;
+  username: string;
+  kind?: "agent";
+  role?: string;
+  projectId?: string;
+};
+
 declare module "@fastify/jwt" {
   interface FastifyJWT {
-    payload: { id: string; email: string; username: string };
-    user: { id: string; email: string; username: string };
+    payload: JwtClaims;
+    user: JwtClaims;
   }
 }
 
@@ -44,8 +61,56 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
 export function isPublicApiPath(url: string): boolean {
   if (url.startsWith("/api/auth/")) return true;
   if (url === "/api/health") return true;
-  if (url.startsWith("/api/webhooks/")) return true;
+  // External git providers POST here with their own HMAC signature — they have
+  // no orchestra session. Routes are registered under /api/git/webhook* (see
+  // webhooks.ts); the old "/api/webhooks/" prefix never matched, so every
+  // webhook delivery was being rejected with 401 by the global auth gate.
+  if (url.startsWith("/api/git/webhook")) return true;
   return false;
+}
+
+/**
+ * If the verified JWT is an agent token, return its role + project scope;
+ * otherwise null (human session). Handlers use this instead of trusting the
+ * spoofable `x-agent-role` header: an agent's role/project are bound into the
+ * signed token, so a logged-in human can't impersonate an agent and a
+ * compromised agent can't act outside the one project it was minted for.
+ */
+export function agentContext(request: FastifyRequest): { role: string; projectId: string } | null {
+  const u = request.user as JwtClaims | undefined;
+  if (u?.kind === "agent" && u.role && u.projectId) {
+    return { role: u.role, projectId: u.projectId };
+  }
+  return null;
+}
+
+export type ProjectAuthz =
+  | { ok: true; agentRole?: string }
+  | { ok: false; reason: "scope-mismatch" | "no-access" };
+
+/**
+ * Single decision point for "may this caller act on `projectId`". An agent
+ * token must be scoped to exactly this project; a human must have `edit` or
+ * `access` rights (per `level`). Returns the agent's role on success so callers
+ * can layer capability checks on top. Centralizes the spoof-prevention
+ * invariant so it can't drift between the routes that use it.
+ */
+export async function authorizeProject(
+  request: FastifyRequest,
+  projectId: string,
+  level: "edit" | "access",
+): Promise<ProjectAuthz> {
+  const agent = agentContext(request);
+  if (agent) {
+    return agent.projectId === projectId
+      ? { ok: true, agentRole: agent.role }
+      : { ok: false, reason: "scope-mismatch" };
+  }
+  const userId = currentUserId(request);
+  const allowed = level === "edit"
+    ? await userCanEditProject(userId, projectId)
+    : await userCanAccessProject(userId, projectId);
+  return allowed ? { ok: true } : { ok: false, reason: "no-access" };
 }
 
 /**

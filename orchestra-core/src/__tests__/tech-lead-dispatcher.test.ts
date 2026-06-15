@@ -69,6 +69,6 @@ describe("tech-lead-dispatcher — dispatchTechLead", () => {
       config,
     );
     expect(result.action).toBe("error");
-    expect(result.error).toMatch(/Project not found/);
+    expect(result.error).toMatch(/Проект не найден/);
   });
 });

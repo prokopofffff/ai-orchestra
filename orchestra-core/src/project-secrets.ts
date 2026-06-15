@@ -88,7 +88,10 @@ export function normalizeProjectSecretsForWrite<T extends Record<string, unknown
       cleaned[pair.encrypted] = encryptSecret(raw.trim());
     } else {
       // Empty / null / undefined plaintext → user is clearing the secret.
-      delete cleaned[pair.encrypted];
+      // Emit an explicit null tombstone (not a delete) so a deep-merge on the
+      // write path knows to REMOVE the stored ciphertext rather than preserve
+      // it. On a full-replace write a leftover null reads back as "no secret".
+      cleaned[pair.encrypted] = null;
     }
     delete cleaned[pair.plain];
     next = { ...(next as Record<string, unknown>), [key]: cleaned } as T;
@@ -102,6 +105,78 @@ export function normalizeProjectSecretsForWrite<T extends Record<string, unknown
  * task-api.ts compiles without per-callsite churn.
  */
 export const normalizeProviderSecretsForWrite = normalizeProjectSecretsForWrite;
+
+/** Opaque "this secret is set" marker returned to clients in place of ciphertext. */
+export const SECRET_SET_SENTINEL = "__set__";
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Deep-merge a settings patch into stored settings for a partial PATCH. Nested
+ * plain objects merge recursively, so changing one field of a bucket can't drop
+ * its siblings — the bug where PATCHing `provider.type` alone wiped the stored
+ * `provider.tokenEncrypted` (shallow jsonb `||` replaced the whole bucket). A
+ * `null` value is a tombstone that removes the key (how normalize signals a
+ * cleared secret); arrays and scalars replace.
+ */
+export function deepMergeSettings(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete out[k];
+      continue;
+    }
+    const prev = out[k];
+    out[k] = isPlainObject(v) && isPlainObject(prev) ? deepMergeSettings(prev, v) : v;
+  }
+  return out;
+}
+
+/**
+ * Read a project's stored settings and deep-merge an (already-normalized) patch
+ * into them — the read-modify-write the PATCH and clone endpoints both need so a
+ * partial update can't drop sibling keys. Returns the merged object to write back.
+ */
+export async function mergeProjectSettings(
+  projectId: string,
+  normalizedPatch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const { rows } = await getPool().query("SELECT settings FROM projects WHERE id = $1 LIMIT 1", [projectId]);
+  return deepMergeSettings((rows[0]?.settings ?? {}) as Record<string, unknown>, normalizedPatch);
+}
+
+/**
+ * Strip secret material from a settings blob before returning it to a client.
+ * Every project member (including read-only viewers) can GET a project, and
+ * the dashboard only needs to know whether a secret *exists* — not its
+ * ciphertext. Encrypted blobs are replaced with an opaque sentinel and any
+ * stray plaintext is dropped entirely. The dashboard treats the encrypted
+ * field as a boolean ("is set"), so the sentinel preserves its UX, and it
+ * never echoes the encrypted field back on save, so this can't round-trip
+ * the sentinel into storage.
+ */
+export function redactProjectSecrets<T extends Record<string, unknown>>(settings: T): T {
+  if (!settings || typeof settings !== "object") return settings;
+  let next = settings;
+  for (const { key, pair } of SECRET_BUCKETS) {
+    const bucket = (next as Record<string, unknown>)[key];
+    if (!bucket || typeof bucket !== "object") continue;
+    const b = bucket as Record<string, unknown>;
+    const hasEnc = typeof b[pair.encrypted] === "string" && (b[pair.encrypted] as string).length > 0;
+    const hasPlain = typeof b[pair.plain] === "string" && (b[pair.plain] as string).length > 0;
+    if (!hasEnc && !hasPlain) continue;
+    const cleaned: Record<string, unknown> = { ...b };
+    if (hasEnc) cleaned[pair.encrypted] = SECRET_SET_SENTINEL;
+    delete cleaned[pair.plain]; // never echo plaintext back
+    next = { ...(next as Record<string, unknown>), [key]: cleaned } as T;
+  }
+  return next;
+}
 
 /**
  * Boot-time data migration: encrypt any remaining plaintext secrets across

@@ -1,7 +1,11 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjectContext } from "../contexts/ProjectContext";
 import { useAuth } from "../contexts/AuthContext";
 import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import * as api from "../api";
 
 export default function Profile() {
   const { projects } = useProjectContext();
@@ -24,6 +28,8 @@ export default function Profile() {
             <DetailRow label="Дата регистрации"   value={joined} mono />
           </Card>
         </section>
+
+        {user.isAdmin && <GitIntegrationSection />}
 
         <section className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
@@ -111,6 +117,194 @@ function SidebarAction({
     >
       {label}
     </button>
+  );
+}
+
+/**
+ * Instance-admin only: per-deployment GitHub App / GitLab OAuth setup. Each
+ * client deployment registers its OWN apps here so the per-user "Connect"
+ * buttons in Project Settings light up. GitHub uses the manifest flow (~2
+ * clicks); GitLab needs a one-time client id/secret paste.
+ */
+function GitIntegrationSection() {
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ["git-integration"], queryFn: api.fetchGitIntegration });
+
+  const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const setup = params.get("git_setup");
+    if (!setup) return;
+    const detail = params.get("detail");
+    setBanner(
+      setup === "github_ok"
+        ? { ok: true, text: `GitHub App создан${detail ? `: ${detail}` : ""}.` }
+        : { ok: false, text: `Ошибка настройки${detail ? `: ${detail}` : "."}` },
+    );
+    params.delete("git_setup");
+    params.delete("detail");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    queryClient.invalidateQueries({ queryKey: ["git-integration"] });
+  }, []);
+
+  const [org, setOrg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // GitLab form state
+  const [glClientId, setGlClientId] = useState("");
+  const [glClientSecret, setGlClientSecret] = useState("");
+  const [glBaseUrl, setGlBaseUrl] = useState("https://gitlab.com");
+  const [glStatus, setGlStatus] = useState<string | null>(null);
+
+  const noPublicUrl = data && !data.publicUrl;
+
+  async function setupGitHub() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const { postUrl, manifest } = await api.startGitHubManifest(org.trim() || undefined);
+      // Auto-submit a form to GitHub — top-level navigation; GitHub walks the
+      // admin through app creation and redirects back to manifest-callback.
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = postUrl;
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "manifest";
+      input.value = manifest;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  async function disconnect(provider: "github" | "gitlab") {
+    setBusy(true);
+    try {
+      await api.clearGitIntegration(provider);
+      await queryClient.invalidateQueries({ queryKey: ["git-integration"] });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveGitLab() {
+    setBusy(true);
+    setGlStatus(null);
+    try {
+      await api.saveGitLabIntegration({
+        clientId: glClientId.trim(),
+        clientSecret: glClientSecret.trim(),
+        baseUrl: glBaseUrl.trim() || undefined,
+      });
+      setGlClientId("");
+      setGlClientSecret("");
+      setGlStatus("Сохранено.");
+      await queryClient.invalidateQueries({ queryKey: ["git-integration"] });
+    } catch (e) {
+      setGlStatus(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputCls = "h-8 px-3 bg-bg-input border border-border text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-blue w-full";
+
+  return (
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-xl font-semibold text-text-primary">Интеграция Git (администратор)</h2>
+        <p className="text-xs text-text-secondary">
+          Подключите GitHub App / GitLab OAuth для этого сервера один раз. После этого
+          пользователи смогут подключать репозитории в один клик в настройках проекта.
+        </p>
+      </div>
+
+      {banner && (
+        <p className={`text-xs ${banner.ok ? "text-accent-green" : "text-accent-red"}`}>{banner.text}</p>
+      )}
+      {noPublicUrl && (
+        <p className="text-xs text-accent-red">
+          Не задан <code>ORCHESTRA_PUBLIC_URL</code>. OAuth-редиректы используют{" "}
+          <code>{data?.effectiveBaseUrl}</code> — за прокси укажите публичный URL в окружении.
+        </p>
+      )}
+
+      {isLoading && <p className="text-xs text-text-tertiary">Загрузка…</p>}
+
+      {data && (
+        <Card className="p-6 flex flex-col gap-6">
+          {/* GitHub */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-text-primary">GitHub App</span>
+              {data.github.configured
+                ? <span className="text-[11px] text-accent-green">✓ {data.github.appSlug ?? "настроен"} ({data.github.source})</span>
+                : <span className="text-[11px] text-text-tertiary">не настроен</span>}
+            </div>
+            <p className="text-[11px] text-text-tertiary">
+              Создаётся через манифест GitHub за пару кликов — id, секрет и приватный ключ
+              сохранятся автоматически. Callback: <code>{data.callbackUrls.github}</code>
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                className={`${inputCls} max-w-[220px]`}
+                value={org}
+                onChange={(e) => setOrg(e.target.value)}
+                placeholder="организация (необязательно)"
+              />
+              <Button variant="primary-red" size="sm" type="button" disabled={busy} onClick={setupGitHub}>
+                {data.github.configured ? "Пересоздать GitHub App" : "Создать GitHub App"}
+              </Button>
+              {data.github.configured && data.github.source === "db" && (
+                <Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => disconnect("github")}>
+                  Отключить
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="h-px bg-border" />
+
+          {/* GitLab */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-text-primary">GitLab OAuth</span>
+              {data.gitlab.configured
+                ? <span className="text-[11px] text-accent-green">✓ {data.gitlab.baseUrl} ({data.gitlab.source})</span>
+                : <span className="text-[11px] text-text-tertiary">не настроен</span>}
+            </div>
+            <p className="text-[11px] text-text-tertiary">
+              В GitLab создайте OAuth-приложение (scope <code>api</code>, confidential) с
+              redirect <code>{data.callbackUrls.gitlab}</code> и вставьте client id/secret.
+            </p>
+            <div className="flex flex-col gap-2 max-w-[460px]">
+              <input className={inputCls} value={glClientId} onChange={(e) => setGlClientId(e.target.value)} placeholder="Application ID" autoComplete="off" />
+              <input className={inputCls} type="password" value={glClientSecret} onChange={(e) => setGlClientSecret(e.target.value)} placeholder="Secret" autoComplete="off" />
+              <input className={inputCls} value={glBaseUrl} onChange={(e) => setGlBaseUrl(e.target.value)} placeholder="https://gitlab.com" />
+              <div className="flex items-center gap-2">
+                <Button variant="primary-red" size="sm" type="button" disabled={busy || !glClientId.trim() || !glClientSecret.trim()} onClick={saveGitLab}>
+                  Сохранить
+                </Button>
+                {data.gitlab.configured && data.gitlab.source === "db" && (
+                  <Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => disconnect("gitlab")}>
+                    Отключить
+                  </Button>
+                )}
+                {glStatus && <span className="text-[11px] text-text-tertiary">{glStatus}</span>}
+              </div>
+            </div>
+          </div>
+
+          {err && <p className="text-xs text-accent-red">Ошибка: {err}</p>}
+        </Card>
+      )}
+    </section>
   );
 }
 

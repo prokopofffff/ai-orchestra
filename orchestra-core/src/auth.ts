@@ -2,6 +2,7 @@ import { scrypt, randomBytes, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { userCanEditProject, userCanAccessProject } from "./project-access";
+import { getPool } from "./db";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 
@@ -66,6 +67,15 @@ export function isPublicApiPath(url: string): boolean {
   // webhooks.ts); the old "/api/webhooks/" prefix never matched, so every
   // webhook delivery was being rejected with 401 by the global auth gate.
   if (url.startsWith("/api/git/webhook")) return true;
+  // OAuth callbacks: the git provider redirects the user's browser here with
+  // no orchestra session (cross-site redirect). Trust comes from the signed
+  // `state` param instead — see git-connect-api.ts. Only /callback bypasses
+  // auth; /connect, /config and /identity stay gated.
+  if (url === "/api/git/github/callback") return true;
+  if (url === "/api/git/gitlab/callback") return true;
+  // GitHub App manifest flow redirects here after the admin creates the app;
+  // trust comes from the signed `state` + an admin re-check in the handler.
+  if (url === "/api/git/github/manifest-callback") return true;
   return false;
 }
 
@@ -122,4 +132,24 @@ export function currentUserId(request: FastifyRequest): string {
   const u = request.user as { id?: string } | undefined;
   if (!u?.id) throw new Error("currentUserId called without prior auth");
   return u.id;
+}
+
+/**
+ * Instance admin = the earliest-registered user. New signups always get a
+ * later created_at, so whoever registered first stays admin. This is the one
+ * account allowed to manage deployment-wide config (the GitHub App / GitLab
+ * OAuth integration, system defaults). Returns true when `userId` is admin.
+ */
+export async function isInstanceAdmin(userId: string): Promise<boolean> {
+  const { rows } = await getPool().query(
+    "SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1",
+  );
+  return rows.length > 0 && rows[0].id === userId;
+}
+
+/** Guard for admin-only routes — replies 403 and returns false when not admin. */
+export async function requireInstanceAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
+  if (await isInstanceAdmin(currentUserId(request))) return true;
+  reply.code(403).send({ error: "Доступно только администратору инстанса" });
+  return false;
 }

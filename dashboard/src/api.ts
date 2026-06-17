@@ -1,9 +1,9 @@
 import { z } from "zod";
 import {
   ProjectSchema, TaskSchema, TaskCommentSchema, AgentSessionSchema,
-  AuditEntrySchema, MessageSchema, QueueStatusSchema, UserSchema,
+  AuditEntrySchema, MessageSchema, QueueStatusSchema, UserSchema, GitProviderKindSchema,
   type Project, type Task, type TaskComment, type AgentSession,
-  type AuditEntry, type Message, type QueueStatus, type User,
+  type AuditEntry, type Message, type QueueStatus, type User, type GitProviderKind,
 } from "@ai-orchestra/shared";
 
 export class AuthError extends Error {
@@ -142,6 +142,75 @@ const ProvidersStatusSchema = z.object({
 export type ProvidersStatus = z.infer<typeof ProvidersStatusSchema>;
 export const fetchProvidersStatus = (projectId: string): Promise<ProvidersStatus> =>
   getValidated(`/projects/${projectId}/providers/status`, ProvidersStatusSchema);
+
+// ── Git provider connect (one-button GitHub App / GitLab OAuth) ──
+const GitConnectConfigSchema = z.object({
+  providers: z.object({
+    github: z.object({ appConfigured: z.boolean() }),
+    gitlab: z.object({ oauthConfigured: z.boolean() }),
+  }),
+  identities: z.array(z.object({
+    provider: GitProviderKindSchema,
+    login: z.string().nullable(),
+    connectedAt: z.string(),
+  })),
+});
+export type GitConnectConfig = z.infer<typeof GitConnectConfigSchema>;
+export const fetchGitConfig = (): Promise<GitConnectConfig> =>
+  getValidated(`/git/config`, GitConnectConfigSchema);
+
+/**
+ * Start a connect flow. Returns the provider URL to open (the button's href).
+ * `target: "repo"` = GitHub App install (repo access); `"account"` = user
+ * OAuth (commit/PR attribution). GitLab ignores target — one flow does both.
+ */
+export const startGitConnect = (
+  provider: GitProviderKind,
+  opts: { projectId?: string; target?: "repo" | "account" },
+): Promise<{ url: string }> =>
+  postValidated(`/git/${provider}/connect`, opts, z.object({ url: z.string().url() }));
+
+export const disconnectGitIdentity = (provider: GitProviderKind): Promise<void> =>
+  del(`/git/${provider}/identity`);
+
+export const disconnectGitRepo = (projectId: string): Promise<void> =>
+  postValidated(`/projects/${projectId}/git/disconnect-repo`, {}, z.object({ ok: z.boolean() })).then(() => undefined);
+
+// ── Admin: per-deployment Git integration setup (instance admin only) ──
+const GitIntegrationSchema = z.object({
+  github: z.object({
+    configured: z.boolean(),
+    appSlug: z.string().optional(),
+    appId: z.string().optional(),
+    source: z.enum(["db", "env"]).nullable(),
+  }),
+  gitlab: z.object({
+    configured: z.boolean(),
+    baseUrl: z.string().optional(),
+    source: z.enum(["db", "env"]).nullable(),
+  }),
+  publicUrl: z.string().nullable(),
+  effectiveBaseUrl: z.string(),
+  callbackUrls: z.object({
+    github: z.string(),
+    githubManifest: z.string(),
+    gitlab: z.string(),
+    webhook: z.string(),
+  }),
+});
+export type GitIntegration = z.infer<typeof GitIntegrationSchema>;
+export const fetchGitIntegration = (): Promise<GitIntegration> =>
+  getValidated(`/git/integration`, GitIntegrationSchema);
+
+/** Returns the GitHub manifest + the GitHub URL to POST it to (admin only). */
+export const startGitHubManifest = (org?: string): Promise<{ postUrl: string; manifest: string }> =>
+  postValidated(`/git/github/manifest`, org ? { org } : {}, z.object({ postUrl: z.string().url(), manifest: z.string() }));
+
+export const saveGitLabIntegration = (data: { clientId: string; clientSecret: string; baseUrl?: string }): Promise<void> =>
+  patchValidated(`/git/integration/gitlab`, data, z.object({ ok: z.boolean() })).then(() => undefined);
+
+export const clearGitIntegration = (provider: GitProviderKind): Promise<void> =>
+  del(`/git/integration/${provider}`);
 
 /**
  * Start a headless OAuth login on the server. Shape depends on the provider:

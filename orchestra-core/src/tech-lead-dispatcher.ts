@@ -13,7 +13,9 @@ import { getPool } from "./db";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { ensureRepo, ensureTempDir, defaultRepoDir } from "./repo-manager";
-import { providerFor, buildGitProviderEnv } from "./providers";
+import {
+  resolveGitCredential, providerFromCredential, gitEnvFromCredential, buildGitProviderEnv,
+} from "./providers";
 import { mintAgentJwt } from "./agent-jwt";
 import { resolveRuntimeForRole } from "./agents/runtime/resolver";
 import {
@@ -50,12 +52,12 @@ export async function dispatchTechLead(
 
     const pool = getPool();
     const { rows: projRows } = await pool.query(
-      "SELECT slug, repo_url, local_path, settings FROM projects WHERE id = $1",
+      "SELECT slug, repo_url, local_path, settings, owner_id FROM projects WHERE id = $1",
       [projectId],
     );
     if (!projRows.length) return { action: "error", error: "Проект не найден" };
 
-    const { slug, repo_url: repoUrl, local_path: localPath, settings } = projRows[0];
+    const { slug, repo_url: repoUrl, local_path: localPath, settings, owner_id: ownerId } = projRows[0];
     const effort = getEffortForRole("tech-lead", settings as Record<string, unknown>);
 
     // Resolve provider+model+auth once, up-front. Same path the spawner
@@ -78,11 +80,16 @@ export async function dispatchTechLead(
     // would land in /Users/.../orchestra-workspaces/project-<slug>/workspace
     // as a sibling of every other project's temp dir, and TL would walk
     // up `..` to read code from unrelated projects.
+    // Resolve the git credential once (see agent-spawner) and reuse it for
+    // both the clone URL here and the spawn env below.
+    const gitCred = repoUrl
+      ? await resolveGitCredential(repoUrl, settings as ProjectSettings | null, ownerId)
+      : null;
     let workDir: string;
     if (localPath) {
       workDir = localPath as string;
     } else if (repoUrl) {
-      const provider = providerFor(repoUrl, settings as ProjectSettings | null);
+      const provider = providerFromCredential(repoUrl, settings as ProjectSettings | null, gitCred);
       workDir = await ensureRepo(provider.tokenizeCloneUrl(), defaultRepoDir(slug));
     } else {
       workDir = ensureTempDir(slug);
@@ -159,7 +166,7 @@ export async function dispatchTechLead(
     // no key is reachable from inside the container.
     const spawnEnv = {
       ...resolved.resolved.spawnEnv,
-      ...buildGitProviderEnv(repoUrl as string | null, settings),
+      ...(repoUrl ? gitEnvFromCredential(gitCred) : buildGitProviderEnv(repoUrl as string | null, settings)),
     };
 
     // Run the conversation in the background — the HTTP request that triggered

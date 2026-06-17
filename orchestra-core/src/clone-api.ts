@@ -10,8 +10,8 @@ import { projects } from "./db/schema";
 import { currentUserId } from "./auth";
 import { userCanEditProject } from "./project-access";
 import { assertPathInUserScope, ensureUserWorkspaceRoot, ScopeViolationError } from "./workspace-scope";
-import { normalizeProviderSecretsForWrite, getProjectGitToken, mergeProjectSettings } from "./project-secrets";
-import { providerFor } from "./providers";
+import { normalizeProviderSecretsForWrite, mergeProjectSettings } from "./project-secrets";
+import { resolveProvider } from "./providers";
 import { log } from "./obs";
 
 /**
@@ -177,18 +177,20 @@ async function runClone(projectId: string, repoUrl: string, targetPath: string):
     const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
     if (!project) throw new Error(`project ${projectId} disappeared mid-clone`);
 
+    // Resolve a credential via the full precedence (installation token →
+    // owner user token → PAT). When none is configured we clone the plain
+    // URL — public repos work, private ones surface git's own clean
+    // "authentication failed" which is the actionable signal.
     let authedUrl = repoUrl;
-    const token = getProjectGitToken(project.settings);
-    if (token) {
-      try {
-        const provider = providerFor(repoUrl, project.settings as ProjectSettings | null);
-        authedUrl = provider.tokenizeCloneUrl();
-      } catch (err) {
-        // Provider couldn't resolve (e.g. unknown host) — try the plain URL.
-        // Public repos work without auth; a private repo will surface a clean
-        // "authentication failed" error from git which is what we want.
-        log.warn({ err, projectId }, "clone: token tokenize failed, retrying with plain URL");
-      }
+    try {
+      const provider = await resolveProvider(
+        repoUrl,
+        project.settings as ProjectSettings | null,
+        project.ownerId,
+      );
+      authedUrl = provider.tokenizeCloneUrl();
+    } catch (err) {
+      log.warn({ err, projectId }, "clone: no credential resolved, cloning with plain URL");
     }
 
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });

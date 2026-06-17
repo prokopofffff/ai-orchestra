@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { ProjectSchema, TaskSchema, TaskCommentSchema, TaskStateSchema } from "@ai-orchestra/shared";
@@ -9,7 +9,7 @@ import { checkUnblocked, DONE_STATES } from "./dependency-engine";
 import { resolveRuntimeForRole } from "./agents/runtime/resolver";
 import { notify } from "./notification-hub";
 import { canCreateTask, canUpdateTask, canDeleteTask } from "./agent-auth";
-import { currentUserId, authorizeProject } from "./auth";
+import { currentUserId, authorizeProject, requireInstanceAdmin } from "./auth";
 import {
   userCanAccessProject, userCanEditProject, userCanReferenceProject,
   visibilityFilter, visibleProjectIds, projectIdOf,
@@ -20,7 +20,7 @@ import { isGitRepo, initGitRepo, git, rewriteOriginAuth } from "./repo-manager";
 import { normalizeProviderSecretsForWrite, redactProjectSecrets, mergeProjectSettings } from "./project-secrets";
 import { loadConfig } from "./config";
 import type { AgentRole } from "./config";
-import { providerForProject, providerFor } from "./providers";
+import { providerForProject, resolveProvider } from "./providers";
 import type { ProjectSettings } from "@ai-orchestra/shared";
 import { log } from "./obs";
 
@@ -47,18 +47,7 @@ const projectSchema = ProjectSchema;
 const taskSchema = TaskSchema;
 const commentSchema = TaskCommentSchema;
 
-/**
- * Guard: instance admin = the earliest-registered user (the account that set
- * the instance up and inherits ownerless projects on first signup). There's no
- * dedicated admin role yet, so system-wide config is gated to this account.
- * Sends a 403 and returns false when the caller isn't the admin.
- */
-async function requireInstanceAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-  const { rows } = await getPool().query("SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1");
-  if (rows.length > 0 && rows[0].id === currentUserId(request)) return true;
-  reply.code(403).send({ error: "Доступно только администратору инстанса" });
-  return false;
-}
+// Instance-admin guard moved to auth.ts (shared with git-integration-api).
 
 export const taskPlugin: FastifyPluginAsync = async (app) => {
   // ─── Projects ───
@@ -260,7 +249,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       (body.settings as { provider?: { token?: unknown } }).provider?.token !== undefined;
     if ((touchedToken || body.repoUrl !== undefined) && row.localPath && row.repoUrl) {
       try {
-        const provider = providerFor(row.repoUrl, row.settings as ProjectSettings | null);
+        const provider = await resolveProvider(row.repoUrl, row.settings as ProjectSettings | null, row.ownerId);
         const authUrl = provider.tokenizeCloneUrl();
         await rewriteOriginAuth(row.localPath, authUrl);
       } catch (err) {
@@ -288,7 +277,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
       return reply.code(403).send({ error: "Недостаточно прав" });
     }
     const [row] = await getDb()
-      .select({ localPath: projects.localPath, repoUrl: projects.repoUrl, settings: projects.settings })
+      .select({ localPath: projects.localPath, repoUrl: projects.repoUrl, settings: projects.settings, ownerId: projects.ownerId })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
@@ -296,7 +285,7 @@ export const taskPlugin: FastifyPluginAsync = async (app) => {
     if (!row.localPath) return reply.code(400).send({ error: "У проекта не задан локальный путь" });
     if (!row.repoUrl) return reply.code(400).send({ error: "У проекта не задан remote URL" });
     try {
-      const provider = providerFor(row.repoUrl, row.settings as ProjectSettings | null);
+      const provider = await resolveProvider(row.repoUrl, row.settings as ProjectSettings | null, row.ownerId);
       const authUrl = provider.tokenizeCloneUrl();
       const rewritten = await rewriteOriginAuth(row.localPath, authUrl);
       if (!rewritten) {

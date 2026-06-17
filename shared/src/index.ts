@@ -67,6 +67,14 @@ export const ProjectProviderConfigSchema = z.object({
   token: z.string().optional(),
   tokenEncrypted: z.string().optional(),
   baseUrl: z.string().optional(),
+  // GitHub App installation that grants this project's repo access. Set by
+  // the "Connect repository" OAuth flow (git-connect-api). When present and
+  // the deployment has a GitHub App configured, the resolver mints a
+  // short-lived installation token per operation instead of using a PAT.
+  // `githubInstallationLogin` is the org/user the app was installed on —
+  // display-only, so Settings can show "Connected to acme/widgets".
+  githubInstallationId: z.number().int().positive().optional(),
+  githubInstallationLogin: z.string().optional(),
 });
 export type ProjectProviderConfig = z.infer<typeof ProjectProviderConfigSchema>;
 
@@ -299,6 +307,10 @@ export const UserSchema = z.object({
   username: z.string(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  // True only for the instance admin (earliest-registered user). Drives
+  // visibility of deployment-wide admin UI (e.g. Git integration setup).
+  // Optional so login/signup responses that don't compute it still parse.
+  isAdmin: z.boolean().optional(),
 });
 export type User = z.infer<typeof UserSchema>;
 

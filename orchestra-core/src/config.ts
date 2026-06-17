@@ -8,6 +8,13 @@ export const configSchema = z.object({
   databaseUrl: z.string().url(),
   jwtSecret: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
 
+  // Public, browser-reachable origin of this deployment (no trailing slash),
+  // e.g. https://orchestra.example.com. Required for the GitHub App / GitLab
+  // OAuth redirect_uri — the provider redirects the user's browser back to
+  // `${publicUrl}/api/git/<provider>/callback`. Falls back to the request's
+  // own origin when unset (fine for single-host dev, wrong behind a proxy).
+  publicUrl: z.string().url().optional(),
+
   // Deployment-wide default mode (max vs api). Per-project
   // settings.claude.auth overrides this. Not a credential — safe to share.
   claudeAuth: z.enum(["max", "api"]).default("max"),
@@ -54,6 +61,7 @@ export function loadConfig(): Config {
     nodeEnv: process.env.NODE_ENV,
     databaseUrl: process.env.DATABASE_URL,
     jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-me-please-it-must-be-long",
+    publicUrl: process.env.ORCHESTRA_PUBLIC_URL || undefined,
     claudeAuth: process.env.CLAUDE_AUTH,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
     telegramChatId: process.env.TELEGRAM_CHAT_ID || undefined,

@@ -100,8 +100,8 @@ describe("pr-api — POST /api/pr/create validation", () => {
     expect(body.error).toMatch(/URL репозитория/);
   });
 
-  it("400 when the project has no provider token configured", async () => {
-    // Project without settings.provider.token. No env fallback exists.
+  it("400 when the project has no provider credential configured", async () => {
+    // Project with no installation, no owner OAuth identity, and no PAT.
     const { rows } = await getPool().query(
       "INSERT INTO projects (name, slug, repo_url, owner_id) VALUES ('No Token', 'pra-notok', $1, $2) RETURNING id",
       ["https://github.com/test/no-token", ownerId],
@@ -111,7 +111,7 @@ describe("pr-api — POST /api/pr/create validation", () => {
       body: JSON.stringify({ projectId: rows[0].id, title: "t", body: "b", head: "h" }),
     });
     expect(status).toBe(400);
-    expect(body.error).toMatch(/GitHub token not configured/);
+    expect(body.error).toMatch(/No GitHub credential/);
   });
 
   it("400 when the repo URL's provider can't be detected", async () => {

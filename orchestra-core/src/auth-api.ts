@@ -4,7 +4,7 @@ import {
   type User,
 } from "@ai-orchestra/shared";
 import { getPool } from "./db";
-import { hashPassword, verifyPassword, requireAuth, SESSION_COOKIE, SESSION_MAX_AGE } from "./auth";
+import { hashPassword, verifyPassword, requireAuth, isInstanceAdmin, SESSION_COOKIE, SESSION_MAX_AGE } from "./auth";
 
 interface UserRow {
   id: string;
@@ -139,6 +139,6 @@ export const authPlugin: FastifyPluginAsync = async (app) => {
       reply.clearCookie(SESSION_COOKIE, { path: "/" });
       return reply.code(401).send({ error: "Не авторизован" });
     }
-    return toUser(rows[0]);
+    return { ...toUser(rows[0]), isAdmin: await isInstanceAdmin(rows[0].id) };
   });
 };

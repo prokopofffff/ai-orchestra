@@ -34,7 +34,9 @@ import {
   recordRuntimeCost,
   type ObserverContext,
 } from "./agents/runtime/observers";
-import { providerFor, buildGitProviderEnv } from "./providers";
+import {
+  resolveGitCredential, providerFromCredential, gitEnvFromCredential, buildGitProviderEnv,
+} from "./providers";
 import { log } from "./obs";
 import { mintAgentJwt } from "./agent-jwt";
 import {
@@ -178,11 +180,11 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
 
   // ── 1. Project + blocked_by + model ─────────────────────────────────
   const { rows: projRows } = await pool.query(
-    "SELECT slug, repo_url, local_path, settings FROM projects WHERE id = $1",
+    "SELECT slug, repo_url, local_path, settings, owner_id FROM projects WHERE id = $1",
     [projectId],
   );
   if (!projRows.length) throw new Error(`Project not found: ${projectId}`);
-  const { slug, repo_url: repoUrl, local_path: localPath, settings } = projRows[0];
+  const { slug, repo_url: repoUrl, local_path: localPath, settings, owner_id: ownerId } = projRows[0];
   if (!repoUrl && !localPath) {
     // Same shape as the "not a git repo" preflight — the user has an
     // actionable fix (set a repo URL or local path in Settings), so
@@ -246,8 +248,14 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   }
 
   // ── 2. Worktree + scope hook ────────────────────────────────────────
+  // Resolve the git credential ONCE (installation token → owner OAuth → PAT)
+  // and reuse it for both the tokenized clone/remote URL and the spawn env
+  // below — resolving twice would double the per-spawn DB/network work.
   let repoDir: string;
   let authUrl: string | null = null;
+  const gitCred = repoUrl
+    ? await resolveGitCredential(repoUrl, settings as ProjectSettings | null, ownerId)
+    : null;
   // For local_path projects with a repo_url we still tokenize the URL so the
   // worktree gets an authenticated `origin` below. Without this `git push`
   // from the agent fails on `https://…gitlab…/…` with
@@ -257,8 +265,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
   // sidesteps the credential helper entirely.
   if (localPath && repoUrl) {
     try {
-      const provider = providerFor(repoUrl, settings as ProjectSettings | null);
-      authUrl = provider.tokenizeCloneUrl();
+      authUrl = providerFromCredential(repoUrl, settings as ProjectSettings | null, gitCred).tokenizeCloneUrl();
     } catch (err) {
       log.warn({ err, slug }, "spawnAgent: failed to tokenize remote for local_path worktree");
     }
@@ -296,7 +303,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       throw new PreflightError(`not a git repo: ${repoDir}`);
     }
   } else {
-    const provider = providerFor(repoUrl, settings as ProjectSettings | null);
+    const provider = providerFromCredential(repoUrl, settings as ProjectSettings | null, gitCred);
     authUrl = provider.tokenizeCloneUrl();
     // Legacy projects without local_path: fall back to the auto-derived
     // `<root>/<slug>/repo` location so existing checkouts stay valid until
@@ -426,6 +433,10 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
     }
   };
 
+  // Reuse the credential resolved above for the spawn env — no second lookup.
+  // Remote-less projects (local_path only) keep the generic PAT alias.
+  const gitProviderEnv = repoUrl ? gitEnvFromCredential(gitCred) : buildGitProviderEnv(repoUrl, settings);
+
   let capExceeded: SpawnResult["capExceeded"];
   try {
     appendLog(projectId, session.id, role, "system",
@@ -447,7 +458,7 @@ export async function spawnAgent(params: SpawnAgentParams): Promise<SpawnResult>
       // Layer git-provider creds (GITLAB_TOKEN / GITHUB_TOKEN / generic
       // GIT_PROVIDER_TOKEN) on top of the claude/codex auth env so the
       // agent can hit its configured remote — see buildGitProviderEnv.
-      spawnEnv: { ...resolved.resolved.spawnEnv, ...buildGitProviderEnv(repoUrl, settings) },
+      spawnEnv: { ...resolved.resolved.spawnEnv, ...gitProviderEnv },
     }, onEvent);
     capExceeded = outcome.capExceeded;
     if (capExceeded) {

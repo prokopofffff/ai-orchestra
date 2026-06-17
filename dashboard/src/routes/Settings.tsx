@@ -972,12 +972,221 @@ function ProjectCodexSection({ project, onSaved }: { project: Project; onSaved: 
   );
 }
 
+/** Best-effort provider detection from the repo URL host — mirrors the server. */
+function detectProviderKind(repoUrl: string | null, explicit?: "github" | "gitlab"): "github" | "gitlab" | null {
+  if (explicit) return explicit;
+  if (!repoUrl) return null;
+  if (/gitlab/i.test(repoUrl)) return "gitlab";
+  if (/github/i.test(repoUrl)) return "github";
+  return null;
+}
+
 function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSaved: () => void }) {
-  // Per-project Git provider token. Required for private repos — orchestra
-  // has no global GITHUB_TOKEN fallback in multi-tenant mode (cross-user leak).
-  // Token is stored encrypted at rest; the dashboard never receives the
-  // plaintext back. `hasToken` reflects whether tokenEncrypted is set on
-  // the project — drives placeholder copy + the "save empty = clear" guard.
+  const queryClient = useQueryClient();
+  type ProviderSettings = {
+    type?: "github" | "gitlab";
+    tokenEncrypted?: string;
+    baseUrl?: string;
+    githubInstallationId?: number;
+    githubInstallationLogin?: string;
+  };
+  const provider = (project.settings as { provider?: ProviderSettings } | undefined)?.provider;
+  const kind = detectProviderKind(project.repoUrl ?? null, provider?.type);
+
+  const { data: gitConfig } = useQuery({
+    queryKey: ["git-config"],
+    queryFn: api.fetchGitConfig,
+  });
+
+  // Surface the result of a just-completed OAuth redirect (?git=connected|error)
+  // and then strip the params so a refresh doesn't re-show the banner.
+  const [redirectMsg, setRedirectMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("git");
+    if (!result) return;
+    const detail = params.get("git_detail");
+    setRedirectMsg(
+      result === "connected"
+        ? { ok: true, text: "Git-провайдер подключён." }
+        : { ok: false, text: `Не удалось подключить${detail ? `: ${detail}` : "."}` },
+    );
+    params.delete("git");
+    params.delete("git_detail");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    // After a successful connect, refresh project + git config so the badges flip.
+    queryClient.invalidateQueries({ queryKey: ["git-config"] });
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+  }, []);
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function connect(p: "github" | "gitlab", target: "repo" | "account") {
+    setBusy(true);
+    setErr(null);
+    try {
+      const { url } = await api.startGitConnect(p, { projectId: project.id, target });
+      window.location.assign(url); // top-level redirect → returns to /settings
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  async function disconnectAccount(p: "github" | "gitlab") {
+    setBusy(true);
+    try {
+      await api.disconnectGitIdentity(p);
+      await queryClient.invalidateQueries({ queryKey: ["git-config"] });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnectRepo() {
+    setBusy(true);
+    try {
+      await api.disconnectGitRepo(project.id);
+      onSaved();
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const identity = gitConfig?.identities.find((i) => i.provider === kind);
+  const repoConnected = Boolean(provider?.githubInstallationId);
+  const githubAvailable = gitConfig?.providers.github.appConfigured ?? false;
+  const gitlabAvailable = gitConfig?.providers.gitlab.oauthConfigured ?? false;
+  const providerAvailable = kind === "github" ? githubAvailable : kind === "gitlab" ? gitlabAvailable : false;
+
+  return (
+    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
+      <div className="border-t border-border pt-6 flex flex-col gap-1">
+        <h3 className="text-sm font-semibold text-text-primary">Доступ к репозиторию</h3>
+        <p className="text-xs text-text-secondary">
+          Подключите репозиторий в один клик — без копирования токенов. orchestra
+          получит доступ для клонов, пушей и PR, а PR и коммиты будут от вашего имени.
+        </p>
+      </div>
+
+      {redirectMsg && (
+        <p className={`text-xs ${redirectMsg.ok ? "text-accent-green" : "text-accent-red"}`}>
+          {redirectMsg.text}
+        </p>
+      )}
+
+      {!kind && (
+        <p className="text-xs text-text-tertiary">
+          Сначала укажите URL репозитория выше (GitHub или GitLab), чтобы подключить доступ.
+        </p>
+      )}
+
+      {/* GitHub: two buttons — repo access (App install) + account (attribution) */}
+      {kind === "github" && (
+        githubAvailable ? (
+          <div className="flex flex-col gap-3">
+            <ConnectRow
+              title="Репозиторий"
+              connected={repoConnected}
+              connectedLabel={provider?.githubInstallationLogin
+                ? `Подключено: ${provider.githubInstallationLogin}`
+                : "Подключено"}
+              connectLabel={repoConnected ? "Переподключить" : "Подключить репозиторий"}
+              hint="Установка GitHub App на выбранные репозитории — даёт доступ для клона, пушей и PR."
+              busy={busy}
+              onConnect={() => connect("github", "repo")}
+              onDisconnect={repoConnected ? disconnectRepo : undefined}
+            />
+            <ConnectRow
+              title="Аккаунт GitHub"
+              connected={Boolean(identity)}
+              connectedLabel={identity?.login ? `Подключено: ${identity.login}` : "Подключено"}
+              connectLabel={identity ? "Переподключить" : "Подключить аккаунт"}
+              hint="Чтобы PR и коммиты создавались от вашего имени, а не от бота. Необязательно."
+              busy={busy}
+              onConnect={() => connect("github", "account")}
+              onDisconnect={identity ? () => disconnectAccount("github") : undefined}
+            />
+          </div>
+        ) : (
+          <p className="text-xs text-text-tertiary">
+            GitHub App не настроен на этом сервере — используйте токен ниже (раздел «Дополнительно»).
+          </p>
+        )
+      )}
+
+      {/* GitLab: one button — OAuth grants both repo access and identity */}
+      {kind === "gitlab" && (
+        gitlabAvailable ? (
+          <ConnectRow
+            title="Аккаунт GitLab"
+            connected={Boolean(identity)}
+            connectedLabel={identity?.login ? `Подключено: ${identity.login}` : "Подключено"}
+            connectLabel={identity ? "Переподключить" : "Подключить GitLab"}
+            hint="Один вход даёт и доступ к репозиторию, и авторство PR/коммитов."
+            busy={busy}
+            onConnect={() => connect("gitlab", "account")}
+            onDisconnect={identity ? () => disconnectAccount("gitlab") : undefined}
+          />
+        ) : (
+          <p className="text-xs text-text-tertiary">
+            GitLab OAuth не настроен на этом сервере — используйте токен ниже (раздел «Дополнительно»).
+          </p>
+        )
+      )}
+
+      {err && <p className="text-xs text-accent-red">Ошибка: {err}</p>}
+
+      <GitTokenAdvanced project={project} onSaved={onSaved} forceOpen={!providerAvailable && !!kind} />
+    </section>
+  );
+}
+
+/** A single connect/disconnect row used for both repo and account credentials. */
+function ConnectRow({
+  title, connected, connectedLabel, connectLabel, hint, busy, onConnect, onDisconnect,
+}: {
+  title: string;
+  connected: boolean;
+  connectedLabel: string;
+  connectLabel: string;
+  hint: string;
+  busy: boolean;
+  onConnect: () => void;
+  onDisconnect?: () => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 border border-border rounded p-3">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-text-primary">{title}</span>
+          {connected && <span className="text-[11px] text-accent-green">✓ {connectedLabel}</span>}
+        </div>
+        <p className="text-[11px] text-text-tertiary">{hint}</p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button variant="primary-red" size="sm" type="button" disabled={busy} onClick={onConnect}>
+          {connectLabel}
+        </Button>
+        {onDisconnect && (
+          <Button variant="secondary" size="sm" type="button" disabled={busy} onClick={onDisconnect}>
+            Отключить
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Advanced fallback: paste a PAT / project access token directly. Kept for
+ * self-hosted GitHub Enterprise / GitLab where the App/OAuth flow isn't
+ * available, and for users who prefer a token. Collapsed by default.
+ */
+function GitTokenAdvanced({ project, onSaved, forceOpen }: { project: Project; onSaved: () => void; forceOpen?: boolean }) {
   type ProviderSettings = {
     type?: "github" | "gitlab";
     token?: string;
@@ -986,6 +1195,7 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
   };
   const initial = (project.settings as { provider?: ProviderSettings } | undefined)?.provider;
   const hasToken = Boolean(initial?.tokenEncrypted);
+  const [open, setOpen] = useState(Boolean(forceOpen) || hasToken);
   const [token, setToken] = useState("");
   const [type, setType] = useState<"" | "github" | "gitlab">(initial?.type ?? "");
   const [saving, setSaving] = useState(false);
@@ -997,16 +1207,13 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
     setToken("");
     setType(initial?.type ?? "");
     setClearRequested(false);
-  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   async function save() {
     setSaving(true);
     setStatus(null);
     try {
       const provider: ProviderSettings = {};
-      // Only send `token` when the user actually typed something or clicked
-      // "Clear" — sending `""` on every save would wipe the existing token
-      // any time someone tweaks the provider type alone.
       if (token.trim()) provider.token = token.trim();
       else if (clearRequested) provider.token = "";
       if (type) provider.type = type;
@@ -1029,16 +1236,25 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
     }
   }
 
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-[11px] text-text-tertiary hover:text-text-secondary text-left w-fit"
+      >
+        Дополнительно: ввести токен вручную (self-hosted / GitHub Enterprise){hasToken ? " — токен сохранён" : ""}
+      </button>
+    );
+  }
+
   return (
-    <section className="px-16 pb-12 -mt-2 max-w-[700px] flex flex-col gap-4">
-      <div className="border-t border-border pt-6 flex flex-col gap-1">
-        <h3 className="text-sm font-semibold text-text-primary">Токен Git-провайдера</h3>
-        <p className="text-xs text-text-secondary">
-          Обязателен для приватных репозиториев — orchestra использует его для клона,
-          пушей веток и открытия PR. Токен шифруется на стороне сервера; в дашборд он
-          обратно не возвращается, поэтому поле всегда показывается пустым. Тип провайдера
-          определяется автоматически по URL репозитория — указывайте его явно только для
-          self-hosted инстансов.
+    <div className="flex flex-col gap-4 border-t border-border/50 pt-4">
+      <div className="flex flex-col gap-1">
+        <h4 className="text-xs font-semibold text-text-primary">Токен доступа (дополнительно)</h4>
+        <p className="text-[11px] text-text-tertiary">
+          Для self-hosted инстансов или если App/OAuth недоступны. Токен шифруется на
+          сервере и обратно в дашборд не возвращается. Тип определяется по URL репозитория.
         </p>
       </div>
 
@@ -1071,12 +1287,7 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
             placeholder={hasToken ? "•••••••••••• (введите новый, чтобы заменить)" : "ghp_… или glpat-…"}
             autoComplete="off"
           />
-          <Button
-            variant="secondary"
-            size="sm"
-            type="button"
-            onClick={() => setRevealed((v) => !v)}
-          >
+          <Button variant="secondary" size="sm" type="button" onClick={() => setRevealed((v) => !v)}>
             {revealed ? "Скрыть" : "Показать"}
           </Button>
           {hasToken && (
@@ -1100,7 +1311,7 @@ function ProjectGitTokenSection({ project, onSaved }: { project: Project; onSave
         </Button>
         {status && <p className="text-xs text-text-tertiary">{status}</p>}
       </div>
-    </section>
+    </div>
   );
 }
 

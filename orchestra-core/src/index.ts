@@ -30,6 +30,7 @@ import { membersPlugin } from "./members-api";
 import { onboardingPlugin } from "./onboarding-api";
 import { fsPlugin } from "./fs-api";
 import { providersPlugin } from "./providers-api";
+import { gitConnectPlugin } from "./git-connect-api";
 import { referencesPlugin } from "./references-api";
 import { contextCardsPlugin } from "./context-cards-api";
 import { previewPlugin } from "./preview-api";
@@ -132,6 +133,7 @@ async function main() {
   await app.register(onboardingPlugin, { prefix: "/api" });
   await app.register(fsPlugin, { prefix: "/api" });
   await app.register(providersPlugin, { prefix: "/api" });
+  await app.register(gitConnectPlugin, { prefix: "/api" });
   await app.register(referencesPlugin, { prefix: "/api" });
   await app.register(contextCardsPlugin, { prefix: "/api" });
   await app.register(previewPlugin, { prefix: "/api" });

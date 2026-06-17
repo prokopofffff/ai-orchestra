@@ -2,6 +2,10 @@
 
 Orchestrator for autonomous AI development teams. Manages a pool of Claude-powered agents (tech-lead, designer, frontend, backend, QA, devops) that collaborate on tasks through a signal-based flow, with full PR lifecycle support for GitHub and GitLab.
 
+> **Deploying on a server?** See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full
+> self-hosted setup: Docker Compose, secrets, reverse proxy/TLS, and the one-click GitHub
+> App / GitLab OAuth integration.
+
 ## Architecture
 
 ```

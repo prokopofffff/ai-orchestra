@@ -1,5 +1,5 @@
 import { getPool } from "./db";
-import { providerFor } from "./providers";
+import { providerForProject } from "./providers";
 import { notify } from "./notification-hub";
 import { appendLog } from "./logger";
 import { log } from "./obs";
@@ -56,7 +56,7 @@ export async function tryAutoMerge(projectId: string, taskId: string): Promise<v
 
   let provider;
   try {
-    provider = providerFor(row.repo_url, row.settings);
+    provider = await providerForProject(projectId);
   } catch (err) {
     log.error({ err, projectId, taskId }, "auto-merge: provider resolution failed");
     return;

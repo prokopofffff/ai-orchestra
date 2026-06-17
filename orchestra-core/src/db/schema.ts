@@ -17,7 +17,7 @@
 import { sql } from "drizzle-orm";
 import {
   pgTable, uuid, text, jsonb, timestamp, doublePrecision, integer,
-  boolean, index, uniqueIndex, check,
+  boolean, index, uniqueIndex, check, primaryKey,
 } from "drizzle-orm/pg-core";
 
 // ─── Projects ─────────────────────────────────────────────────────────────
@@ -170,6 +170,27 @@ export const users = pgTable("users", {
 }, (t) => [
   uniqueIndex("users_email_key").on(t.email),
   uniqueIndex("users_username_key").on(t.username),
+]);
+
+/**
+ * Per-user OAuth identities for git providers. The "Connect account" half of
+ * the one-button auth UX — see migration 028-user-git-identities.sql. Tokens
+ * are stored encrypted (secrets.ts); reads go through user-git-identity.ts.
+ */
+export const userGitIdentities = pgTable("user_git_identities", {
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  externalLogin: text("external_login"),
+  externalId: text("external_id"),
+  accessTokenEncrypted: text("access_token_encrypted").notNull(),
+  refreshTokenEncrypted: text("refresh_token_encrypted"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  scopes: text("scopes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.userId, t.provider] }),
+  check("user_git_identities_provider_check", sql`provider IN ('github','gitlab')`),
 ]);
 
 export const projectNotes = pgTable("project_notes", {
